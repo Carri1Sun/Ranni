@@ -1,0 +1,999 @@
+/* [project]/components/agent-console.module.css [app-client] (css) */
+.agent-console-module__zURYqW__shell {
+  width: min(1560px, 100vw - 28px);
+  height: 100dvh;
+  margin: 0 auto;
+  padding: 14px 0;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__workspace {
+  grid-template-columns: 312px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 18px;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__workspaceCollapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-console-module__zURYqW__loadingCard, .agent-console-module__zURYqW__chatShell, .agent-console-module__zURYqW__infoPanel {
+  background: #fff;
+  border: 3px solid #111;
+}
+
+.agent-console-module__zURYqW__loadingCard {
+  color: #111;
+  border-radius: 24px;
+  place-items: center;
+  height: calc(100dvh - 28px);
+  padding: 24px;
+  font-weight: 700;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__sidebar {
+  color: #111;
+  background: #ffd84d;
+  border: 3px solid #111;
+  border-radius: 24px;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 14px;
+  display: flex;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__sidebarTop {
+  gap: 10px;
+  margin-bottom: 10px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__primarySidebarButton, .agent-console-module__zURYqW__iconButton, .agent-console-module__zURYqW__sessionItem, .agent-console-module__zURYqW__infoPromptButton, .agent-console-module__zURYqW__floatingInfoButton, .agent-console-module__zURYqW__submitButton, .agent-console-module__zURYqW__viewButton, .agent-console-module__zURYqW__runButton, .agent-console-module__zURYqW__stepButton {
+  cursor: pointer;
+  transition: transform .12s, box-shadow .12s, background .12s, color .12s;
+}
+
+.agent-console-module__zURYqW__iconButton {
+  color: #111;
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 14px;
+  justify-content: center;
+  align-items: center;
+  width: 40px;
+  height: 40px;
+  font-weight: 800;
+  display: inline-flex;
+}
+
+.agent-console-module__zURYqW__primarySidebarButton {
+  color: #111;
+  background: #ff7a00;
+  border: 3px solid #111;
+  border-radius: 14px;
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  font-weight: 800;
+}
+
+.agent-console-module__zURYqW__sidebarLabel, .agent-console-module__zURYqW__activityLabel, .agent-console-module__zURYqW__infoCard span, .agent-console-module__zURYqW__summaryCard span, .agent-console-module__zURYqW__kvGrid span {
+  font-family: var(--font-mono), monospace;
+}
+
+.agent-console-module__zURYqW__sidebarLabel {
+  color: #111;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  margin: 12px 2px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__sessionList {
+  scrollbar-width: thin;
+  scrollbar-color: #111 #ffd84d;
+  flex-direction: column;
+  flex: 1;
+  gap: 10px;
+  min-height: 0;
+  padding-right: 4px;
+  display: flex;
+  overflow: auto;
+}
+
+.agent-console-module__zURYqW__sessionList::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.agent-console-module__zURYqW__feed::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.agent-console-module__zURYqW__traceRunList::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.agent-console-module__zURYqW__traceDetailPanel::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.agent-console-module__zURYqW__traceBlock pre::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.agent-console-module__zURYqW__sessionList::-webkit-scrollbar-thumb {
+  background: #111;
+  border: 2px solid #111;
+  border-radius: 999px;
+}
+
+.agent-console-module__zURYqW__feed::-webkit-scrollbar-thumb {
+  background: #111;
+  border: 2px solid #111;
+  border-radius: 999px;
+}
+
+.agent-console-module__zURYqW__traceRunList::-webkit-scrollbar-thumb {
+  background: #111;
+  border: 2px solid #111;
+  border-radius: 999px;
+}
+
+.agent-console-module__zURYqW__traceDetailPanel::-webkit-scrollbar-thumb {
+  background: #111;
+  border: 2px solid #111;
+  border-radius: 999px;
+}
+
+.agent-console-module__zURYqW__traceBlock pre::-webkit-scrollbar-thumb {
+  background: #111;
+  border: 2px solid #111;
+  border-radius: 999px;
+}
+
+.agent-console-module__zURYqW__sessionItem {
+  color: #111;
+  text-align: left;
+  background: #fff7d6;
+  border: 3px solid #111;
+  border-radius: 18px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__sessionItem:hover, .agent-console-module__zURYqW__sessionItemActive {
+  background: #ff9de1;
+}
+
+.agent-console-module__zURYqW__sessionItemActive {
+  box-shadow: none;
+  transform: none;
+}
+
+.agent-console-module__zURYqW__sessionIndex {
+  background: #00e0ff;
+  border: 3px solid #111;
+  border-radius: 12px;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  width: 34px;
+  height: 34px;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+}
+
+.agent-console-module__zURYqW__sessionMeta {
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__sessionMeta strong, .agent-console-module__zURYqW__sessionMeta span {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__sessionMeta strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.agent-console-module__zURYqW__sessionMeta span {
+  color: #3a3a3a;
+  flex: none;
+  font-size: 11px;
+}
+
+.agent-console-module__zURYqW__chatShell {
+  background: #fff;
+  border-radius: 28px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__chatHeader {
+  border-bottom: 3px solid #111;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 12px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__headerTitle {
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__chatHeader h2 {
+  letter-spacing: -.05em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-size: clamp(18px, 2vw, 24px);
+  font-weight: 800;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__chatHeader span, .agent-console-module__zURYqW__chatMeta {
+  color: #3a3a3a;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.agent-console-module__zURYqW__headerControls {
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__viewToggle {
+  gap: 6px;
+  display: inline-flex;
+}
+
+.agent-console-module__zURYqW__viewButton {
+  color: #111;
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 14px;
+  min-width: 64px;
+  padding: 8px 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.agent-console-module__zURYqW__viewButtonActive {
+  background: #00e0ff;
+}
+
+.agent-console-module__zURYqW__chatMeta {
+  flex-wrap: nowrap;
+  gap: 6px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__chatMeta span {
+  white-space: nowrap;
+  background: #fff7d6;
+  border: 3px solid #111;
+  border-radius: 999px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  font-weight: 700;
+  display: inline-flex;
+}
+
+.agent-console-module__zURYqW__feed {
+  scrollbar-width: thin;
+  scrollbar-color: #111 transparent;
+  flex-direction: column;
+  flex: 1;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px 2px 4px;
+  display: flex;
+  overflow: auto;
+}
+
+.agent-console-module__zURYqW__feedWrap {
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__traceShell {
+  grid-template-columns: 336px minmax(0, 1fr);
+  gap: 18px;
+  min-height: 0;
+  padding: 18px 2px 8px;
+  display: grid;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__traceSidebar, .agent-console-module__zURYqW__traceDetailPanel {
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 22px;
+  min-height: 0;
+}
+
+.agent-console-module__zURYqW__traceSidebar {
+  background: #c9ff66;
+  grid-template-rows: auto minmax(0, 1fr);
+  display: grid;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__traceSidebarHeader, .agent-console-module__zURYqW__traceBlockHeader {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__traceSidebarHeader {
+  border-bottom: 3px solid #111;
+  padding: 16px 18px;
+}
+
+.agent-console-module__zURYqW__traceSidebarHeader h3, .agent-console-module__zURYqW__traceBlockHeader h3 {
+  letter-spacing: -.02em;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.agent-console-module__zURYqW__traceSidebarHeader span, .agent-console-module__zURYqW__traceBlockHeader span {
+  color: #3a3a3a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__traceRunList, .agent-console-module__zURYqW__traceDetailPanel {
+  scrollbar-width: thin;
+  scrollbar-color: #111 transparent;
+  overflow: auto;
+}
+
+.agent-console-module__zURYqW__traceRunList {
+  gap: 12px;
+  padding: 14px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__traceEmpty {
+  color: #111;
+  background: #fff7d6;
+  border: 3px dashed #111;
+  border-radius: 18px;
+  padding: 18px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+
+.agent-console-module__zURYqW__runCard {
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__runCardActive {
+  box-shadow: none;
+  background: #ffb84d;
+  transform: none;
+}
+
+.agent-console-module__zURYqW__runButton, .agent-console-module__zURYqW__stepButton {
+  text-align: left;
+  background: none;
+  border: 0;
+  width: 100%;
+}
+
+.agent-console-module__zURYqW__runButton {
+  gap: 10px;
+  padding: 16px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__runCardTop, .agent-console-module__zURYqW__stepButton > div {
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__runCardTop strong, .agent-console-module__zURYqW__stepButton strong {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.agent-console-module__zURYqW__runCardTop span, .agent-console-module__zURYqW__runCardMeta, .agent-console-module__zURYqW__stepButton span {
+  color: #3a3a3a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__runCardMeta {
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__stepList {
+  gap: 8px;
+  padding: 0 12px 12px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__stepButton {
+  background: #fff7d6;
+  border: 3px solid #111;
+  border-radius: 14px;
+  gap: 6px;
+  padding: 12px 14px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__stepButtonActive {
+  background: #00e0ff;
+  transform: none;
+}
+
+.agent-console-module__zURYqW__traceDetailPanel {
+  background: #fff;
+  align-content: start;
+  gap: 14px;
+  padding: 16px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__traceSummaryGrid, .agent-console-module__zURYqW__kvGrid, .agent-console-module__zURYqW__infoGrid {
+  gap: 12px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__traceSummaryGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agent-console-module__zURYqW__summaryCard, .agent-console-module__zURYqW__traceBlock {
+  border: 3px solid #111;
+  border-radius: 18px;
+}
+
+.agent-console-module__zURYqW__summaryCard {
+  background: #ff9de1;
+  gap: 8px;
+  padding: 14px 16px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__traceSummaryGrid .agent-console-module__zURYqW__summaryCard:nth-child(2n) {
+  background: #c9ff66;
+}
+
+.agent-console-module__zURYqW__traceSummaryGrid .agent-console-module__zURYqW__summaryCard:nth-child(3n) {
+  background: #00e0ff;
+}
+
+.agent-console-module__zURYqW__traceSummaryGrid .agent-console-module__zURYqW__summaryCard:nth-child(4n) {
+  background: #ffb84d;
+}
+
+.agent-console-module__zURYqW__summaryCard span, .agent-console-module__zURYqW__kvGrid span {
+  color: #111;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-family: var(--font-mono), monospace;
+}
+
+.agent-console-module__zURYqW__summaryCard strong, .agent-console-module__zURYqW__kvGrid strong {
+  word-break: break-word;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.agent-console-module__zURYqW__traceBlock {
+  background: #fff;
+  gap: 12px;
+  padding: 16px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__traceBlock:nth-of-type(2n) {
+  background: #f8f4ff;
+}
+
+.agent-console-module__zURYqW__traceBlock pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #111;
+  scrollbar-width: thin;
+  background: #fff7d6;
+  border: 3px solid #111;
+  border-radius: 14px;
+  max-height: 380px;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow: auto;
+}
+
+.agent-console-module__zURYqW__kvGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-console-module__zURYqW__kvGrid div {
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 14px;
+  gap: 8px;
+  padding: 12px 14px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__kvGrid div:nth-child(2n) {
+  background: #e8f7ff;
+}
+
+.agent-console-module__zURYqW__message {
+  border: 3px solid #111;
+  border-radius: 18px;
+  gap: 10px;
+  width: fit-content;
+  max-width: min(82%, 820px);
+  padding: 12px 14px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__messageToolbar {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__messageActions {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__messageActionButton {
+  cursor: pointer;
+  color: #111;
+  font-family: var(--font-mono), monospace;
+  background: #fff;
+  border: 2px solid #111;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  transition: transform .12s, background .12s, color .12s;
+}
+
+.agent-console-module__zURYqW__messageActionButton:hover, .agent-console-module__zURYqW__messageActionButton:focus-visible {
+  color: #fff7d6;
+  background: #111;
+  transform: translateY(-1px);
+}
+
+.agent-console-module__zURYqW__messageActionButton:active {
+  transform: translateY(0);
+}
+
+.agent-console-module__zURYqW__assistantMessage {
+  background: #fff7d6;
+  align-self: flex-start;
+}
+
+.agent-console-module__zURYqW__userMessage {
+  color: #111;
+  background: #00e0ff;
+  align-self: flex-end;
+}
+
+.agent-console-module__zURYqW__message p {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.agent-console-module__zURYqW__activity {
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 16px;
+  align-self: stretch;
+  gap: 6px;
+  margin: 0 5%;
+  padding: 10px 12px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__activityDisclosure {
+  gap: 8px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__activitySummary {
+  cursor: pointer;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  list-style: none;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__activitySummary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-console-module__zURYqW__activitySummaryHint {
+  color: #3a3a3a;
+  white-space: nowrap;
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__activityDisclosure[open] .agent-console-module__zURYqW__activitySummaryHint {
+  color: #111;
+}
+
+.agent-console-module__zURYqW__activityLabel {
+  color: #111;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.agent-console-module__zURYqW__activity pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #111;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.agent-console-module__zURYqW__status {
+  background: #fff;
+}
+
+.agent-console-module__zURYqW__tool_call {
+  background: #ffef9d;
+}
+
+.agent-console-module__zURYqW__tool_result {
+  background: #c9ff66;
+}
+
+.agent-console-module__zURYqW__error {
+  background: #ff8f8f;
+}
+
+.agent-console-module__zURYqW__composer {
+  background: #ffb84d;
+  border: 3px solid #111;
+  border-radius: 18px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.agent-console-module__zURYqW__composerInputWrap {
+  position: relative;
+}
+
+.agent-console-module__zURYqW__textarea {
+  resize: none;
+  color: #111;
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 14px;
+  outline: none;
+  width: 100%;
+  min-height: 56px;
+  max-height: 180px;
+  padding: 10px 92px 44px 12px;
+  line-height: 1.55;
+  box-shadow: inset 0 0 0 1px #0000;
+}
+
+.agent-console-module__zURYqW__textarea::placeholder {
+  color: #555;
+}
+
+.agent-console-module__zURYqW__submitButton {
+  color: #111;
+  background: #ff4d6d;
+  border: 3px solid #111;
+  border-radius: 12px;
+  padding: 9px 16px;
+  font-weight: 800;
+  line-height: 1;
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+}
+
+.agent-console-module__zURYqW__submitButton:hover:enabled, .agent-console-module__zURYqW__submitButton:focus-visible, .agent-console-module__zURYqW__primarySidebarButton:hover, .agent-console-module__zURYqW__primarySidebarButton:focus-visible, .agent-console-module__zURYqW__iconButton:hover, .agent-console-module__zURYqW__iconButton:focus-visible, .agent-console-module__zURYqW__infoPromptButton:hover, .agent-console-module__zURYqW__infoPromptButton:focus-visible, .agent-console-module__zURYqW__floatingInfoButton:hover, .agent-console-module__zURYqW__floatingInfoButton:focus-visible, .agent-console-module__zURYqW__viewButton:hover, .agent-console-module__zURYqW__viewButton:focus-visible, .agent-console-module__zURYqW__runCard:hover, .agent-console-module__zURYqW__runCard:focus-within, .agent-console-module__zURYqW__stepButton:hover, .agent-console-module__zURYqW__stepButton:focus-visible, .agent-console-module__zURYqW__sessionItem:hover, .agent-console-module__zURYqW__scrollToBottomButton:hover, .agent-console-module__zURYqW__scrollToBottomButton:focus-visible {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px #111;
+}
+
+.agent-console-module__zURYqW__submitButton:hover:enabled, .agent-console-module__zURYqW__submitButton:focus-visible {
+  box-shadow: 7px 7px #111;
+}
+
+.agent-console-module__zURYqW__sessionItem:focus-visible, .agent-console-module__zURYqW__runButton:focus-visible {
+  outline: none;
+}
+
+.agent-console-module__zURYqW__primarySidebarButton:active, .agent-console-module__zURYqW__iconButton:active, .agent-console-module__zURYqW__sessionItem:active, .agent-console-module__zURYqW__viewButton:active, .agent-console-module__zURYqW__runCard:active, .agent-console-module__zURYqW__stepButton:active, .agent-console-module__zURYqW__infoPromptButton:active, .agent-console-module__zURYqW__submitButton:active, .agent-console-module__zURYqW__floatingInfoButton:active {
+  transform: translate(0);
+  box-shadow: 2px 2px #111;
+}
+
+.agent-console-module__zURYqW__submitButton:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  box-shadow: none;
+}
+
+.agent-console-module__zURYqW__scrollToBottomButton {
+  color: #111;
+  cursor: pointer;
+  background: #c9ff66;
+  border: 3px solid #111;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 800;
+  line-height: 1;
+  position: absolute;
+  bottom: 14px;
+  right: 12px;
+}
+
+.agent-console-module__zURYqW__infoBackdrop {
+  z-index: 29;
+  background: #11111147;
+  position: fixed;
+  inset: 0;
+}
+
+.agent-console-module__zURYqW__infoPanel {
+  z-index: 30;
+  background: #fff;
+  border-radius: 24px;
+  gap: 14px;
+  width: min(372px, 100vw - 32px);
+  padding: 16px;
+  display: grid;
+  position: fixed;
+  bottom: 86px;
+  right: 22px;
+}
+
+.agent-console-module__zURYqW__infoPanelHeader {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  display: flex;
+}
+
+.agent-console-module__zURYqW__infoPanelHeader h3 {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.agent-console-module__zURYqW__infoCard {
+  background: #fff7d6;
+  border: 3px solid #111;
+  border-radius: 16px;
+  gap: 8px;
+  padding: 14px 16px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__infoGrid .agent-console-module__zURYqW__infoCard:nth-child(2n) {
+  background: #00e0ff;
+}
+
+.agent-console-module__zURYqW__infoGrid .agent-console-module__zURYqW__infoCard:nth-child(3n) {
+  background: #ff9de1;
+}
+
+.agent-console-module__zURYqW__infoGrid .agent-console-module__zURYqW__infoCard:nth-child(4n) {
+  background: #c9ff66;
+}
+
+.agent-console-module__zURYqW__infoCard span {
+  color: #111;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__infoCard strong {
+  word-break: break-word;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.agent-console-module__zURYqW__infoPromptList {
+  gap: 10px;
+  display: grid;
+}
+
+.agent-console-module__zURYqW__infoPromptButton {
+  text-align: left;
+  background: #fff;
+  border: 3px solid #111;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-weight: 700;
+}
+
+.agent-console-module__zURYqW__inlineWarning {
+  color: #111;
+  background: #ff8f8f;
+  border: 3px solid #111;
+  border-radius: 16px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.65;
+}
+
+.agent-console-module__zURYqW__floatingInfoButton {
+  color: #111;
+  z-index: 31;
+  background: #c9ff66;
+  border: 3px solid #111;
+  border-radius: 18px;
+  width: 52px;
+  height: 52px;
+  font-weight: 900;
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+}
+
+@media (max-width: 980px) {
+  .agent-console-module__zURYqW__shell {
+    width: min(100vw - 16px, 1560px);
+    padding: 8px 0 12px;
+  }
+
+  .agent-console-module__zURYqW__workspace, .agent-console-module__zURYqW__workspaceCollapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-console-module__zURYqW__workspace {
+    gap: 12px;
+  }
+
+  .agent-console-module__zURYqW__traceShell {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-console-module__zURYqW__traceSidebar {
+    max-height: 280px;
+  }
+
+  .agent-console-module__zURYqW__traceSummaryGrid, .agent-console-module__zURYqW__kvGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-console-module__zURYqW__sidebar, .agent-console-module__zURYqW__chatShell {
+    border-radius: 22px;
+  }
+
+  .agent-console-module__zURYqW__sidebar {
+    height: auto;
+    max-height: 250px;
+  }
+
+  .agent-console-module__zURYqW__sessionList {
+    max-height: 148px;
+  }
+}
+
+@media (max-width: 720px) {
+  .agent-console-module__zURYqW__shell {
+    width: min(100vw - 12px, 1560px);
+    padding: 6px 0 10px;
+  }
+
+  .agent-console-module__zURYqW__chatShell, .agent-console-module__zURYqW__infoPanel, .agent-console-module__zURYqW__sidebar, .agent-console-module__zURYqW__traceSidebar, .agent-console-module__zURYqW__traceDetailPanel {
+    box-shadow: none;
+  }
+
+  .agent-console-module__zURYqW__chatHeader, .agent-console-module__zURYqW__composerFooter, .agent-console-module__zURYqW__headerControls {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agent-console-module__zURYqW__headerTitle {
+    width: 100%;
+  }
+
+  .agent-console-module__zURYqW__chatMeta {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .agent-console-module__zURYqW__message {
+    max-width: 100%;
+  }
+
+  .agent-console-module__zURYqW__messageToolbar {
+    justify-content: flex-end;
+  }
+
+  .agent-console-module__zURYqW__traceSummaryGrid, .agent-console-module__zURYqW__kvGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-console-module__zURYqW__activity {
+    margin: 0;
+  }
+
+  .agent-console-module__zURYqW__floatingInfoButton {
+    bottom: 14px;
+    right: 14px;
+  }
+
+  .agent-console-module__zURYqW__infoPanel {
+    bottom: 72px;
+    right: 12px;
+  }
+}
+
+/*# sourceMappingURL=components_agent-console_module_css_0w3-wzy._.single.css.map*/

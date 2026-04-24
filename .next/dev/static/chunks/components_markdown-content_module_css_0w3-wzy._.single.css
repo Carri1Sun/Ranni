@@ -1,0 +1,118 @@
+/* [project]/components/markdown-content.module.css [app-client] (css) */
+.markdown-content-module__IlFeya__markdown {
+  word-break: break-word;
+  gap: .85rem;
+  font-weight: 600;
+  line-height: 1.68;
+  display: grid;
+}
+
+.markdown-content-module__IlFeya__markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content-module__IlFeya__markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content-module__IlFeya__markdown h1, .markdown-content-module__IlFeya__markdown h2, .markdown-content-module__IlFeya__markdown h3, .markdown-content-module__IlFeya__markdown h4, .markdown-content-module__IlFeya__markdown h5, .markdown-content-module__IlFeya__markdown h6 {
+  letter-spacing: -.03em;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.markdown-content-module__IlFeya__markdown h1 {
+  font-size: 1.55rem;
+}
+
+.markdown-content-module__IlFeya__markdown h2 {
+  font-size: 1.3rem;
+}
+
+.markdown-content-module__IlFeya__markdown h3 {
+  font-size: 1.08rem;
+}
+
+.markdown-content-module__IlFeya__markdown p, .markdown-content-module__IlFeya__markdown ul, .markdown-content-module__IlFeya__markdown ol, .markdown-content-module__IlFeya__markdown blockquote, .markdown-content-module__IlFeya__markdown pre, .markdown-content-module__IlFeya__markdown table, .markdown-content-module__IlFeya__markdown hr {
+  margin: 0;
+}
+
+.markdown-content-module__IlFeya__markdown ul, .markdown-content-module__IlFeya__markdown ol {
+  padding-left: 1.35rem;
+}
+
+.markdown-content-module__IlFeya__markdown li + li {
+  margin-top: .28rem;
+}
+
+.markdown-content-module__IlFeya__markdown blockquote {
+  background: #fff4b8;
+  border-left: 4px solid #111;
+  padding: .7rem .9rem;
+}
+
+.markdown-content-module__IlFeya__markdown code {
+  font-family: var(--font-mono), monospace;
+}
+
+.markdown-content-module__IlFeya__markdown :not(pre) > code {
+  background: #fff4b8;
+  border: 2px solid #111;
+  border-radius: .45rem;
+  padding: .12rem .34rem;
+  font-size: .92em;
+}
+
+.markdown-content-module__IlFeya__markdown pre {
+  color: #fff7d6;
+  background: #111;
+  border: 3px solid #111;
+  border-radius: 1rem;
+  padding: .9rem 1rem;
+  overflow-x: auto;
+}
+
+.markdown-content-module__IlFeya__markdown pre code {
+  white-space: pre;
+  font-size: .92rem;
+}
+
+.markdown-content-module__IlFeya__markdown table {
+  border-collapse: collapse;
+  border: 3px solid #111;
+  border-radius: 1rem;
+  width: 100%;
+  overflow: hidden;
+}
+
+.markdown-content-module__IlFeya__markdown th, .markdown-content-module__IlFeya__markdown td {
+  text-align: left;
+  vertical-align: top;
+  border: 2px solid #111;
+  padding: .68rem .8rem;
+}
+
+.markdown-content-module__IlFeya__markdown th {
+  background: #00e0ff;
+}
+
+.markdown-content-module__IlFeya__markdown td {
+  background: #fff;
+}
+
+.markdown-content-module__IlFeya__markdown a {
+  color: #0057ff;
+  text-underline-offset: .18em;
+  text-decoration-thickness: 2px;
+}
+
+.markdown-content-module__IlFeya__markdown strong {
+  font-weight: 800;
+}
+
+.markdown-content-module__IlFeya__markdown hr {
+  border: 0;
+  border-top: 3px solid #111;
+}
+
+/*# sourceMappingURL=components_markdown-content_module_css_0w3-wzy._.single.css.map*/

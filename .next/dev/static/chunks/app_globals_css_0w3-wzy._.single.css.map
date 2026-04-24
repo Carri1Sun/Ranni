@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 1, "column": 0}, "map": {"version":3,"sources":["turbopack:///[project]/app/globals.css"],"sourcesContent":[":root {\n  --background: #ffffff;\n  --background-strong: #fff7d6;\n  --surface: #ffffff;\n  --surface-strong: #111111;\n  --foreground: #111111;\n  --muted: #3a3a3a;\n  --line: #111111;\n  --accent: #ff7a00;\n  --accent-strong: #ff4d6d;\n  --shadow: 8px 8px 0 #111111;\n}\n\nhtml {\n  height: 100%;\n}\n\nhtml,\nbody {\n  max-width: 100vw;\n  overflow-x: hidden;\n}\n\nbody {\n  min-height: 100%;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--foreground);\n  background: #ffffff;\n  font-family: var(--font-sans), sans-serif;\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n}\n\n* {\n  box-sizing: border-box;\n  padding: 0;\n  margin: 0;\n}\n\na {\n  color: inherit;\n  text-decoration: none;\n}\n\nbutton,\ninput,\ntextarea {\n  font: inherit;\n}\n\nbutton {\n  color: inherit;\n}\n\ncode,\npre {\n  font-family: var(--font-mono), monospace;\n}\n"],"names":[],"mappings":"AAAA;;;;;;;;;;;;;AAaA;;;;AAIA;;;;;AAMA;;;;;;;;;;;;AAYA;;;;;;AAMA;;;;;AAKA;;;;AAMA;;;;AAIA"}}]
+}

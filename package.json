@@ -1,0 +1,50 @@
+{
+  "name": "ranni",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:types\" \"npm:dev:backend\" \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:types": "tsc -p tsconfig.node.json --watch --preserveWatchOutput",
+    "dev:backend": "tsx watch src/server/index.ts",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on dist/electron/main.js tcp:3001 tcp:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 ELECTRON_BACKEND_URL=http://127.0.0.1:3001 electron dist/electron/main.js",
+    "build": "rimraf dist && vite build && tsc -p tsconfig.node.json",
+    "start": "electron dist/electron/main.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "cheerio": "^1.1.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsdom": "^29.0.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@vitejs/plugin-react": "^5.1.0",
+    "@types/jsdom": "^28.0.1",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/express": "^5.0.3",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^38.3.0",
+    "eslint": "^9",
+    "globals": "^16.4.0",
+    "rimraf": "^6.1.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5",
+    "typescript-eslint": "^8.46.2",
+    "vite": "^7.1.12",
+    "wait-on": "^8.0.5"
+  }
+}
