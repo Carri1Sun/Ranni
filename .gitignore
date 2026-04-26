@@ -1,5 +1,62 @@
-dist
-node_modules
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Environment files
 .env
-.env.local
-tsconfig.tsbuildinfo
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+out/
+.next/
+.vite/
+
+# TypeScript / bundler cache
+*.tsbuildinfo
+.eslintcache
+.cache/
+.turbo/
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+*.lcov
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE local state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Local temp files
+tmp/
+temp/
+*.tmp
