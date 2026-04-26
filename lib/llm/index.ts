@@ -2,6 +2,7 @@ import type {
   CreateAgentMessageOptions,
   AgentMessage,
   AgentToolDefinition,
+  ModelConnectionConfig,
 } from "./types";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
 
@@ -23,27 +24,32 @@ export type {
   AgentMessage,
   AgentToolDefinition,
   AgentToolResultBlock,
+  ModelConnectionConfig,
+  ModelConnectionTestResult,
 } from "./types";
 
-export function hasModelApiKey() {
-  return resolveProvider().hasApiKey();
+export function hasModelApiKey(modelConfig?: ModelConnectionConfig) {
+  return resolveProvider().hasApiKey(modelConfig);
 }
 
-export function getModelRuntimeInfo() {
-  return resolveProvider().getRuntimeInfo();
+export function getModelRuntimeInfo(modelConfig?: ModelConnectionConfig) {
+  return resolveProvider().getRuntimeInfo(modelConfig);
 }
 
 export function buildMessageRequest({
   messages,
+  modelConfig,
   system,
   tools,
 }: {
   messages: AgentMessage[];
+  modelConfig?: ModelConnectionConfig;
   system: string;
   tools: AgentToolDefinition[];
 }) {
   return resolveProvider().buildMessageRequest({
     messages,
+    modelConfig,
     system,
     tools,
   });
@@ -51,4 +57,8 @@ export function buildMessageRequest({
 
 export function createMessage(options: CreateAgentMessageOptions) {
   return resolveProvider().createMessage(options);
+}
+
+export function testModelConnection(modelConfig?: ModelConnectionConfig) {
+  return resolveProvider().testConnection(modelConfig);
 }

@@ -1228,12 +1228,224 @@
   transform: translateY(0);
 }
 
+.modalBackdrop,
 .infoBackdrop {
   position: fixed;
   inset: 0;
   z-index: 29;
   border: 0;
   background: rgba(2, 4, 9, 0.58);
+}
+
+.settingsModal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 40px));
+  display: grid;
+  gap: var(--space-4);
+  overflow: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(143, 167, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+    var(--ranni-surface-0);
+  box-shadow: var(--shadow-soft), var(--shadow-inset);
+  backdrop-filter: blur(22px);
+  transform: translate(-50%, -50%);
+}
+
+.settingsHeader,
+.settingsSectionHeader,
+.settingsActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settingsHeader {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--ranni-line-1);
+}
+
+.settingsHeader div,
+.settingsSection {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.settingsHeader p {
+  color: var(--ranni-accent-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settingsHeader h3 {
+  color: var(--ranni-text-0);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.08;
+}
+
+.settingsSection {
+  padding: var(--space-4);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settingsSectionHeader h4 {
+  color: var(--ranni-text-0);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.settingsSectionHeader span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.themeSegmented {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: 4px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: rgba(4, 7, 14, 0.18);
+}
+
+.themeButton,
+.primarySettingsButton,
+.secondarySettingsButton {
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  font-weight: 650;
+  transition:
+    transform var(--motion-fast) var(--ease-ranni),
+    border-color var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni),
+    color var(--motion-fast) var(--ease-ranni),
+    opacity var(--motion-fast) var(--ease-ranni);
+}
+
+.themeButton {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ranni-text-2);
+}
+
+.themeButtonActive {
+  border-color: rgba(143, 167, 255, 0.32);
+  background: rgba(143, 167, 255, 0.14);
+  color: var(--ranni-text-0);
+}
+
+.settingsField {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.settingsField span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.settingsField input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  outline: none;
+  background: rgba(4, 7, 14, 0.22);
+  color: var(--ranni-text-0);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.settingsField input:read-only {
+  color: var(--ranni-text-2);
+}
+
+.settingsField input::placeholder {
+  color: var(--ranni-text-3);
+}
+
+.settingsField input:focus-visible {
+  border-color: rgba(143, 167, 255, 0.5);
+}
+
+.primarySettingsButton,
+.secondarySettingsButton {
+  cursor: pointer;
+  padding: 0 14px;
+}
+
+.primarySettingsButton {
+  border: 1px solid rgba(143, 167, 255, 0.4);
+  background: linear-gradient(
+    180deg,
+    rgba(143, 167, 255, 0.34),
+    rgba(143, 167, 255, 0.18)
+  );
+  color: var(--ranni-text-0);
+}
+
+.secondarySettingsButton {
+  border: 1px solid var(--ranni-line-1);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ranni-text-2);
+}
+
+.primarySettingsButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.settingsHint,
+.connectionNotice {
+  padding: 10px 12px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.6;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.connectionNoticeSuccess {
+  border-color: rgba(104, 214, 163, 0.32);
+  color: var(--ranni-success);
+  background: rgba(104, 214, 163, 0.08);
+}
+
+.connectionNoticeError {
+  border-color: rgba(255, 107, 122, 0.36);
+  color: var(--ranni-danger);
+  background: rgba(255, 107, 122, 0.1);
+}
+
+.themeButton:hover,
+.themeButton:focus-visible,
+.primarySettingsButton:hover:enabled,
+.primarySettingsButton:focus-visible:enabled,
+.secondarySettingsButton:hover,
+.secondarySettingsButton:focus-visible {
+  transform: translateY(-1px);
 }
 
 .infoPanel {
@@ -1380,7 +1592,9 @@
 @media (max-width: 720px) {
   .chatHeader,
   .headerControls,
-  .reportHeader {
+  .reportHeader,
+  .settingsHeader,
+  .settingsActions {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1419,6 +1633,15 @@
   .submitButton {
     left: 8px;
     width: calc(100% - 16px);
+  }
+
+  .settingsModal {
+    width: calc(100vw - 20px);
+    padding: var(--space-4);
+  }
+
+  .themeSegmented {
+    grid-template-columns: 1fr;
   }
 
   .floatingInfoButton {

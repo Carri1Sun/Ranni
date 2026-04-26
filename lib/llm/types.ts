@@ -59,6 +59,7 @@ export type AgentAssistantMessage = {
 
 export type CreateAgentMessageOptions = {
   messages: AgentMessage[];
+  modelConfig?: ModelConnectionConfig;
   onRetry?: (payload: { attempt: number; reason: string }) => void;
   system: string;
   tools: AgentToolDefinition[];
@@ -70,13 +71,26 @@ export type CreateAgentMessageResult = {
   response: TraceModelResponse;
 };
 
+export type ModelConnectionConfig = {
+  qwenApiKey?: string;
+};
+
+export type ModelConnectionTestResult = {
+  model: string;
+  provider: string;
+  requestId: string | null;
+  runtime: TraceRuntimeInfo;
+};
+
 export type AgentProvider = {
   buildMessageRequest: (payload: {
     messages: AgentMessage[];
+    modelConfig?: ModelConnectionConfig;
     system: string;
     tools: AgentToolDefinition[];
   }) => TraceModelRequest;
   createMessage: (payload: CreateAgentMessageOptions) => Promise<CreateAgentMessageResult>;
-  getRuntimeInfo: () => TraceRuntimeInfo;
-  hasApiKey: () => boolean;
+  getRuntimeInfo: (modelConfig?: ModelConnectionConfig) => TraceRuntimeInfo;
+  hasApiKey: (modelConfig?: ModelConnectionConfig) => boolean;
+  testConnection: (modelConfig?: ModelConnectionConfig) => Promise<ModelConnectionTestResult>;
 };
