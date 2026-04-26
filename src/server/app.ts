@@ -2,8 +2,16 @@ import express from "express";
 import { z } from "zod";
 
 import { runAgentTurn } from "../../lib/agent";
-import { getModelRuntimeInfo, hasModelApiKey } from "../../lib/llm";
+import {
+  getModelRuntimeInfo,
+  hasModelApiKey,
+  testModelConnection,
+} from "../../lib/llm";
 import { getWorkspaceRoot } from "../../lib/workspace";
+
+const modelSettingsSchema = z.object({
+  qwenApiKey: z.string().trim().min(1),
+});
 
 const requestSchema = z.object({
   messages: z
@@ -14,6 +22,11 @@ const requestSchema = z.object({
       }),
     )
     .min(1),
+  modelSettings: modelSettingsSchema,
+});
+
+const testModelSchema = z.object({
+  modelSettings: modelSettingsSchema,
 });
 
 function setCorsHeaders(response: express.Response, origin?: string) {
@@ -86,6 +99,7 @@ export function createServerApp() {
     try {
       await runAgentTurn({
         messages: payload.messages,
+        modelConfig: payload.modelSettings,
         emit: push,
       });
     } catch (error) {
@@ -97,6 +111,41 @@ export function createServerApp() {
     } finally {
       push({ type: "done" });
       response.end();
+    }
+  });
+
+  app.post("/api/model/test", async (request, response) => {
+    let payload: z.infer<typeof testModelSchema>;
+
+    try {
+      payload = testModelSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message });
+      return;
+    }
+
+    try {
+      const result = await testModelConnection(payload.modelSettings);
+
+      response.json({
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+            ? String((error as { message?: unknown }).message)
+            : "模型连接测试失败。";
+
+      response.status(502).json({
+        error: message,
+        ok: false,
+      });
     }
   });
 

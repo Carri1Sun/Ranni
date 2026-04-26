@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import type {
   CreateAgentMessageOptions,
   CreateAgentMessageResult,
@@ -7,6 +5,8 @@ import type {
   AgentMessage,
   AgentProvider,
   AgentToolDefinition,
+  ModelConnectionConfig,
+  ModelConnectionTestResult,
 } from "../types";
 import type {
   TraceModelRequest,
@@ -15,17 +15,6 @@ import type {
   TraceToolDefinition,
   TraceUsage,
 } from "../../trace";
-
-const envSchema = z.object({
-  DASHSCOPE_API_KEY: z.string().optional(),
-  LLM_API_KEY: z.string().optional(),
-  LLM_BASE_URL: z.string().optional(),
-  LLM_CONTEXT_WINDOW: z.coerce.number().int().positive().optional(),
-  LLM_ENABLE_THINKING: z.string().optional(),
-  LLM_MAX_TOKENS: z.coerce.number().int().positive().optional(),
-  LLM_MODEL: z.string().optional(),
-  LLM_PRESERVE_THINKING: z.string().optional(),
-});
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_CONTEXT_WINDOW = 1_000_000;
@@ -114,44 +103,24 @@ type OpenAIChatResponse = {
   };
 };
 
-function parseBooleanEnv(value: string | undefined, fallback: boolean) {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-
-  if (["1", "true", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-
-  if (["0", "false", "no", "off"].includes(normalized)) {
-    return false;
-  }
-
-  return fallback;
-}
-
-function getRuntimeConfig() {
-  const env = envSchema.parse(process.env);
-
+function getRuntimeConfig(modelConfig?: ModelConnectionConfig) {
   return {
-    apiKey: env.LLM_API_KEY?.trim() || env.DASHSCOPE_API_KEY?.trim() || "",
-    baseUrl: (env.LLM_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, ""),
-    contextWindow: env.LLM_CONTEXT_WINDOW ?? DEFAULT_CONTEXT_WINDOW,
-    enableThinking: parseBooleanEnv(env.LLM_ENABLE_THINKING, true),
-    maxTokens: env.LLM_MAX_TOKENS ?? DEFAULT_MAX_TOKENS,
-    model: env.LLM_MODEL ?? DEFAULT_MODEL,
-    preserveThinking: parseBooleanEnv(env.LLM_PRESERVE_THINKING, true),
+    apiKey: modelConfig?.qwenApiKey?.trim() ?? "",
+    baseUrl: DEFAULT_BASE_URL,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
+    enableThinking: true,
+    maxTokens: DEFAULT_MAX_TOKENS,
+    model: DEFAULT_MODEL,
+    preserveThinking: true,
   };
 }
 
-function getConfig() {
-  const config = getRuntimeConfig();
+function getConfig(modelConfig?: ModelConnectionConfig) {
+  const config = getRuntimeConfig(modelConfig);
 
   if (!config.apiKey) {
     throw new Error(
-      "未配置 Qwen API Key。请在 .env.local 中设置 LLM_API_KEY（或 DASHSCOPE_API_KEY）。",
+      "未配置 Qwen API Key。请在设置中填入 Qwen Key 并测试连接。",
     );
   }
 
@@ -447,7 +416,9 @@ function buildTraceRequest({
   system: string;
   tools: AgentToolDefinition[];
 }) {
-  const traceRuntime = getRuntimeInfo();
+  const traceRuntime = getRuntimeInfo({
+    qwenApiKey: runtime.apiKey,
+  });
 
   return {
     maxTokens: runtime.maxTokens,
@@ -462,8 +433,8 @@ function buildTraceRequest({
   } satisfies TraceModelRequest;
 }
 
-export function getRuntimeInfo() {
-  const runtime = getRuntimeConfig();
+export function getRuntimeInfo(modelConfig?: ModelConnectionConfig) {
+  const runtime = getRuntimeConfig(modelConfig);
 
   return {
     baseUrl: runtime.baseUrl,
@@ -474,31 +445,34 @@ export function getRuntimeInfo() {
   } satisfies TraceRuntimeInfo;
 }
 
-export function hasApiKey() {
-  const runtime = getRuntimeConfig();
+export function hasApiKey(modelConfig?: ModelConnectionConfig) {
+  const runtime = getRuntimeConfig(modelConfig);
   return Boolean(runtime.apiKey);
 }
 
 export function buildMessageRequest({
   messages,
+  modelConfig,
   system,
   tools,
 }: {
   messages: AgentMessage[];
+  modelConfig?: ModelConnectionConfig;
   system: string;
   tools: AgentToolDefinition[];
 }) {
-  const runtime = getRuntimeConfig();
+  const runtime = getRuntimeConfig(modelConfig);
   return buildTraceRequest({ messages, runtime, system, tools });
 }
 
 export async function createMessage({
   messages,
+  modelConfig,
   onRetry,
   system,
   tools,
 }: CreateAgentMessageOptions) {
-  const runtime = getConfig();
+  const runtime = getConfig(modelConfig);
   const request = buildTraceRequest({ messages, runtime, system, tools });
   const requestBody = buildRequestPayload({ messages, runtime, system, tools });
 
@@ -546,7 +520,7 @@ export async function createMessage({
           requestId,
           role: responseMessage.role ?? "assistant",
           stopReason: choice?.finish_reason ?? null,
-          usage: toUsageSnapshot(payload.usage, getRuntimeInfo()),
+          usage: toUsageSnapshot(payload.usage, getRuntimeInfo(modelConfig)),
         } satisfies TraceModelResponse,
       } satisfies CreateAgentMessageResult;
     } catch (error) {
@@ -568,9 +542,55 @@ export async function createMessage({
   throw new Error("Qwen 请求失败：重试后仍未获得响应。");
 }
 
+export async function testConnection(
+  modelConfig?: ModelConnectionConfig,
+): Promise<ModelConnectionTestResult> {
+  const runtime = getConfig(modelConfig);
+  const response = await fetch(`${runtime.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${runtime.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      enable_thinking: false,
+      max_tokens: 8,
+      messages: [
+        {
+          role: "user",
+          content: "ping",
+        },
+      ],
+      model: runtime.model,
+      preserve_thinking: false,
+      tools: [],
+    } satisfies OpenAIChatRequest),
+  });
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response);
+  }
+
+  const payload = (await response.json()) as OpenAIChatResponse;
+  const requestId =
+    response.headers.get("x-request-id") ??
+    response.headers.get("request-id") ??
+    response.headers.get("x-dashscope-request-id") ??
+    payload.request_id ??
+    null;
+
+  return {
+    model: payload.model?.trim() || runtime.model,
+    provider: PROVIDER_NAME,
+    requestId,
+    runtime: getRuntimeInfo(modelConfig),
+  };
+}
+
 export const qwenOpenAIProvider = {
   buildMessageRequest,
   createMessage,
   getRuntimeInfo,
   hasApiKey,
+  testConnection,
 } satisfies AgentProvider;

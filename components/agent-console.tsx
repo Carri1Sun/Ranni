@@ -21,6 +21,7 @@ import styles from "./agent-console.module.css";
 type MessageRole = "user" | "assistant";
 type ActivityType = "status" | "tool_call" | "tool_result" | "error";
 type ViewMode = "chat" | "report" | "trace";
+type ThemeMode = "dark" | "light" | "system";
 
 type ChatMessage = {
   content: string;
@@ -61,6 +62,27 @@ type AgentConsoleProps = {
   workspaceRoot: string;
 };
 
+type AppSettings = {
+  qwenApiKey: string;
+  theme: ThemeMode;
+};
+
+type TestConnectionState =
+  | {
+      status: "idle";
+    }
+  | {
+      status: "testing";
+    }
+  | {
+      message: string;
+      status: "success";
+    }
+  | {
+      message: string;
+      status: "error";
+    };
+
 const STARTER_PROMPTS = [
   "先帮我列出当前工作目录的文件结构。",
   "读取 README，如果没有就创建一个项目说明初稿。",
@@ -74,13 +96,19 @@ const DEFAULT_SESSION_TITLE = "新研究会话";
 const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
+const SETTINGS_STORAGE_KEY = "ranni:settings";
+const QWEN_PROVIDER_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const DEFAULT_SETTINGS: AppSettings = {
+  qwenApiKey: "",
+  theme: "dark",
+};
 const NAV_ITEMS = [
   { label: "Console", status: "Live" },
   { label: "Research", status: "Notebook" },
   { label: "Files", status: "Local" },
   { label: "Browser", status: "Tools" },
   { label: "Reports", status: "Drafts" },
-  { label: "Settings", status: "Soon", disabled: true },
+  { label: "Settings", status: "Config" },
 ] as const;
 const STORAGE_PROFILES = [
   {
@@ -163,6 +191,22 @@ function createSession(title = DEFAULT_SESSION_TITLE): SessionRecord {
         ...initialAssistantMessage,
       },
     ],
+  };
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return value === "dark" || value === "light" || value === "system";
+}
+
+function sanitizeSettings(raw: unknown): AppSettings {
+  if (!isObject(raw)) {
+    return DEFAULT_SETTINGS;
+  }
+
+  return {
+    qwenApiKey:
+      typeof raw.qwenApiKey === "string" ? raw.qwenApiKey.trim() : "",
+    theme: isThemeMode(raw.theme) ? raw.theme : DEFAULT_SETTINGS.theme,
   };
 }
 
@@ -1055,6 +1099,20 @@ function compactInlinePayload(value: unknown, maxLength = 220) {
   return shorten(prettifyPayload(value).replace(/\s+/g, " "), maxLength);
 }
 
+function maskSecret(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "未配置";
+  }
+
+  if (trimmed.length <= 8) {
+    return "已保存";
+  }
+
+  return `${trimmed.slice(0, 4)}…${trimmed.slice(-4)}`;
+}
+
 function renderCodeBlock(value: unknown) {
   return prettifyPayload(value);
 }
@@ -1291,7 +1349,13 @@ export function AgentConsole({
   const [input, setInput] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [testConnectionState, setTestConnectionState] =
+    useState<TestConnectionState>({
+      status: "idle",
+    });
   const [messageActionState, setMessageActionState] = useState<{
     action: "copied" | "exported";
     id: string;
@@ -1333,20 +1397,37 @@ export function AgentConsole({
       );
       const storedSidebarCollapsed =
         localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
+      const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
 
       setSessions(initialSessions);
       setActiveSessionId(
         activeSessionExists ? storedActiveSessionId : initialSessions[0]!.id,
       );
       setIsSidebarCollapsed(storedSidebarCollapsed);
+      setSettings(
+        sanitizeSettings(storedSettings ? JSON.parse(storedSettings) : null),
+      );
     } catch {
       const fallbackSession = createSession();
       setSessions([fallbackSession]);
       setActiveSessionId(fallbackSession.id);
+      setSettings(DEFAULT_SETTINGS);
     } finally {
       setIsHydrated(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  }, [isHydrated, settings]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+  }, [settings.theme]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -1550,6 +1631,64 @@ export function AgentConsole({
     setInput("");
   };
 
+  const testModelSettings = async () => {
+    const qwenApiKey = settings.qwenApiKey.trim();
+
+    if (!qwenApiKey) {
+      setTestConnectionState({
+        status: "error",
+        message: "请先输入 Qwen Key。",
+      });
+      return;
+    }
+
+    setTestConnectionState({ status: "testing" });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/model/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          modelSettings: {
+            qwenApiKey,
+          },
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          model?: string;
+          provider?: string;
+          requestId?: string | null;
+        };
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "模型连接测试失败。");
+      }
+
+      setTestConnectionState({
+        status: "success",
+        message: [
+          "连接成功",
+          payload.result?.model ? `模型：${payload.result.model}` : "",
+          payload.result?.requestId ? `request_id：${payload.result.requestId}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    } catch (error) {
+      setTestConnectionState({
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "模型连接测试失败。",
+      });
+    }
+  };
+
   const sendMessage = async (messageText: string) => {
     if (!activeSession) {
       return;
@@ -1558,6 +1697,15 @@ export function AgentConsole({
     const trimmed = messageText.trim();
 
     if (!trimmed || isRunning) {
+      return;
+    }
+
+    if (!hasConfiguredModel) {
+      setIsSettingsOpen(true);
+      setTestConnectionState({
+        status: "error",
+        message: "请先在设置中配置 Qwen Key。",
+      });
       return;
     }
 
@@ -1612,7 +1760,12 @@ export function AgentConsole({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({
+          messages: history,
+          modelSettings: {
+            qwenApiKey: settings.qwenApiKey.trim(),
+          },
+        }),
       });
 
       if (!response.ok || !response.body) {
@@ -1761,6 +1914,8 @@ export function AgentConsole({
   const latestStatusMessage =
     selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
   const workspaceLabel = createWorkspaceLabel(workspaceRoot);
+  const hasConfiguredModel = Boolean(settings.qwenApiKey.trim());
+  const effectiveHasApiKey = hasConfiguredModel || hasApiKey;
 
   return (
     <main className={styles.shell}>
@@ -1794,9 +1949,15 @@ export function AgentConsole({
                 <button
                   key={item.label}
                   className={`${styles.navItem} ${
-                    index === 0 ? styles.navItemActive : ""
+                    index === 0 || (item.label === "Settings" && isSettingsOpen)
+                      ? styles.navItemActive
+                      : ""
                   }`}
-                  disabled={"disabled" in item ? item.disabled : false}
+                  onClick={() => {
+                    if (item.label === "Settings") {
+                      setIsSettingsOpen(true);
+                    }
+                  }}
                   type="button"
                 >
                   <span>{item.label}</span>
@@ -1856,7 +2017,9 @@ export function AgentConsole({
               </div>
               <div>
                 <span>API</span>
-                <strong>{hasApiKey ? "Connected" : "Missing key"}</strong>
+                <strong>
+                  {effectiveHasApiKey ? `Connected · ${maskSecret(settings.qwenApiKey)}` : "Missing key"}
+                </strong>
               </div>
               <div>
                 <span>Workspace</span>
@@ -1912,8 +2075,18 @@ export function AgentConsole({
               <div className={styles.chatMeta}>
                 <span>{formatSessionTime(activeSession.updatedAt)}</span>
                 <span>{isRunning ? "执行中" : "空闲"}</span>
-                <span>{runtimeInfo.provider}</span>
+                <span>
+                  {effectiveHasApiKey ? runtimeInfo.provider : "模型未连接"}
+                </span>
               </div>
+              <button
+                className={styles.iconButton}
+                type="button"
+                aria-label="打开设置"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                ⚙
+              </button>
             </div>
           </div>
 
@@ -2360,10 +2533,14 @@ export function AgentConsole({
               />
               <button
                 className={styles.submitButton}
-                disabled={isRunning || !input.trim()}
+                disabled={isRunning || !input.trim() || !hasConfiguredModel}
                 type="submit"
               >
-                {isRunning ? "Ranni is working..." : "发送"}
+                {isRunning
+                  ? "Ranni is working..."
+                  : hasConfiguredModel
+                    ? "发送"
+                    : "先设置 Key"}
               </button>
             </div>
           </form>
@@ -2535,6 +2712,148 @@ export function AgentConsole({
         </aside>
       </div>
 
+      {isSettingsOpen ? (
+        <>
+          <button
+            aria-label="关闭设置"
+            className={styles.modalBackdrop}
+            type="button"
+            onClick={() => setIsSettingsOpen(false)}
+          />
+
+          <section
+            aria-labelledby="ranni-settings-title"
+            className={styles.settingsModal}
+            role="dialog"
+            aria-modal="true"
+          >
+            <header className={styles.settingsHeader}>
+              <div>
+                <p>Ranni Settings</p>
+                <h3 id="ranni-settings-title">设置</h3>
+              </div>
+              <button
+                className={styles.iconButton}
+                type="button"
+                onClick={() => setIsSettingsOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+
+            <section className={styles.settingsSection}>
+              <div className={styles.settingsSectionHeader}>
+                <h4>主题</h4>
+                <span>{settings.theme}</span>
+              </div>
+              <div className={styles.themeSegmented}>
+                {(["dark", "light", "system"] as const).map((theme) => (
+                  <button
+                    key={theme}
+                    className={`${styles.themeButton} ${
+                      settings.theme === theme ? styles.themeButtonActive : ""
+                    }`}
+                    type="button"
+                    onClick={() =>
+                      setSettings((current) => ({
+                        ...current,
+                        theme,
+                      }))
+                    }
+                  >
+                    {theme === "dark"
+                      ? "深色"
+                      : theme === "light"
+                        ? "浅色"
+                        : "跟随系统"}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className={styles.settingsSection}>
+              <div className={styles.settingsSectionHeader}>
+                <h4>模型连接</h4>
+                <span>{effectiveHasApiKey ? "configured" : "missing"}</span>
+              </div>
+
+              <label className={styles.settingsField}>
+                <span>Qwen Key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="sk-..."
+                  value={settings.qwenApiKey}
+                  onChange={(event) => {
+                    setSettings((current) => ({
+                      ...current,
+                      qwenApiKey: event.target.value,
+                    }));
+                    setTestConnectionState({ status: "idle" });
+                  }}
+                />
+              </label>
+
+              <label className={styles.settingsField}>
+                <span>Provider URL</span>
+                <input type="text" readOnly value={QWEN_PROVIDER_URL} />
+              </label>
+
+              <div className={styles.settingsActions}>
+                <button
+                  className={styles.primarySettingsButton}
+                  disabled={
+                    testConnectionState.status === "testing" ||
+                    !settings.qwenApiKey.trim()
+                  }
+                  type="button"
+                  onClick={() => {
+                    void testModelSettings();
+                  }}
+                >
+                  {testConnectionState.status === "testing"
+                    ? "测试中..."
+                    : "测试连接"}
+                </button>
+                <button
+                  className={styles.secondarySettingsButton}
+                  type="button"
+                  onClick={() => {
+                    setSettings((current) => ({
+                      ...current,
+                      qwenApiKey: "",
+                    }));
+                    setTestConnectionState({ status: "idle" });
+                  }}
+                >
+                  清空 Key
+                </button>
+              </div>
+
+              {testConnectionState.status !== "idle" ? (
+                <p
+                  className={`${styles.connectionNotice} ${
+                    testConnectionState.status === "success"
+                      ? styles.connectionNoticeSuccess
+                      : testConnectionState.status === "error"
+                        ? styles.connectionNoticeError
+                        : ""
+                  }`}
+                >
+                  {testConnectionState.status === "testing"
+                    ? "正在请求 Qwen 兼容接口..."
+                    : testConnectionState.message}
+                </p>
+              ) : (
+                <p className={styles.settingsHint}>
+                  Key 仅保存在本机 localStorage，请不要在共享电脑上保存敏感凭据。
+                </p>
+              )}
+            </section>
+          </section>
+        </>
+      ) : null}
+
       {isInfoOpen ? (
         <>
           <button
@@ -2563,7 +2882,9 @@ export function AgentConsole({
               </article>
               <article className={styles.infoCard}>
                 <span>模型状态</span>
-                <strong>{hasApiKey ? "Qwen 已连接" : "缺少 API Key"}</strong>
+                <strong>
+                  {effectiveHasApiKey ? "Qwen Key 已配置" : "缺少 Qwen Key"}
+                </strong>
               </article>
               <article className={styles.infoCard}>
                 <span>模型配置</span>
@@ -2596,10 +2917,9 @@ export function AgentConsole({
               ))}
             </div>
 
-            {!hasApiKey ? (
+            {!effectiveHasApiKey ? (
               <div className={styles.inlineWarning}>
-                没有检测到 `LLM_API_KEY`。先复制 `.env.example` 为
-                `.env.local`，再填入你的阿里百炼 API Key。
+                需要在设置中填入 Qwen Key 才能连接模型。Key 会保存在本机浏览器存储中。
               </div>
             ) : null}
           </section>

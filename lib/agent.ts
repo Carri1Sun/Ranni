@@ -5,6 +5,7 @@ import {
   type AgentAssistantBlock,
   type AgentMessage,
   type AgentToolResultBlock,
+  type ModelConnectionConfig,
 } from "./llm";
 import { createResearchNotebook } from "./research";
 import { executeTool, getToolDefinitions } from "./tools";
@@ -32,6 +33,7 @@ type PlainMessage = {
 type RunAgentTurnOptions = {
   emit: (event: StreamEvent) => void;
   messages: PlainMessage[];
+  modelConfig?: ModelConnectionConfig;
 };
 
 function createSystemPrompt({
@@ -227,14 +229,16 @@ function toTraceToolDefinitions() {
 
 function createContextSnapshot({
   conversation,
+  modelConfig,
   system,
   tools,
 }: {
   conversation: AgentMessage[];
+  modelConfig?: ModelConnectionConfig;
   system: string;
   tools: TraceToolDefinition[];
 }): TraceContextSnapshot {
-  const runtime = getModelRuntimeInfo();
+  const runtime = getModelRuntimeInfo(modelConfig);
   const messages = conversation.map(summarizeMessage);
   const serializedChars =
     system.length +
@@ -274,10 +278,11 @@ function createContextSnapshot({
 export async function runAgentTurn({
   emit,
   messages,
+  modelConfig,
 }: RunAgentTurnOptions) {
   const toolDefinitions = getToolDefinitions();
   const traceToolDefinitions = toTraceToolDefinitions();
-  const runtime = getModelRuntimeInfo();
+  const runtime = getModelRuntimeInfo(modelConfig);
   const system = createSystemPrompt({
     runtime,
     toolNames: toolDefinitions.map((tool) => tool.name),
@@ -343,6 +348,7 @@ export async function runAgentTurn({
 
       const context = createContextSnapshot({
         conversation,
+        modelConfig,
         system,
         tools: traceToolDefinitions,
       });
@@ -359,6 +365,7 @@ export async function runAgentTurn({
         request: buildMessageRequest({
           system,
           messages: conversation,
+          modelConfig,
           tools: toolDefinitions,
         }),
         runId,
@@ -370,6 +377,7 @@ export async function runAgentTurn({
       const assistantResult = await createMessage({
         system,
         messages: conversation,
+        modelConfig,
         onRetry: ({ attempt, reason }) => {
           const message = `${runtime.model} 服务暂时不稳定，正在自动重试（${attempt}/1）。原因：${reason}`;
 

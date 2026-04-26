@@ -76,6 +76,74 @@
   font-family: var(--font-ui);
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --ranni-bg-0: #eef3fb;
+  --ranni-bg-1: #e7edf7;
+  --ranni-bg-2: #dce5f2;
+  --ranni-bg-radial-1: rgba(88, 112, 206, 0.16);
+  --ranni-bg-radial-2: rgba(200, 178, 125, 0.14);
+  --ranni-surface-0: rgba(255, 255, 255, 0.86);
+  --ranni-surface-1: rgba(248, 250, 255, 0.88);
+  --ranni-surface-2: rgba(238, 243, 251, 0.82);
+  --ranni-surface-solid: #f7f9fd;
+  --ranni-surface-raised: #ffffff;
+  --ranni-surface-hover: #e8eef9;
+  --ranni-text-0: #101827;
+  --ranni-text-1: #28354b;
+  --ranni-text-2: #5d6a80;
+  --ranni-text-3: #8490a4;
+  --ranni-line-0: rgba(20, 32, 51, 0.08);
+  --ranni-line-1: rgba(20, 32, 51, 0.13);
+  --ranni-line-2: rgba(20, 32, 51, 0.22);
+  --ranni-accent-0: #506ee8;
+  --ranni-accent-1: #7567d6;
+  --ranni-accent-2: #314aa8;
+  --ranni-accent-soft: rgba(80, 110, 232, 0.12);
+  --ranni-accent-glow: rgba(80, 110, 232, 0.2);
+  --ranni-gold: #927741;
+  --ranni-gold-soft: rgba(146, 119, 65, 0.13);
+  --shadow-soft: 0 18px 60px rgba(31, 42, 68, 0.16);
+  --shadow-panel: 0 12px 36px rgba(31, 42, 68, 0.13);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+
+    --ranni-bg-0: #eef3fb;
+    --ranni-bg-1: #e7edf7;
+    --ranni-bg-2: #dce5f2;
+    --ranni-bg-radial-1: rgba(88, 112, 206, 0.16);
+    --ranni-bg-radial-2: rgba(200, 178, 125, 0.14);
+    --ranni-surface-0: rgba(255, 255, 255, 0.86);
+    --ranni-surface-1: rgba(248, 250, 255, 0.88);
+    --ranni-surface-2: rgba(238, 243, 251, 0.82);
+    --ranni-surface-solid: #f7f9fd;
+    --ranni-surface-raised: #ffffff;
+    --ranni-surface-hover: #e8eef9;
+    --ranni-text-0: #101827;
+    --ranni-text-1: #28354b;
+    --ranni-text-2: #5d6a80;
+    --ranni-text-3: #8490a4;
+    --ranni-line-0: rgba(20, 32, 51, 0.08);
+    --ranni-line-1: rgba(20, 32, 51, 0.13);
+    --ranni-line-2: rgba(20, 32, 51, 0.22);
+    --ranni-accent-0: #506ee8;
+    --ranni-accent-1: #7567d6;
+    --ranni-accent-2: #314aa8;
+    --ranni-accent-soft: rgba(80, 110, 232, 0.12);
+    --ranni-accent-glow: rgba(80, 110, 232, 0.2);
+    --ranni-gold: #927741;
+    --ranni-gold-soft: rgba(146, 119, 65, 0.13);
+    --shadow-soft: 0 18px 60px rgba(31, 42, 68, 0.16);
+    --shadow-panel: 0 12px 36px rgba(31, 42, 68, 0.13);
+    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+}
+
 html {
   height: 100%;
 }
