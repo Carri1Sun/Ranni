@@ -1,8 +1,10 @@
 .markdown {
   display: grid;
-  gap: 0.85rem;
-  line-height: 1.68;
-  font-weight: 600;
+  gap: 1rem;
+  color: var(--markdown-text, var(--ranni-text-1));
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.72;
   word-break: break-word;
 }
 
@@ -21,20 +23,35 @@
 .markdown h5,
 .markdown h6 {
   margin: 0;
-  line-height: 1.2;
-  letter-spacing: -0.03em;
+  color: var(--markdown-heading, var(--ranni-text-0));
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 .markdown h1 {
-  font-size: 1.55rem;
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  line-height: 1.08;
 }
 
 .markdown h2 {
-  font-size: 1.3rem;
+  margin-top: 0.35rem;
+  font-size: 1.55rem;
+  line-height: 1.18;
 }
 
 .markdown h3 {
-  font-size: 1.08rem;
+  margin-top: 0.2rem;
+  font-size: 1.18rem;
+  line-height: 1.25;
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  font-weight: 650;
 }
 
 .markdown p,
@@ -49,80 +66,118 @@
 
 .markdown ul,
 .markdown ol {
+  display: grid;
+  gap: 0.36rem;
   padding-left: 1.35rem;
 }
 
-.markdown li + li {
-  margin-top: 0.28rem;
+.markdown li {
+  padding-left: 0.1rem;
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: 0.36rem;
 }
 
 .markdown blockquote {
-  padding: 0.7rem 0.9rem;
-  border-left: 4px solid #111111;
-  background: #fff4b8;
+  padding: 0.85rem 1rem;
+  border-left: 2px solid var(--ranni-gold);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--markdown-quote-bg, rgba(200, 178, 125, 0.08));
+  color: var(--markdown-text, var(--ranni-text-1));
 }
 
 .markdown code {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono);
 }
 
 .markdown :not(pre) > code {
   padding: 0.12rem 0.34rem;
-  border: 2px solid #111111;
-  border-radius: 0.45rem;
-  background: #fff4b8;
+  border: 1px solid var(--markdown-line, var(--ranni-line-1));
+  border-radius: var(--radius-xs);
+  background: var(--markdown-code-bg, rgba(255, 255, 255, 0.05));
+  color: var(--markdown-code-text, var(--ranni-accent-2));
   font-size: 0.92em;
 }
 
 .markdown pre {
   overflow-x: auto;
   padding: 0.9rem 1rem;
-  border: 3px solid #111111;
-  border-radius: 1rem;
-  background: #111111;
-  color: #fff7d6;
+  border: 1px solid var(--markdown-line, var(--ranni-line-1));
+  border-radius: var(--radius-md);
+  background: var(--markdown-pre-bg, rgba(4, 7, 14, 0.76));
+  color: var(--markdown-pre-text, #d7e0f7);
 }
 
 .markdown pre code {
-  font-size: 0.92rem;
+  font-size: 0.88rem;
+  line-height: 1.65;
   white-space: pre;
 }
 
 .markdown table {
+  display: block;
   width: 100%;
-  border-collapse: collapse;
-  overflow: hidden;
-  border: 3px solid #111111;
-  border-radius: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--markdown-line, var(--ranni-line-1));
+  border-radius: var(--radius-md);
+  border-spacing: 0;
+  border-collapse: separate;
+}
+
+.markdown table thead,
+.markdown table tbody,
+.markdown table tr {
+  width: 100%;
 }
 
 .markdown th,
 .markdown td {
-  padding: 0.68rem 0.8rem;
-  border: 2px solid #111111;
+  padding: 0.7rem 0.8rem;
+  border-right: 1px solid var(--markdown-line, var(--ranni-line-0));
+  border-bottom: 1px solid var(--markdown-line, var(--ranni-line-0));
   text-align: left;
   vertical-align: top;
 }
 
+.markdown th:last-child,
+.markdown td:last-child {
+  border-right: 0;
+}
+
+.markdown tr:last-child td {
+  border-bottom: 0;
+}
+
 .markdown th {
-  background: #00e0ff;
+  background: rgba(143, 167, 255, 0.1);
+  color: var(--markdown-heading, var(--ranni-text-0));
+  font-weight: 650;
 }
 
 .markdown td {
-  background: #ffffff;
+  color: var(--markdown-text, var(--ranni-text-1));
 }
 
 .markdown a {
-  color: #0057ff;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 0.18em;
+  color: var(--markdown-link, var(--ranni-accent-2));
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
 }
 
 .markdown strong {
-  font-weight: 800;
+  color: var(--markdown-heading, var(--ranni-text-0));
+  font-weight: 700;
+}
+
+.markdown em {
+  color: var(--markdown-muted, var(--ranni-text-2));
 }
 
 .markdown hr {
   border: 0;
-  border-top: 3px solid #111111;
+  border-top: 1px solid var(--markdown-line, var(--ranni-line-1));
 }

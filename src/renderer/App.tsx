@@ -98,8 +98,8 @@ export function App() {
     return (
       <main className="app-shell">
         <section className="splash-card">
-          <p className="eyebrow">Electron Frontend</p>
-          <h1>正在连接本地 Node.js 后端</h1>
+          <p className="eyebrow">Ranni Local Workbench</p>
+          <h1>正在连接 Ranni 本地运行时</h1>
           <p>目标地址：{apiBaseUrl}</p>
         </section>
       </main>
@@ -111,7 +111,7 @@ export function App() {
       <main className="app-shell">
         <section className="splash-card">
           <p className="eyebrow">连接失败</p>
-          <h1>后端未启动或未准备好</h1>
+          <h1>Ranni 本地运行时尚未准备好</h1>
           <p>{runtimeState.message}</p>
           <p>请确认 `BACKEND_PORT` 与 Electron 配置一致。</p>
         </section>
