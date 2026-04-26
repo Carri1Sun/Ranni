@@ -20,7 +20,7 @@ import styles from "./agent-console.module.css";
 
 type MessageRole = "user" | "assistant";
 type ActivityType = "status" | "tool_call" | "tool_result" | "error";
-type ViewMode = "chat" | "trace";
+type ViewMode = "chat" | "report" | "trace";
 
 type ChatMessage = {
   content: string;
@@ -68,12 +68,20 @@ const STARTER_PROMPTS = [
 ];
 
 const INITIAL_ASSISTANT_MESSAGE =
-  "我已经具备终端、文件系统和网页搜索工具。你可以让我检查目录、生成代码、修改文件，或者联网搜资料后再执行。";
+  "我可以读取文件、搜索网页、调用工具并整理研究报告。给我一个主题，或让我先检查当前工作区。";
 
-const DEFAULT_SESSION_TITLE = "新会话";
+const DEFAULT_SESSION_TITLE = "新研究会话";
 const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
+const NAV_ITEMS = [
+  { label: "Console", status: "Live" },
+  { label: "Research", status: "Notebook" },
+  { label: "Files", status: "Local" },
+  { label: "Browser", status: "Tools" },
+  { label: "Reports", status: "Drafts" },
+  { label: "Settings", status: "Soon", disabled: true },
+] as const;
 const STORAGE_PROFILES = [
   {
     activityDetailLimit: 3000,
@@ -978,6 +986,75 @@ function createRunTitle(run: TraceRun) {
   return prompt.length > 28 ? `${prompt.slice(0, 28)}…` : prompt || "未命名 Run";
 }
 
+function createWorkspaceLabel(workspaceRoot: string) {
+  const normalized = workspaceRoot.replace(/\/+$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+
+  if (parts.length === 0) {
+    return workspaceRoot || "未配置";
+  }
+
+  return parts.at(-1) ?? workspaceRoot;
+}
+
+function getStatusLabel(status?: string) {
+  if (status === "running") {
+    return "运行中";
+  }
+
+  if (status === "completed") {
+    return "已完成";
+  }
+
+  if (status === "failed") {
+    return "失败";
+  }
+
+  return "空闲";
+}
+
+function getCompletedStepCount(run?: TraceRun) {
+  if (!run) {
+    return 0;
+  }
+
+  return run.steps.filter((step) => step.status !== "running").length;
+}
+
+function hasReportSignals(content: string) {
+  const normalized = content.trim();
+
+  if (normalized.length > 600) {
+    return true;
+  }
+
+  return (
+    /^#{1,3}\s+\S/m.test(normalized) ||
+    /^\s*[-*]\s+\S/m.test(normalized) ||
+    /\[[^\]]+\]\([^)]+\)/.test(normalized) ||
+    /^\|.+\|$/m.test(normalized)
+  );
+}
+
+function getReportCandidate(messages: ChatMessage[]) {
+  return [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        message.content !== INITIAL_ASSISTANT_MESSAGE &&
+        hasReportSignals(message.content),
+    );
+}
+
+function findToolResult(step: TraceStep | undefined, toolUseId: string) {
+  return step?.toolResults.find((result) => result.toolUseId === toolUseId);
+}
+
+function compactInlinePayload(value: unknown, maxLength = 220) {
+  return shorten(prettifyPayload(value).replace(/\s+/g, " "), maxLength);
+}
+
 function renderCodeBlock(value: unknown) {
   return prettifyPayload(value);
 }
@@ -1678,6 +1755,12 @@ export function AgentConsole({
   const selectedStep =
     selectedRun?.steps.find((step) => step.id === selectedStepId) ??
     selectedRun?.steps[selectedRun.steps.length - 1];
+  const reportCandidate = getReportCandidate(activeSession.messages);
+  const inspectorRuntime = selectedRun?.runtime ?? runtimeInfo;
+  const completedStepCount = getCompletedStepCount(selectedRun);
+  const latestStatusMessage =
+    selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
+  const workspaceLabel = createWorkspaceLabel(workspaceRoot);
 
   return (
     <main className={styles.shell}>
@@ -1688,18 +1771,42 @@ export function AgentConsole({
       >
         {!isSidebarCollapsed ? (
           <aside className={styles.sidebar}>
+            <div className={styles.brandBlock}>
+              <div className={styles.brandMark} aria-hidden="true" />
+              <div className={styles.brandText}>
+                <strong>Ranni</strong>
+                <span>Local AI Agent</span>
+              </div>
+            </div>
+
             <div className={styles.sidebarTop}>
               <button
                 className={styles.primarySidebarButton}
                 type="button"
                 onClick={createNewSession}
               >
-                新建 Session
+                新研究会话
               </button>
             </div>
 
+            <nav className={styles.navList} aria-label="Ranni workspace">
+              {NAV_ITEMS.map((item, index) => (
+                <button
+                  key={item.label}
+                  className={`${styles.navItem} ${
+                    index === 0 ? styles.navItemActive : ""
+                  }`}
+                  disabled={"disabled" in item ? item.disabled : false}
+                  type="button"
+                >
+                  <span>{item.label}</span>
+                  <small>{item.status}</small>
+                </button>
+              ))}
+            </nav>
+
             <div className={styles.sidebarLabel}>
-              {`Sessions · ${sessions.length}`}
+              {`Research Threads · ${sessions.length}`}
             </div>
 
             <div className={styles.sessionList}>
@@ -1725,6 +1832,37 @@ export function AgentConsole({
                 );
               })}
             </div>
+
+            <div className={styles.sidebarSection}>
+              <div className={styles.sidebarLabel}>Starter Prompts</div>
+              <div className={styles.starterList}>
+                {STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    className={styles.starterButton}
+                    type="button"
+                    onClick={() => setInput(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <section className={styles.localStatusCard}>
+              <div>
+                <span>Model</span>
+                <strong>{runtimeInfo.model}</strong>
+              </div>
+              <div>
+                <span>API</span>
+                <strong>{hasApiKey ? "Connected" : "Missing key"}</strong>
+              </div>
+              <div>
+                <span>Workspace</span>
+                <strong title={workspaceRoot}>{workspaceLabel}</strong>
+              </div>
+            </section>
           </aside>
         ) : null}
 
@@ -1750,7 +1888,16 @@ export function AgentConsole({
                   type="button"
                   onClick={() => setActiveView("chat")}
                 >
-                  对话
+                  Console
+                </button>
+                <button
+                  className={`${styles.viewButton} ${
+                    activeView === "report" ? styles.viewButtonActive : ""
+                  }`}
+                  type="button"
+                  onClick={() => setActiveView("report")}
+                >
+                  Report
                 </button>
                 <button
                   className={`${styles.viewButton} ${
@@ -1765,6 +1912,7 @@ export function AgentConsole({
               <div className={styles.chatMeta}>
                 <span>{formatSessionTime(activeSession.updatedAt)}</span>
                 <span>{isRunning ? "执行中" : "空闲"}</span>
+                <span>{runtimeInfo.provider}</span>
               </div>
             </div>
           </div>
@@ -1850,6 +1998,55 @@ export function AgentConsole({
                   ↓ 底部
                 </button>
               ) : null}
+            </div>
+          ) : activeView === "report" ? (
+            <div className={styles.reportWrap}>
+              {reportCandidate ? (
+                <article className={styles.reportCanvas}>
+                  <header className={styles.reportHeader}>
+                    <div>
+                      <p>Report Preview</p>
+                      <h1>{activeSession.title}</h1>
+                      <span>
+                        最近更新于 {formatSessionTime(activeSession.updatedAt)}
+                      </span>
+                    </div>
+                    <div className={styles.reportActions}>
+                      <button
+                        className={styles.messageActionButton}
+                        type="button"
+                        onClick={() => {
+                          void copyMessageContent(reportCandidate);
+                        }}
+                      >
+                        {messageActionState?.id === reportCandidate.id &&
+                        messageActionState.action === "copied"
+                          ? "已复制"
+                          : "复制报告"}
+                      </button>
+                      <button
+                        className={styles.messageActionButton}
+                        type="button"
+                        onClick={() => exportMessageAsMarkdown(reportCandidate)}
+                      >
+                        {messageActionState?.id === reportCandidate.id &&
+                        messageActionState.action === "exported"
+                          ? "已导出"
+                          : "导出 .md"}
+                      </button>
+                    </div>
+                  </header>
+                  <MarkdownContent content={reportCandidate.content} />
+                </article>
+              ) : (
+                <div className={styles.reportEmpty}>
+                  <p>Report Preview</p>
+                  <h2>还没有可预览的研究报告</h2>
+                  <span>
+                    让 Ranni 调研一个主题、核查资料或整理结构化报告后，这里会显示最近一条 Markdown 输出。
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
             <div className={styles.traceShell}>
@@ -2143,7 +2340,7 @@ export function AgentConsole({
               <textarea
                 className={styles.textarea}
                 name="prompt"
-                placeholder="例如：帮我检查项目结构，然后创建一个 README，并用终端验证目录。"
+                placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
                 rows={3}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -2166,11 +2363,176 @@ export function AgentConsole({
                 disabled={isRunning || !input.trim()}
                 type="submit"
               >
-                {isRunning ? "执行中..." : "发送"}
+                {isRunning ? "Ranni is working..." : "发送"}
               </button>
             </div>
           </form>
         </section>
+
+        <aside className={styles.inspector}>
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Current Run</h3>
+              <span
+                className={`${styles.statusPill} ${
+                  selectedRun ? styles[selectedRun.status] : ""
+                }`}
+              >
+                {getStatusLabel(selectedRun?.status)}
+              </span>
+            </div>
+
+            {selectedRun ? (
+              <div className={styles.inspectorMetrics}>
+                <div>
+                  <span>Started</span>
+                  <strong>{formatSessionTime(selectedRun.startedAt)}</strong>
+                </div>
+                <div>
+                  <span>Duration</span>
+                  <strong>{formatDuration(selectedRun.durationMs)}</strong>
+                </div>
+                <div>
+                  <span>Steps</span>
+                  <strong>
+                    {completedStepCount}/
+                    {selectedRun.totalSteps || selectedRun.steps.length}
+                  </strong>
+                </div>
+              </div>
+            ) : (
+              <p className={styles.inspectorEmpty}>
+                发送任务后，这里会显示本轮执行状态。
+              </p>
+            )}
+          </section>
+
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Step Progress</h3>
+              <span>{selectedRun?.steps.length ?? 0}</span>
+            </div>
+            {selectedRun && selectedRun.steps.length > 0 ? (
+              <div className={styles.inspectorStepList}>
+                {selectedRun.steps.map((step) => (
+                  <button
+                    key={step.id}
+                    className={`${styles.inspectorStep} ${
+                      step.id === selectedStep?.id ? styles.inspectorStepActive : ""
+                    }`}
+                    type="button"
+                    onClick={() => {
+                      setActiveView("trace");
+                      setSelectedRunId(selectedRun.id);
+                      setSelectedStepId(step.id);
+                    }}
+                  >
+                    <span>Step {step.stepIndex}</span>
+                    <strong>{getStatusLabel(step.status)}</strong>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.inspectorEmpty}>暂无 step。</p>
+            )}
+            {latestStatusMessage ? (
+              <p className={styles.latestStatus}>
+                {shorten(latestStatusMessage.message, 140)}
+              </p>
+            ) : null}
+          </section>
+
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Tool Calls</h3>
+              <span>{selectedStep?.toolCalls.length ?? 0}</span>
+            </div>
+            {selectedStep && selectedStep.toolCalls.length > 0 ? (
+              <div className={styles.toolInspectorList}>
+                {selectedStep.toolCalls.map((toolCall) => {
+                  const toolResult = findToolResult(selectedStep, toolCall.toolUseId);
+
+                  return (
+                    <details
+                      key={toolCall.id}
+                      className={styles.toolInspectorCard}
+                    >
+                      <summary>
+                        <span>{toolCall.name}</span>
+                        <strong
+                          className={`${styles.statusPill} ${
+                            toolResult
+                              ? styles[toolResult.success ? "completed" : "failed"]
+                              : styles.running
+                          }`}
+                        >
+                          {toolResult
+                            ? toolResult.success
+                              ? "success"
+                              : "failed"
+                            : "running"}
+                        </strong>
+                      </summary>
+                      <p>{compactInlinePayload(toolCall.arguments)}</p>
+                      <pre>{renderCodeBlock(toolCall.arguments)}</pre>
+                      {toolResult ? (
+                        <>
+                          <p>
+                            {formatDuration(toolResult.durationMs)} ·{" "}
+                            {shorten(toolResult.result, 180)}
+                          </p>
+                          <pre>{toolResult.result}</pre>
+                        </>
+                      ) : null}
+                    </details>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className={styles.inspectorEmpty}>当前 step 没有工具调用。</p>
+            )}
+          </section>
+
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Runtime</h3>
+              <span>{inspectorRuntime.provider}</span>
+            </div>
+            <div className={styles.inspectorMetrics}>
+              <div>
+                <span>Model</span>
+                <strong>{inspectorRuntime.model}</strong>
+              </div>
+              <div>
+                <span>Max Tokens</span>
+                <strong>{formatTokenCount(inspectorRuntime.maxTokens)}</strong>
+              </div>
+              <div>
+                <span>Context</span>
+                <strong>{formatTokenCount(inspectorRuntime.contextWindow)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Research Signals</h3>
+              <span>{activeSession.researchContext ? "Active" : "Idle"}</span>
+            </div>
+            {selectedStep?.researchState || activeSession.researchContext ? (
+              <pre className={styles.researchSignal}>
+                {shorten(
+                  selectedStep?.researchState ?? activeSession.researchContext ?? "",
+                  900,
+                )}
+              </pre>
+            ) : (
+              <p className={styles.inspectorEmpty}>
+                Research notebook 尚未产生状态。
+              </p>
+            )}
+          </section>
+        </aside>
       </div>
 
       {isInfoOpen ? (
