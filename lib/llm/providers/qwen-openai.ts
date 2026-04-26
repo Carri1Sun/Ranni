@@ -61,7 +61,7 @@ type OpenAIChatRequest = {
   messages: OpenAIChatMessage[];
   model: string;
   preserve_thinking: boolean;
-  tools: Array<{
+  tools?: Array<{
     function: {
       description?: string;
       name: string;
@@ -395,13 +395,15 @@ function buildRequestPayload({
   system: string;
   tools: AgentToolDefinition[];
 }) {
+  const openAITools = toOpenAITools(tools);
+
   return {
     enable_thinking: runtime.enableThinking,
     max_tokens: runtime.maxTokens,
     messages: toOpenAIChatMessages({ messages, system }),
     model: runtime.model,
     preserve_thinking: runtime.preserveThinking,
-    tools: toOpenAITools(tools),
+    ...(openAITools.length > 0 ? { tools: openAITools } : {}),
   } satisfies OpenAIChatRequest;
 }
 
@@ -563,7 +565,6 @@ export async function testConnection(
       ],
       model: runtime.model,
       preserve_thinking: false,
-      tools: [],
     } satisfies OpenAIChatRequest),
   });
 
