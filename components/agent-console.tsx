@@ -23,7 +23,6 @@ type ActivityType = "status" | "tool_call" | "tool_result" | "error";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "qwen";
-type ApiSettingsView = "overview" | "providerConfig" | "providerList";
 type SettingsTab = "about" | "account" | "api" | "appearance";
 
 type ChatMessage = {
@@ -72,6 +71,7 @@ type AppSettings = {
   deepseekApiKey: string;
   provider: ProviderId;
   qwenApiKey: string;
+  tavilyApiKey: string;
   theme: ThemeMode;
 };
 
@@ -167,6 +167,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   deepseekApiKey: "",
   provider: "deepseek",
   qwenApiKey: "",
+  tavilyApiKey: "",
   theme: "dark",
 };
 const PROVIDER_OPTIONS = [
@@ -333,6 +334,8 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
+    tavilyApiKey:
+      typeof raw.tavilyApiKey === "string" ? raw.tavilyApiKey.trim() : "",
     theme: isThemeMode(raw.theme) ? raw.theme : DEFAULT_SETTINGS.theme,
   };
 }
@@ -1181,65 +1184,110 @@ function getProviderOption(provider: ProviderId) {
   );
 }
 
-function getProviderApiKey(settings: AppSettings) {
-  if (settings.provider === "custom") {
+function getProviderApiKey(
+  settings: AppSettings,
+  providerId: ProviderId = settings.provider,
+) {
+  if (providerId === "custom") {
     return settings.customApiKey.trim();
   }
 
-  if (settings.provider === "qwen") {
+  if (providerId === "qwen") {
     return settings.qwenApiKey.trim();
   }
 
   return settings.deepseekApiKey.trim();
 }
 
-function getProviderBaseUrl(settings: AppSettings) {
-  const provider = getProviderOption(settings.provider);
+function getProviderBaseUrl(
+  settings: AppSettings,
+  providerId: ProviderId = settings.provider,
+) {
+  const provider = getProviderOption(providerId);
 
-  if (settings.provider === "custom") {
+  if (providerId === "custom") {
     return settings.customBaseUrl.trim();
   }
 
   return provider.baseUrl;
 }
 
-function getProviderModel(settings: AppSettings) {
-  const provider = getProviderOption(settings.provider);
+function getProviderModel(
+  settings: AppSettings,
+  providerId: ProviderId = settings.provider,
+) {
+  const provider = getProviderOption(providerId);
 
-  if (settings.provider === "custom") {
+  if (providerId === "custom") {
     return settings.customModel.trim();
   }
 
   return provider.model;
 }
 
-function buildModelSettings(settings: AppSettings) {
-  const provider = getProviderOption(settings.provider);
+function setProviderApiKey(
+  settings: AppSettings,
+  providerId: ProviderId,
+  apiKey: string,
+) {
+  if (providerId === "custom") {
+    return {
+      ...settings,
+      customApiKey: apiKey,
+    };
+  }
+
+  if (providerId === "qwen") {
+    return {
+      ...settings,
+      qwenApiKey: apiKey,
+    };
+  }
 
   return {
-    apiKey: getProviderApiKey(settings),
-    baseUrl: getProviderBaseUrl(settings),
-    model: getProviderModel(settings),
+    ...settings,
+    deepseekApiKey: apiKey,
+  };
+}
+
+function buildModelSettings(
+  settings: AppSettings,
+  providerId: ProviderId = settings.provider,
+) {
+  const provider = getProviderOption(providerId);
+
+  return {
+    apiKey: getProviderApiKey(settings, providerId),
+    baseUrl: getProviderBaseUrl(settings, providerId),
+    model: getProviderModel(settings, providerId),
     provider: provider.provider,
+  };
+}
+
+function buildToolSettings(settings: AppSettings) {
+  return {
+    tavilyApiKey: settings.tavilyApiKey.trim(),
   };
 }
 
 function getProviderValidationMessage(
   settings: AppSettings,
   hasEnvironmentApiKey: boolean,
+  providerId: ProviderId = settings.provider,
 ) {
-  const hasApiKey = Boolean(getProviderApiKey(settings)) || hasEnvironmentApiKey;
+  const hasApiKey =
+    Boolean(getProviderApiKey(settings, providerId)) || hasEnvironmentApiKey;
 
-  if (settings.provider === "custom") {
-    if (!getProviderBaseUrl(settings)) {
+  if (providerId === "custom") {
+    if (!getProviderBaseUrl(settings, providerId)) {
       return "请先填写自定义 Provider URL。";
     }
 
-    if (!getProviderModel(settings)) {
+    if (!getProviderModel(settings, providerId)) {
       return "请先填写自定义模型名称。";
     }
 
-    if (!getProviderApiKey(settings)) {
+    if (!getProviderApiKey(settings, providerId)) {
       return "请先填写自定义 Provider API Key。";
     }
 
@@ -1247,7 +1295,7 @@ function getProviderValidationMessage(
   }
 
   if (!hasApiKey) {
-    return `请先填写 ${getProviderOption(settings.provider).label} API Key。`;
+    return `请先填写 ${getProviderOption(providerId).label} API Key。`;
   }
 
   return "";
@@ -1577,10 +1625,17 @@ export function AgentConsole({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [apiSettingsView, setApiSettingsView] =
-    useState<ApiSettingsView>("overview");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
+  const [expandedProviderId, setExpandedProviderId] = useState<ProviderId | "">(
+    DEFAULT_SETTINGS.provider,
+  );
+  const [isTavilyKeyEditorOpen, setIsTavilyKeyEditorOpen] = useState(false);
+  const [settingsToast, setSettingsToast] = useState("");
   const [testConnectionState, setTestConnectionState] =
+    useState<TestConnectionState>({
+      status: "idle",
+    });
+  const [tavilyConnectionState, setTavilyConnectionState] =
     useState<TestConnectionState>({
       status: "idle",
     });
@@ -1593,6 +1648,9 @@ export function AgentConsole({
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const activeAgentRequestRef = useRef<ActiveAgentRequest | null>(null);
 
   const isNearBottom = (node: HTMLDivElement) =>
@@ -1637,14 +1695,18 @@ export function AgentConsole({
       );
       setIsSidebarCollapsed(storedSidebarCollapsed);
       setIsInspectorCollapsed(storedInspectorCollapsed);
-      setSettings(
-        sanitizeSettings(storedSettings ? JSON.parse(storedSettings) : null),
+      const nextSettings = sanitizeSettings(
+        storedSettings ? JSON.parse(storedSettings) : null,
       );
+
+      setSettings(nextSettings);
+      setExpandedProviderId(nextSettings.provider);
     } catch {
       const fallbackSession = createSession();
       setSessions([fallbackSession]);
       setActiveSessionId(fallbackSession.id);
       setSettings(DEFAULT_SETTINGS);
+      setExpandedProviderId(DEFAULT_SETTINGS.provider);
     } finally {
       setIsHydrated(true);
     }
@@ -1755,6 +1817,10 @@ export function AgentConsole({
         clearTimeout(messageActionTimerRef.current);
       }
 
+      if (settingsToastTimerRef.current) {
+        clearTimeout(settingsToastTimerRef.current);
+      }
+
       activeAgentRequestRef.current?.controller.abort();
     };
   }, []);
@@ -1812,6 +1878,31 @@ export function AgentConsole({
       );
       messageActionTimerRef.current = null;
     }, 1800);
+  };
+
+  const flashSettingsToast = (message: string) => {
+    setSettingsToast(message);
+
+    if (settingsToastTimerRef.current) {
+      clearTimeout(settingsToastTimerRef.current);
+    }
+
+    settingsToastTimerRef.current = setTimeout(() => {
+      setSettingsToast("");
+      settingsToastTimerRef.current = null;
+    }, 1800);
+  };
+
+  const selectProvider = (providerId: ProviderId) => {
+    const provider = getProviderOption(providerId);
+
+    setSettings((current) => ({
+      ...current,
+      provider: providerId,
+    }));
+    setExpandedProviderId(providerId);
+    setTestConnectionState({ status: "idle" });
+    flashSettingsToast(`模型 provider 已更新为 ${provider.label}`);
   };
 
   const copyMessageContent = async (message: ChatMessage) => {
@@ -1960,10 +2051,11 @@ export function AgentConsole({
     setInput("");
   };
 
-  const testModelSettings = async () => {
+  const testModelSettings = async (providerId: ProviderId = settings.provider) => {
     const validationMessage = getProviderValidationMessage(
       settings,
-      canUseEnvironmentApiKey,
+      canUseEnvironmentApiKeyForProvider(providerId),
+      providerId,
     );
 
     if (validationMessage) {
@@ -1983,7 +2075,7 @@ export function AgentConsole({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          modelSettings: buildModelSettings(settings),
+          modelSettings: buildModelSettings(settings, providerId),
         }),
       });
       const payload = (await response.json()) as {
@@ -2019,6 +2111,62 @@ export function AgentConsole({
     }
   };
 
+  const testTavilySettings = async () => {
+    if (!settings.tavilyApiKey.trim()) {
+      setIsTavilyKeyEditorOpen(true);
+      setTavilyConnectionState({
+        status: "error",
+        message: "请先填写 Tavily 搜索 API Key。",
+      });
+      return;
+    }
+
+    setTavilyConnectionState({ status: "testing" });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/tavily/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          toolSettings: buildToolSettings(settings),
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          requestId?: string | null;
+          resultCount?: number;
+        };
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "Tavily 连接测试失败。");
+      }
+
+      setTavilyConnectionState({
+        status: "success",
+        message: [
+          "连接成功",
+          typeof payload.result?.resultCount === "number"
+            ? `结果数：${payload.result.resultCount}`
+            : "",
+          payload.result?.requestId ? `request_id：${payload.result.requestId}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    } catch (error) {
+      setTavilyConnectionState({
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "Tavily 连接测试失败。",
+      });
+    }
+  };
+
   const sendMessage = async (messageText: string) => {
     if (!activeSession) {
       return;
@@ -2033,7 +2181,7 @@ export function AgentConsole({
     if (!isProviderReady) {
       setIsSettingsOpen(true);
       setSettingsTab("api");
-      setApiSettingsView("providerConfig");
+      setExpandedProviderId(settings.provider);
       setTestConnectionState({
         status: "error",
         message:
@@ -2104,6 +2252,7 @@ export function AgentConsole({
         body: JSON.stringify({
           messages: history,
           modelSettings: buildModelSettings(settings),
+          toolSettings: buildToolSettings(settings),
         }),
       });
 
@@ -2269,15 +2418,26 @@ export function AgentConsole({
   const selectedProviderBaseUrl = getProviderBaseUrl(settings);
   const selectedProviderModel = getProviderModel(settings);
   const hasConfiguredModel = Boolean(selectedProviderApiKey);
+  const canUseEnvironmentApiKeyForProvider = (providerId: ProviderId) => {
+    const provider = getProviderOption(providerId);
+
+    return (
+      providerId !== "custom" &&
+      hasApiKey &&
+      runtimeInfo.provider === provider.provider
+    );
+  };
   const canUseEnvironmentApiKey =
-    settings.provider !== "custom" &&
-    hasApiKey &&
-    runtimeInfo.provider === selectedProvider.provider;
+    canUseEnvironmentApiKeyForProvider(settings.provider);
   const effectiveHasApiKey = hasConfiguredModel || canUseEnvironmentApiKey;
   const isProviderReady =
     Boolean(selectedProviderBaseUrl) &&
     Boolean(selectedProviderModel) &&
     effectiveHasApiKey;
+  const tavilyApiKey = settings.tavilyApiKey.trim();
+  const tavilyStatusLabel = tavilyApiKey
+    ? `Configured · ${maskSecret(tavilyApiKey)}`
+    : "Missing key";
   const settingsRuntimeInfo = {
     ...runtimeInfo,
     baseUrl: selectedProviderBaseUrl || runtimeInfo.baseUrl,
@@ -2285,11 +2445,6 @@ export function AgentConsole({
     provider: selectedProvider.provider,
   };
   const inspectorRuntime = selectedRun?.runtime ?? settingsRuntimeInfo;
-  const apiStatusLabel = !effectiveHasApiKey
-    ? "Missing key"
-    : hasConfiguredModel
-      ? `Connected · ${maskSecret(selectedProviderApiKey)}`
-      : "Connected via env";
   const workspaceClassName = [
     styles.workspace,
     isSidebarCollapsed ? styles.workspaceCollapsed : "",
@@ -2380,7 +2535,6 @@ export function AgentConsole({
                 onClick={() => {
                   setIsInfoOpen(false);
                   setSettingsTab("api");
-                  setApiSettingsView("overview");
                   setIsSettingsOpen(true);
                 }}
               >
@@ -3099,13 +3253,7 @@ export function AgentConsole({
                       settingsTab === item.id ? styles.settingsNavItemActive : ""
                     }`}
                     type="button"
-                    onClick={() => {
-                      setSettingsTab(item.id);
-
-                      if (item.id === "api") {
-                        setApiSettingsView("overview");
-                      }
-                    }}
+                    onClick={() => setSettingsTab(item.id)}
                   >
                     <span>{item.label}</span>
                     <small>{item.status}</small>
@@ -3129,11 +3277,7 @@ export function AgentConsole({
                       : settingsTab === "appearance"
                         ? "Theme"
                         : settingsTab === "api"
-                          ? apiSettingsView === "providerList"
-                            ? "Provider Catalog"
-                            : apiSettingsView === "providerConfig"
-                              ? "Provider Credentials"
-                              : "Model Provider"
+                          ? "Integrations"
                           : "About"}
                   </p>
                   <h3>
@@ -3142,11 +3286,7 @@ export function AgentConsole({
                       : settingsTab === "appearance"
                         ? "外观"
                         : settingsTab === "api"
-                          ? apiSettingsView === "providerList"
-                            ? "选择 Provider"
-                            : apiSettingsView === "providerConfig"
-                              ? selectedProvider.label
-                              : "API 设置"
+                          ? "API 设置"
                           : "关于"}
                   </h3>
                 </div>
@@ -3220,277 +3360,330 @@ export function AgentConsole({
                   </section>
                 ) : null}
 
-                {settingsTab === "api" && apiSettingsView === "overview" ? (
+                {settingsTab === "api" ? (
                   <>
-                    <section className={styles.settingsSection}>
-                      <div className={styles.settingsSectionHeader}>
-                        <h4>当前 Provider</h4>
-                        <span>{isProviderReady ? "ready" : "missing"}</span>
-                      </div>
-                      <button
-                        className={styles.settingsNavButton}
-                        type="button"
-                        onClick={() => setApiSettingsView("providerList")}
-                      >
-                        <span>模型服务</span>
-                        <strong>{selectedProvider.label}</strong>
-                        <small>
-                          {selectedProviderModel || "未配置模型"} ·{" "}
-                          {selectedProviderBaseUrl || "未配置 URL"}
-                        </small>
-                      </button>
-                    </section>
+                    {settingsToast ? (
+                      <p className={styles.settingsToast}>{settingsToast}</p>
+                    ) : null}
 
                     <section className={styles.settingsSection}>
                       <div className={styles.settingsSectionHeader}>
-                        <h4>连接状态</h4>
-                        <span>{apiStatusLabel}</span>
+                        <h4>Tavily 搜索 API Key</h4>
+                        <span>{tavilyStatusLabel}</span>
                       </div>
-                      <div className={styles.settingsInfoGrid}>
-                        <div>
-                          <span>Provider</span>
-                          <strong>{settingsRuntimeInfo.provider}</strong>
-                        </div>
-                        <div>
-                          <span>Model</span>
-                          <strong>{settingsRuntimeInfo.model}</strong>
-                        </div>
-                        <div>
-                          <span>Endpoint</span>
-                          <strong>{settingsRuntimeInfo.baseUrl}</strong>
-                        </div>
-                      </div>
+
+                      {isTavilyKeyEditorOpen ? (
+                        <label className={styles.settingsField}>
+                          <span>API Key</span>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            placeholder="tvly-..."
+                            value={settings.tavilyApiKey}
+                            onChange={(event) => {
+                              setSettings((current) => ({
+                                ...current,
+                                tavilyApiKey: event.target.value,
+                              }));
+                              setTavilyConnectionState({ status: "idle" });
+                            }}
+                          />
+                        </label>
+                      ) : null}
+
                       <div className={styles.settingsActions}>
                         <button
                           className={styles.primarySettingsButton}
                           type="button"
-                          onClick={() => setApiSettingsView("providerConfig")}
+                          onClick={() => {
+                            void testTavilySettings();
+                          }}
+                          disabled={tavilyConnectionState.status === "testing"}
                         >
-                          配置 Key
+                          {tavilyConnectionState.status === "testing"
+                            ? "测试中..."
+                            : "测试连接"}
                         </button>
                         <button
                           className={styles.secondarySettingsButton}
                           type="button"
-                          onClick={() => setApiSettingsView("providerList")}
+                          onClick={() =>
+                            setIsTavilyKeyEditorOpen((current) => !current)
+                          }
                         >
-                          更换 Provider
+                          {isTavilyKeyEditorOpen ? "收起配置" : "配置 Key"}
                         </button>
+                        {isTavilyKeyEditorOpen && tavilyApiKey ? (
+                          <button
+                            className={styles.secondarySettingsButton}
+                            type="button"
+                            onClick={() => {
+                              setSettings((current) => ({
+                                ...current,
+                                tavilyApiKey: "",
+                              }));
+                              setTavilyConnectionState({ status: "idle" });
+                            }}
+                          >
+                            清空 Key
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {tavilyConnectionState.status !== "idle" ? (
+                        <p
+                          className={`${styles.connectionNotice} ${
+                            tavilyConnectionState.status === "success"
+                              ? styles.connectionNoticeSuccess
+                              : tavilyConnectionState.status === "error"
+                                ? styles.connectionNoticeError
+                                : ""
+                          }`}
+                        >
+                          {tavilyConnectionState.status === "testing"
+                            ? "正在请求 Tavily..."
+                            : tavilyConnectionState.message}
+                        </p>
+                      ) : null}
+                    </section>
+
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>模型 Provider</h4>
+                        <span>{selectedProvider.label}</span>
+                      </div>
+
+                      <div className={styles.providerOptionList}>
+                        {PROVIDER_OPTIONS.map((provider) => {
+                          const isSelected = settings.provider === provider.id;
+                          const isExpanded = expandedProviderId === provider.id;
+                          const providerApiKey = getProviderApiKey(
+                            settings,
+                            provider.id,
+                          );
+                          const providerBaseUrl = getProviderBaseUrl(
+                            settings,
+                            provider.id,
+                          );
+                          const providerModel = getProviderModel(
+                            settings,
+                            provider.id,
+                          );
+                          const canUseProviderEnvironmentKey =
+                            canUseEnvironmentApiKeyForProvider(provider.id);
+                          const providerValidationMessage =
+                            getProviderValidationMessage(
+                              settings,
+                              canUseProviderEnvironmentKey,
+                              provider.id,
+                            );
+
+                          return (
+                            <article
+                              key={provider.id}
+                              className={`${styles.providerOptionCard} ${
+                                isSelected ? styles.providerOptionCardActive : ""
+                              } ${
+                                isExpanded
+                                  ? styles.providerOptionCardExpanded
+                                  : ""
+                              }`}
+                            >
+                              <div className={styles.providerOptionHeader}>
+                                <button
+                                  className={`${styles.providerOptionButton} ${
+                                    isSelected
+                                      ? styles.providerOptionButtonActive
+                                      : ""
+                                  }`}
+                                  type="button"
+                                  onClick={() => selectProvider(provider.id)}
+                                >
+                                  <span>{isSelected ? "已选中" : "可选"}</span>
+                                  <strong>{provider.label}</strong>
+                                  <small>
+                                    {provider.id === "custom"
+                                      ? "Custom URL"
+                                      : provider.model}{" "}
+                                    · {provider.description}
+                                  </small>
+                                </button>
+                                <button
+                                  className={styles.providerExpandButton}
+                                  type="button"
+                                  aria-expanded={isExpanded}
+                                  onClick={() => {
+                                    setExpandedProviderId((current) =>
+                                      current === provider.id ? "" : provider.id,
+                                    );
+                                    setTestConnectionState({ status: "idle" });
+                                  }}
+                                >
+                                  {isExpanded ? "收起" : "展开"}
+                                </button>
+                              </div>
+
+                              {isExpanded ? (
+                                <div className={styles.providerOptionBody}>
+                                  {provider.id === "custom" ? (
+                                    <>
+                                      <label className={styles.settingsField}>
+                                        <span>Provider URL</span>
+                                        <input
+                                          type="url"
+                                          placeholder="https://api.example.com"
+                                          value={settings.customBaseUrl}
+                                          onChange={(event) => {
+                                            setSettings((current) => ({
+                                              ...current,
+                                              customBaseUrl: event.target.value,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        />
+                                      </label>
+
+                                      <label className={styles.settingsField}>
+                                        <span>Model</span>
+                                        <input
+                                          type="text"
+                                          placeholder="model-name"
+                                          value={settings.customModel}
+                                          onChange={(event) => {
+                                            setSettings((current) => ({
+                                              ...current,
+                                              customModel: event.target.value,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        />
+                                      </label>
+                                    </>
+                                  ) : (
+                                    <div className={styles.settingsInfoGrid}>
+                                      <div>
+                                        <span>Provider URL</span>
+                                        <strong>{providerBaseUrl}</strong>
+                                      </div>
+                                      <div>
+                                        <span>Model</span>
+                                        <strong>{providerModel}</strong>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <label className={styles.settingsField}>
+                                    <span>API Key</span>
+                                    <input
+                                      type="password"
+                                      autoComplete="off"
+                                      placeholder="sk-..."
+                                      value={providerApiKey}
+                                      onChange={(event) => {
+                                        const nextApiKey = event.target.value;
+
+                                        setSettings((current) =>
+                                          setProviderApiKey(
+                                            current,
+                                            provider.id,
+                                            nextApiKey,
+                                          ),
+                                        );
+                                        setTestConnectionState({
+                                          status: "idle",
+                                        });
+                                      }}
+                                    />
+                                  </label>
+
+                                  <div className={styles.settingsActions}>
+                                    {!isSelected ? (
+                                      <button
+                                        className={
+                                          styles.secondarySettingsButton
+                                        }
+                                        type="button"
+                                        onClick={() =>
+                                          selectProvider(provider.id)
+                                        }
+                                      >
+                                        使用此 Provider
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      className={styles.primarySettingsButton}
+                                      disabled={
+                                        testConnectionState.status ===
+                                          "testing" ||
+                                        Boolean(providerValidationMessage)
+                                      }
+                                      type="button"
+                                      onClick={() => {
+                                        if (!isSelected) {
+                                          selectProvider(provider.id);
+                                        }
+
+                                        void testModelSettings(provider.id);
+                                      }}
+                                    >
+                                      {testConnectionState.status === "testing"
+                                        ? "测试中..."
+                                        : "测试连接"}
+                                    </button>
+                                    <button
+                                      className={styles.secondarySettingsButton}
+                                      type="button"
+                                      onClick={() => {
+                                        setSettings((current) =>
+                                          setProviderApiKey(
+                                            current,
+                                            provider.id,
+                                            "",
+                                          ),
+                                        );
+                                        setTestConnectionState({
+                                          status: "idle",
+                                        });
+                                      }}
+                                    >
+                                      清空 Key
+                                    </button>
+                                  </div>
+
+                                  {testConnectionState.status !== "idle" ? (
+                                    <p
+                                      className={`${styles.connectionNotice} ${
+                                        testConnectionState.status === "success"
+                                          ? styles.connectionNoticeSuccess
+                                          : testConnectionState.status ===
+                                              "error"
+                                            ? styles.connectionNoticeError
+                                            : ""
+                                      }`}
+                                    >
+                                      {testConnectionState.status === "testing"
+                                        ? `正在请求 ${provider.provider}...`
+                                        : testConnectionState.message}
+                                    </p>
+                                  ) : providerValidationMessage ? (
+                                    <p
+                                      className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+                                    >
+                                      {providerValidationMessage}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </article>
+                          );
+                        })}
                       </div>
                     </section>
                   </>
-                ) : null}
-
-                {settingsTab === "api" && apiSettingsView === "providerList" ? (
-                  <section className={styles.settingsSection}>
-                    <div className={styles.settingsSectionHeader}>
-                      <h4>选择 Provider</h4>
-                      <span>{selectedProvider.label}</span>
-                    </div>
-                    <div className={styles.providerOptionList}>
-                      {PROVIDER_OPTIONS.map((provider) => (
-                        <button
-                          key={provider.id}
-                          className={`${styles.providerOptionButton} ${
-                            settings.provider === provider.id
-                              ? styles.providerOptionButtonActive
-                              : ""
-                          }`}
-                          type="button"
-                          onClick={() => {
-                            setSettings((current) => ({
-                              ...current,
-                              provider: provider.id,
-                            }));
-                            setTestConnectionState({ status: "idle" });
-                            setApiSettingsView("providerConfig");
-                          }}
-                        >
-                          <span>{provider.label}</span>
-                          <strong>
-                            {provider.id === "custom" ? "Custom URL" : provider.model}
-                          </strong>
-                          <small>{provider.description}</small>
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      className={styles.secondarySettingsButton}
-                      type="button"
-                      onClick={() => setApiSettingsView("overview")}
-                    >
-                      返回 API 设置
-                    </button>
-                  </section>
-                ) : null}
-
-                {settingsTab === "api" && apiSettingsView === "providerConfig" ? (
-                  <section className={styles.settingsSection}>
-                    <div className={styles.settingsSectionHeader}>
-                      <h4>{selectedProvider.label}</h4>
-                      <span>{isProviderReady ? "ready" : "missing"}</span>
-                    </div>
-
-                    {settings.provider === "custom" ? (
-                      <>
-                        <label className={styles.settingsField}>
-                          <span>Provider URL</span>
-                          <input
-                            type="url"
-                            placeholder="https://api.example.com"
-                            value={settings.customBaseUrl}
-                            onChange={(event) => {
-                              setSettings((current) => ({
-                                ...current,
-                                customBaseUrl: event.target.value,
-                              }));
-                              setTestConnectionState({ status: "idle" });
-                            }}
-                          />
-                        </label>
-
-                        <label className={styles.settingsField}>
-                          <span>Model</span>
-                          <input
-                            type="text"
-                            placeholder="model-name"
-                            value={settings.customModel}
-                            onChange={(event) => {
-                              setSettings((current) => ({
-                                ...current,
-                                customModel: event.target.value,
-                              }));
-                              setTestConnectionState({ status: "idle" });
-                            }}
-                          />
-                        </label>
-                      </>
-                    ) : (
-                      <div className={styles.settingsInfoGrid}>
-                        <div>
-                          <span>Provider URL</span>
-                          <strong>{selectedProvider.baseUrl}</strong>
-                        </div>
-                        <div>
-                          <span>Model</span>
-                          <strong>{selectedProvider.model}</strong>
-                        </div>
-                      </div>
-                    )}
-
-                    <label className={styles.settingsField}>
-                      <span>API Key</span>
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        placeholder="sk-..."
-                        value={selectedProviderApiKey}
-                        onChange={(event) => {
-                          const nextApiKey = event.target.value;
-
-                          setSettings((current) => {
-                            if (current.provider === "custom") {
-                              return {
-                                ...current,
-                                customApiKey: nextApiKey,
-                              };
-                            }
-
-                            if (current.provider === "qwen") {
-                              return {
-                                ...current,
-                                qwenApiKey: nextApiKey,
-                              };
-                            }
-
-                            return {
-                              ...current,
-                              deepseekApiKey: nextApiKey,
-                            };
-                          });
-                          setTestConnectionState({ status: "idle" });
-                        }}
-                      />
-                    </label>
-
-                    <div className={styles.settingsActions}>
-                      <button
-                        className={styles.primarySettingsButton}
-                        disabled={
-                          testConnectionState.status === "testing" ||
-                          Boolean(
-                            getProviderValidationMessage(
-                              settings,
-                              canUseEnvironmentApiKey,
-                            ),
-                          )
-                        }
-                        type="button"
-                        onClick={() => {
-                          void testModelSettings();
-                        }}
-                      >
-                        {testConnectionState.status === "testing"
-                          ? "测试中..."
-                          : "测试连接"}
-                      </button>
-                      <button
-                        className={styles.secondarySettingsButton}
-                        type="button"
-                        onClick={() => {
-                          setSettings((current) => {
-                            if (current.provider === "custom") {
-                              return {
-                                ...current,
-                                customApiKey: "",
-                              };
-                            }
-
-                            if (current.provider === "qwen") {
-                              return {
-                                ...current,
-                                qwenApiKey: "",
-                              };
-                            }
-
-                            return {
-                              ...current,
-                              deepseekApiKey: "",
-                            };
-                          });
-                          setTestConnectionState({ status: "idle" });
-                        }}
-                      >
-                        清空 Key
-                      </button>
-                      <button
-                        className={styles.secondarySettingsButton}
-                        type="button"
-                        onClick={() => setApiSettingsView("providerList")}
-                      >
-                        更换 Provider
-                      </button>
-                    </div>
-
-                    {testConnectionState.status !== "idle" ? (
-                      <p
-                        className={`${styles.connectionNotice} ${
-                          testConnectionState.status === "success"
-                            ? styles.connectionNoticeSuccess
-                            : testConnectionState.status === "error"
-                              ? styles.connectionNoticeError
-                              : ""
-                        }`}
-                      >
-                        {testConnectionState.status === "testing"
-                          ? `正在请求 ${settingsRuntimeInfo.provider}...`
-                          : testConnectionState.message}
-                      </p>
-                    ) : (
-                      <p className={styles.settingsHint}>
-                        预置 Provider 只需要填写 Key；自定义 URL 需要额外填写服务地址和模型名称。
-                      </p>
-                    )}
-                  </section>
                 ) : null}
 
                 {settingsTab === "about" ? (

@@ -16,9 +16,14 @@ import {
   toWorkspaceRelative,
 } from "./workspace";
 
+export type ToolSettings = {
+  tavilyApiKey?: string;
+};
+
 export type ToolExecutionContext = {
   researchNotebook?: ResearchNotebook;
   signal?: AbortSignal;
+  toolSettings?: ToolSettings;
 };
 
 type ToolDefinition = {
@@ -224,12 +229,13 @@ function describeNetworkError({
   return `${operation}失败：${message}。目标资源：${resource}。`;
 }
 
-function getTavilyApiKey() {
-  const apiKey = process.env.TAVILY_API_KEY?.trim();
+function getTavilyApiKey(toolSettings?: ToolSettings) {
+  const apiKey =
+    toolSettings?.tavilyApiKey?.trim() || process.env.TAVILY_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error(
-      "未配置 TAVILY_API_KEY。请在 .env.local 中设置 Tavily API Key。",
+      "未配置 Tavily API Key。请在设置页填写 Tavily 搜索 API Key，或在 .env.local 中设置 TAVILY_API_KEY。",
     );
   }
 
@@ -547,7 +553,12 @@ async function fetchWithTimeout(
   }
 }
 
-async function searchTavily(query: string, limit: number, signal?: AbortSignal) {
+async function searchTavily(
+  query: string,
+  limit: number,
+  signal?: AbortSignal,
+  toolSettings?: ToolSettings,
+) {
   let response: Response;
 
   try {
@@ -555,7 +566,7 @@ async function searchTavily(query: string, limit: number, signal?: AbortSignal) 
       method: "POST",
       headers: {
         ...WEB_REQUEST_HEADERS,
-        Authorization: `Bearer ${getTavilyApiKey()}`,
+        Authorization: `Bearer ${getTavilyApiKey(toolSettings)}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -601,8 +612,14 @@ async function searchTavily(query: string, limit: number, signal?: AbortSignal) 
 async function searchWeb(
   args: z.infer<typeof webSearchSchema>,
   signal?: AbortSignal,
+  toolSettings?: ToolSettings,
 ) {
-  const response = await searchTavily(args.query, args.max_results, signal);
+  const response = await searchTavily(
+    args.query,
+    args.max_results,
+    signal,
+    toolSettings,
+  );
 
   if (response.results.length === 0) {
     return `Tavily 没有搜索到与 "${args.query}" 相关的结果。`;
@@ -628,6 +645,20 @@ async function searchWeb(
   }
 
   return lines.join("\n\n");
+}
+
+export async function testTavilyConnection(toolSettings: ToolSettings = {}) {
+  const response = await searchTavily(
+    "Ranni Tavily connectivity test",
+    1,
+    undefined,
+    toolSettings,
+  );
+
+  return {
+    requestId: response.requestId || null,
+    resultCount: response.results.length,
+  };
 }
 
 async function fetchUrl(
@@ -1179,7 +1210,11 @@ const toolRegistry = new Map<string, ToolDefinition>([
         },
       },
       execute: async (rawArgs, context) =>
-        searchWeb(webSearchSchema.parse(rawArgs), context.signal),
+        searchWeb(
+          webSearchSchema.parse(rawArgs),
+          context.signal,
+          context.toolSettings,
+        ),
     },
   ],
   [
