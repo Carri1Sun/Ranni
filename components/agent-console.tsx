@@ -2205,7 +2205,12 @@ export function AgentConsole({
         {!isSidebarCollapsed ? (
           <aside className={styles.sidebar} aria-label="导航栏">
             <div className={styles.brandBlock}>
-              <div className={styles.brandMark} aria-hidden="true" />
+              <img
+                className={styles.brandMark}
+                src="/logo-192.png"
+                alt=""
+                aria-hidden="true"
+              />
               <div className={styles.brandText}>
                 <strong>Ranni</strong>
                 <span>导航栏</span>

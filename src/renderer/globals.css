@@ -365,6 +365,15 @@ pre {
   backdrop-filter: blur(18px);
 }
 
+.splash-logo {
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(143, 167, 255, 0.26);
+  border-radius: 16px;
+  box-shadow: var(--glow-accent);
+  object-fit: cover;
+}
+
 .splash-card h1 {
   color: var(--ranni-text-0);
   font-family: var(--font-serif);
