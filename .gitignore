@@ -60,3 +60,6 @@ Desktop.ini
 tmp/
 temp/
 *.tmp
+
+# Local research output
+research/
