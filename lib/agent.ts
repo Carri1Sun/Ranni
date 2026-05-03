@@ -34,7 +34,29 @@ type RunAgentTurnOptions = {
   emit: (event: StreamEvent) => void;
   messages: PlainMessage[];
   modelConfig?: ModelConnectionConfig;
+  signal?: AbortSignal;
 };
+
+const CANCELLED_MESSAGE = "已手动终止运行。";
+
+function createAbortError() {
+  const error = new Error(CANCELLED_MESSAGE);
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown) {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || /cancelled|aborted|中止|终止/i.test(error.message))
+  );
+}
+
+function assertNotAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
 
 function createSystemPrompt({
   runtime,
@@ -279,6 +301,7 @@ export async function runAgentTurn({
   emit,
   messages,
   modelConfig,
+  signal,
 }: RunAgentTurnOptions) {
   const toolDefinitions = getToolDefinitions();
   const traceToolDefinitions = toTraceToolDefinitions();
@@ -330,6 +353,8 @@ export async function runAgentTurn({
 
   try {
     for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
+      assertNotAborted(signal);
+
       const stepIndex = step + 1;
       const stepId = crypto.randomUUID();
       const stepStartedAt = Date.now();
@@ -374,6 +399,8 @@ export async function runAgentTurn({
         type: "model_request",
       });
 
+      assertNotAborted(signal);
+
       const assistantResult = await createMessage({
         system,
         messages: conversation,
@@ -390,8 +417,11 @@ export async function runAgentTurn({
             type: "status",
           });
         },
+        signal,
         tools: toolDefinitions,
       });
+
+      assertNotAborted(signal);
 
       emit({
         response: assistantResult.response,
@@ -480,6 +510,8 @@ export async function runAgentTurn({
       const toolResults: AgentToolResultBlock[] = [];
 
       for (const toolCall of toolUseBlocks) {
+        assertNotAborted(signal);
+
         const toolStartedAt = Date.now();
 
         emit({
@@ -499,8 +531,11 @@ export async function runAgentTurn({
             JSON.stringify(toolCall.input),
             {
               researchNotebook,
+              signal,
             },
           );
+          assertNotAborted(signal);
+
           const durationMs = Date.now() - toolStartedAt;
 
           toolResults.push({
@@ -538,6 +573,10 @@ export async function runAgentTurn({
             });
           }
         } catch (error) {
+          if (signal?.aborted || isAbortError(error)) {
+            throw error;
+          }
+
           const result = formatToolExecutionError(toolCall.name, error);
           const durationMs = Date.now() - toolStartedAt;
 
@@ -586,17 +625,32 @@ export async function runAgentTurn({
       `本轮对话超过最大工具步数 ${MAX_TOOL_STEPS}，请缩小任务范围后重试。`,
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Agent 执行失败，请重试。";
+    const cancelled = signal?.aborted || isAbortError(error);
+    const message = cancelled
+      ? CANCELLED_MESSAGE
+      : error instanceof Error
+        ? error.message
+        : "Agent 执行失败，请重试。";
     const endedAt = Date.now();
 
-    emit({
-      message,
-      runId,
-      stepId: currentStepId,
-      stepIndex: currentStepIndex,
-      type: "error",
-    });
+    if (cancelled) {
+      emit({
+        message,
+        runId,
+        stepId: currentStepId,
+        stepIndex: currentStepIndex,
+        timestamp: endedAt,
+        type: "status",
+      });
+    } else {
+      emit({
+        message,
+        runId,
+        stepId: currentStepId,
+        stepIndex: currentStepIndex,
+        type: "error",
+      });
+    }
 
     if (
       currentStepOpen &&
@@ -608,7 +662,7 @@ export async function runAgentTurn({
         durationMs: Math.max(0, endedAt - currentStepStartedAt),
         endedAt,
         runId,
-        status: "failed",
+        status: cancelled ? "cancelled" : "failed",
         stepId: currentStepId,
         stepIndex: currentStepIndex,
         type: "step_completed",
@@ -620,8 +674,8 @@ export async function runAgentTurn({
       endedAt,
       error: message,
       runId,
-      status: "failed",
-      totalSteps: completedSteps,
+      status: cancelled ? "cancelled" : "failed",
+      totalSteps: Math.max(completedSteps, currentStepIndex ?? 0),
       type: "run_completed",
     });
   }

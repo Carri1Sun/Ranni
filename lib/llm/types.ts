@@ -61,6 +61,7 @@ export type CreateAgentMessageOptions = {
   messages: AgentMessage[];
   modelConfig?: ModelConnectionConfig;
   onRetry?: (payload: { attempt: number; reason: string }) => void;
+  signal?: AbortSignal;
   system: string;
   tools: AgentToolDefinition[];
 };
