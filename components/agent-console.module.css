@@ -19,6 +19,14 @@
   grid-template-columns: minmax(560px, 1fr) minmax(320px, 360px);
 }
 
+.workspaceInspectorCollapsed {
+  grid-template-columns: 264px minmax(560px, 1fr);
+}
+
+.workspaceCollapsed.workspaceInspectorCollapsed {
+  grid-template-columns: minmax(560px, 1fr);
+}
+
 .loadingCard,
 .chatShell,
 .sidebar,
@@ -109,13 +117,13 @@
 }
 
 .primarySidebarButton,
+.sidebarNavButton,
+.sidebarUtilityButton,
 .iconButton,
 .sessionItem,
 .infoPromptButton,
 .floatingInfoButton,
-.floatingSettingsButton,
 .submitButton,
-.viewButton,
 .runButton,
 .stepButton,
 .messageActionButton,
@@ -159,12 +167,70 @@
   font-weight: 650;
 }
 
+.sidebarNavSection {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.sidebarNavList {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.sidebarNavButton,
+.sidebarUtilityButton {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-soft-surface);
+  color: var(--ranni-text-1);
+  text-align: left;
+}
+
+.sidebarNavButton span,
+.sidebarUtilityButton span {
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarNavButton small,
+.sidebarUtilityButton small {
+  overflow: hidden;
+  color: var(--ranni-text-3);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarNavButtonActive {
+  border-color: rgba(143, 167, 255, 0.34);
+  background: var(--ranni-accent-soft);
+  color: var(--ranni-text-0);
+}
+
+.sidebarFooter {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--ranni-line-1);
+}
+
+.sidebarUtilityButton {
+  background: var(--ranni-control-surface);
+}
+
 .sidebarLabel,
 .activityLabel,
 .infoCard span,
 .summaryCard span,
 .kvGrid span,
-.localStatusCard span,
 .inspectorMetrics span {
   color: var(--ranni-text-3);
   font-family: var(--font-mono);
@@ -262,30 +328,6 @@
   line-height: 1.45;
 }
 
-.localStatusCard {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--ranni-line-1);
-  border-radius: var(--radius-md);
-  background: var(--ranni-control-surface);
-}
-
-.localStatusCard div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.localStatusCard strong {
-  overflow: hidden;
-  color: var(--ranni-text-1);
-  font-size: 12px;
-  font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chatShell {
   min-width: 0;
   min-height: 0;
@@ -338,34 +380,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.viewToggle {
-  display: inline-flex;
-  gap: var(--space-1);
-  padding: 4px;
-  border: 1px solid var(--ranni-line-1);
-  border-radius: var(--radius-md);
-  background: var(--ranni-control-surface);
-}
-
-.viewButton {
-  min-width: 74px;
-  min-height: 32px;
-  padding: 0 11px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ranni-text-2);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.viewButtonActive {
-  border-color: rgba(143, 167, 255, 0.28);
-  background: var(--ranni-accent-soft);
-  color: var(--ranni-text-0);
 }
 
 .chatMeta {
@@ -948,6 +962,38 @@
   overflow: auto;
 }
 
+.inspectorTopBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--ranni-line-1);
+}
+
+.inspectorTopBar div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.inspectorTopBar span {
+  color: var(--ranni-accent-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.inspectorTopBar strong {
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inspectorSection {
   display: grid;
   gap: var(--space-3);
@@ -1111,6 +1157,10 @@
 
 .primarySidebarButton:hover,
 .primarySidebarButton:focus-visible,
+.sidebarNavButton:hover,
+.sidebarNavButton:focus-visible,
+.sidebarUtilityButton:hover,
+.sidebarUtilityButton:focus-visible,
 .iconButton:hover,
 .iconButton:focus-visible,
 .sessionItem:hover,
@@ -1118,10 +1168,6 @@
 .infoPromptButton:focus-visible,
 .floatingInfoButton:hover,
 .floatingInfoButton:focus-visible,
-.floatingSettingsButton:hover,
-.floatingSettingsButton:focus-visible,
-.viewButton:hover,
-.viewButton:focus-visible,
 .runCard:hover,
 .runCard:focus-within,
 .stepButton:hover,
@@ -1146,6 +1192,10 @@
 
 .iconButton:hover,
 .iconButton:focus-visible,
+.sidebarNavButton:hover,
+.sidebarNavButton:focus-visible,
+.sidebarUtilityButton:hover,
+.sidebarUtilityButton:focus-visible,
 .infoPromptButton:hover,
 .infoPromptButton:focus-visible,
 .messageActionButton:hover,
@@ -1156,15 +1206,15 @@
 }
 
 .primarySidebarButton:active,
+.sidebarNavButton:active,
+.sidebarUtilityButton:active,
 .iconButton:active,
 .sessionItem:active,
-.viewButton:active,
 .runCard:active,
 .stepButton:active,
 .infoPromptButton:active,
 .submitButton:active,
 .floatingInfoButton:active,
-.floatingSettingsButton:active,
 .messageActionButton:active,
 .scrollToBottomButton:active,
 .inspectorStep:active {
@@ -1699,9 +1749,9 @@
   line-height: 1.65;
 }
 
-.floatingInfoButton,
-.floatingSettingsButton {
+.floatingInfoButton {
   position: fixed;
+  right: 22px;
   bottom: 22px;
   z-index: 31;
   width: 46px;
@@ -1715,22 +1765,15 @@
   box-shadow: var(--shadow-panel), var(--glow-accent);
 }
 
-.floatingSettingsButton {
-  right: 22px;
-  font-size: 18px;
-}
-
-.floatingInfoButton {
-  right: 78px;
-}
-
 @media (max-width: 1279px) {
   .workspace,
+  .workspaceInspectorCollapsed,
   .workspaceCollapsed {
     grid-template-columns: 264px minmax(0, 1fr);
   }
 
-  .workspaceCollapsed {
+  .workspaceCollapsed,
+  .workspaceCollapsed.workspaceInspectorCollapsed {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1741,6 +1784,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     overflow: auto;
   }
+
+  .inspectorTopBar {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 980px) {
@@ -1749,6 +1796,7 @@
   }
 
   .workspace,
+  .workspaceInspectorCollapsed,
   .workspaceCollapsed {
     grid-template-columns: 1fr;
     gap: var(--space-3);
@@ -1801,14 +1849,9 @@
     width: 100%;
   }
 
-  .chatMeta,
-  .viewToggle {
+  .chatMeta {
     width: 100%;
     flex-wrap: wrap;
-  }
-
-  .viewButton {
-    flex: 1;
   }
 
   .message,
@@ -1880,13 +1923,8 @@
     grid-template-columns: 1fr;
   }
 
-  .floatingSettingsButton {
-    right: 14px;
-    bottom: 14px;
-  }
-
   .floatingInfoButton {
-    right: 70px;
+    right: 14px;
     bottom: 14px;
   }
 

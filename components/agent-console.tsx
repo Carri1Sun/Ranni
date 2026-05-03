@@ -104,7 +104,29 @@ const DEFAULT_SESSION_TITLE = "新研究会话";
 const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
+const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
+const PAGE_NAV_ITEMS = [
+  {
+    description: "当前对话和消息流",
+    id: "chat",
+    label: "会话",
+  },
+  {
+    description: "查看最近生成的报告",
+    id: "report",
+    label: "报告",
+  },
+  {
+    description: "进入运行详情二级页面",
+    id: "trace",
+    label: "运行详情",
+  },
+] as const satisfies Array<{
+  description: string;
+  id: ViewMode;
+  label: string;
+}>;
 const SETTINGS_NAV_ITEMS = [
   {
     id: "account",
@@ -1485,6 +1507,7 @@ function persistSessionsToStorage(
   sessions: SessionRecord[],
   activeSessionId: string,
   isSidebarCollapsed: boolean,
+  isInspectorCollapsed: boolean,
 ) {
   let lastError: unknown = null;
 
@@ -1496,6 +1519,10 @@ function persistSessionsToStorage(
       localStorage.setItem(
         SIDEBAR_STORAGE_KEY,
         isSidebarCollapsed ? "true" : "false",
+      );
+      localStorage.setItem(
+        INSPECTOR_STORAGE_KEY,
+        isInspectorCollapsed ? "true" : "false",
       );
       return;
     } catch (error) {
@@ -1509,6 +1536,10 @@ function persistSessionsToStorage(
   localStorage.setItem(
     SIDEBAR_STORAGE_KEY,
     isSidebarCollapsed ? "true" : "false",
+  );
+  localStorage.setItem(
+    INSPECTOR_STORAGE_KEY,
+    isInspectorCollapsed ? "true" : "false",
   );
 }
 
@@ -1541,6 +1572,7 @@ export function AgentConsole({
     id: string;
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1577,6 +1609,8 @@ export function AgentConsole({
       );
       const storedSidebarCollapsed =
         localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
+      const storedInspectorCollapsed =
+        localStorage.getItem(INSPECTOR_STORAGE_KEY) === "true";
       const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
 
       setSessions(initialSessions);
@@ -1584,6 +1618,7 @@ export function AgentConsole({
         activeSessionExists ? storedActiveSessionId : initialSessions[0]!.id,
       );
       setIsSidebarCollapsed(storedSidebarCollapsed);
+      setIsInspectorCollapsed(storedInspectorCollapsed);
       setSettings(
         sanitizeSettings(storedSettings ? JSON.parse(storedSettings) : null),
       );
@@ -1637,8 +1672,19 @@ export function AgentConsole({
       return;
     }
 
-    persistSessionsToStorage(sessions, activeSessionId, isSidebarCollapsed);
-  }, [activeSessionId, isHydrated, isSidebarCollapsed, sessions]);
+    persistSessionsToStorage(
+      sessions,
+      activeSessionId,
+      isSidebarCollapsed,
+      isInspectorCollapsed,
+    );
+  }, [
+    activeSessionId,
+    isHydrated,
+    isInspectorCollapsed,
+    isSidebarCollapsed,
+    sessions,
+  ]);
 
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
@@ -2145,21 +2191,24 @@ export function AgentConsole({
     : hasConfiguredModel
       ? `Connected · ${maskSecret(selectedProviderApiKey)}`
       : "Connected via env";
+  const workspaceClassName = [
+    styles.workspace,
+    isSidebarCollapsed ? styles.workspaceCollapsed : "",
+    isInspectorCollapsed ? styles.workspaceInspectorCollapsed : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <main className={styles.shell}>
-      <div
-        className={`${styles.workspace} ${
-          isSidebarCollapsed ? styles.workspaceCollapsed : ""
-        }`}
-      >
+      <div className={workspaceClassName}>
         {!isSidebarCollapsed ? (
-          <aside className={styles.sidebar}>
+          <aside className={styles.sidebar} aria-label="导航栏">
             <div className={styles.brandBlock}>
               <div className={styles.brandMark} aria-hidden="true" />
               <div className={styles.brandText}>
                 <strong>Ranni</strong>
-                <span>Local AI Agent</span>
+                <span>导航栏</span>
               </div>
             </div>
 
@@ -2173,8 +2222,27 @@ export function AgentConsole({
               </button>
             </div>
 
+            <section className={styles.sidebarNavSection}>
+              <div className={styles.sidebarLabel}>页面</div>
+              <div className={styles.sidebarNavList}>
+                {PAGE_NAV_ITEMS.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`${styles.sidebarNavButton} ${
+                      activeView === item.id ? styles.sidebarNavButtonActive : ""
+                    }`}
+                    type="button"
+                    onClick={() => setActiveView(item.id)}
+                  >
+                    <span>{item.label}</span>
+                    <small>{item.description}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+
             <div className={styles.sidebarLabel}>
-              {`Research Threads · ${sessions.length}`}
+              {`历史 Session · ${sessions.length}`}
             </div>
 
             <div className={styles.sessionList}>
@@ -2201,24 +2269,25 @@ export function AgentConsole({
               })}
             </div>
 
-            <section className={styles.localStatusCard}>
-              <div>
-                <span>Model</span>
-                <strong>{settingsRuntimeInfo.model}</strong>
-              </div>
-              <div>
-                <span>API</span>
-                <strong>{apiStatusLabel}</strong>
-              </div>
-              <div>
-                <span>Workspace</span>
-                <strong title={workspaceRoot}>{workspaceLabel}</strong>
-              </div>
-            </section>
+            <div className={styles.sidebarFooter}>
+              <button
+                className={styles.sidebarUtilityButton}
+                type="button"
+                onClick={() => {
+                  setIsInfoOpen(false);
+                  setSettingsTab("api");
+                  setApiSettingsView("overview");
+                  setIsSettingsOpen(true);
+                }}
+              >
+                <span>设置</span>
+                <small>Provider / 外观 / 关于</small>
+              </button>
+            </div>
           </aside>
         ) : null}
 
-        <section className={styles.chatShell}>
+        <section className={styles.chatShell} aria-label="会话栏">
           <div className={styles.chatHeader}>
             <div className={styles.headerTitle}>
               <button
@@ -2232,35 +2301,6 @@ export function AgentConsole({
               <h2>{activeSession.title}</h2>
             </div>
             <div className={styles.headerControls}>
-              <div className={styles.viewToggle}>
-                <button
-                  className={`${styles.viewButton} ${
-                    activeView === "chat" ? styles.viewButtonActive : ""
-                  }`}
-                  type="button"
-                  onClick={() => setActiveView("chat")}
-                >
-                  Console
-                </button>
-                <button
-                  className={`${styles.viewButton} ${
-                    activeView === "report" ? styles.viewButtonActive : ""
-                  }`}
-                  type="button"
-                  onClick={() => setActiveView("report")}
-                >
-                  Report
-                </button>
-                <button
-                  className={`${styles.viewButton} ${
-                    activeView === "trace" ? styles.viewButtonActive : ""
-                  }`}
-                  type="button"
-                  onClick={() => setActiveView("trace")}
-                >
-                  Trace
-                </button>
-              </div>
               <div className={styles.chatMeta}>
                 <span>{formatSessionTime(activeSession.updatedAt)}</span>
                 <span>{isRunning ? "执行中" : "空闲"}</span>
@@ -2271,14 +2311,12 @@ export function AgentConsole({
               <button
                 className={styles.iconButton}
                 type="button"
-                aria-label="打开设置"
-                onClick={() => {
-                  setSettingsTab("api");
-                  setApiSettingsView("overview");
-                  setIsSettingsOpen(true);
-                }}
+                aria-label={
+                  isInspectorCollapsed ? "展开运行状态栏" : "隐藏运行状态栏"
+                }
+                onClick={() => setIsInspectorCollapsed((current) => !current)}
               >
-                ⚙
+                {isInspectorCollapsed ? "<" : ">"}
               </button>
             </div>
           </div>
@@ -2715,7 +2753,7 @@ export function AgentConsole({
                     return;
                   }
 
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
 
                     if (!isRunning && input.trim()) {
@@ -2739,7 +2777,23 @@ export function AgentConsole({
           </form>
         </section>
 
-        <aside className={styles.inspector}>
+        {!isInspectorCollapsed ? (
+          <aside className={styles.inspector} aria-label="运行状态栏">
+            <div className={styles.inspectorTopBar}>
+              <div>
+                <span>Run Monitor</span>
+                <strong>运行状态栏</strong>
+              </div>
+              <button
+                className={styles.iconButton}
+                type="button"
+                aria-label="隐藏运行状态栏"
+                onClick={() => setIsInspectorCollapsed(true)}
+              >
+                &gt;
+              </button>
+            </div>
+
           <section className={styles.inspectorSection}>
             <div className={styles.inspectorHeader}>
               <h3>Current Run</h3>
@@ -2902,7 +2956,8 @@ export function AgentConsole({
               </p>
             )}
           </section>
-        </aside>
+          </aside>
+        ) : null}
       </div>
 
       {isSettingsOpen ? (
@@ -3441,32 +3496,15 @@ export function AgentConsole({
       ) : null}
 
       {!isSettingsOpen ? (
-        <>
-          <button
-            aria-label="打开设置"
-            className={styles.floatingSettingsButton}
-            title="设置"
-            type="button"
-            onClick={() => {
-              setIsInfoOpen(false);
-              setSettingsTab("api");
-              setApiSettingsView("overview");
-              setIsSettingsOpen(true);
-            }}
-          >
-            ⚙
-          </button>
-
-          <button
-            aria-label={isInfoOpen ? "关闭辅助信息" : "打开辅助信息"}
-            className={styles.floatingInfoButton}
-            title="辅助信息"
-            type="button"
-            onClick={() => setIsInfoOpen((current) => !current)}
-          >
-            {isInfoOpen ? "x" : "i"}
-          </button>
-        </>
+        <button
+          aria-label={isInfoOpen ? "关闭辅助信息" : "打开辅助信息"}
+          className={styles.floatingInfoButton}
+          title="辅助信息"
+          type="button"
+          onClick={() => setIsInfoOpen((current) => !current)}
+        >
+          {isInfoOpen ? "x" : "i"}
+        </button>
       ) : null}
     </main>
   );
