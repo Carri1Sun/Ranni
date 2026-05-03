@@ -4,17 +4,27 @@ import type {
   AgentToolDefinition,
   ModelConnectionConfig,
 } from "./types";
+import { customOpenAIProvider } from "./providers/custom-openai";
+import { deepseekOpenAIProvider } from "./providers/deepseek-openai";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
 
-const DEFAULT_PROVIDER = "qwen-openai";
+const DEFAULT_PROVIDER = "deepseek";
 
 const providers = {
+  custom: customOpenAIProvider,
+  "custom-openai": customOpenAIProvider,
+  "custom-openai-compatible": customOpenAIProvider,
+  deepseek: deepseekOpenAIProvider,
+  "deepseek-openai": deepseekOpenAIProvider,
+  "deepseek-openai-compatible": deepseekOpenAIProvider,
+  qwen: qwenOpenAIProvider,
   "qwen-openai": qwenOpenAIProvider,
   "qwen-openai-compatible": qwenOpenAIProvider,
 } as const;
 
-function resolveProvider() {
-  const requested = process.env.LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
+function resolveProvider(modelConfig?: ModelConnectionConfig) {
+  const requested =
+    modelConfig?.provider?.trim() || process.env.LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
 
   return providers[requested as keyof typeof providers] ?? providers[DEFAULT_PROVIDER];
 }
@@ -29,11 +39,11 @@ export type {
 } from "./types";
 
 export function hasModelApiKey(modelConfig?: ModelConnectionConfig) {
-  return resolveProvider().hasApiKey(modelConfig);
+  return resolveProvider(modelConfig).hasApiKey(modelConfig);
 }
 
 export function getModelRuntimeInfo(modelConfig?: ModelConnectionConfig) {
-  return resolveProvider().getRuntimeInfo(modelConfig);
+  return resolveProvider(modelConfig).getRuntimeInfo(modelConfig);
 }
 
 export function buildMessageRequest({
@@ -47,7 +57,7 @@ export function buildMessageRequest({
   system: string;
   tools: AgentToolDefinition[];
 }) {
-  return resolveProvider().buildMessageRequest({
+  return resolveProvider(modelConfig).buildMessageRequest({
     messages,
     modelConfig,
     system,
@@ -56,9 +66,9 @@ export function buildMessageRequest({
 }
 
 export function createMessage(options: CreateAgentMessageOptions) {
-  return resolveProvider().createMessage(options);
+  return resolveProvider(options.modelConfig).createMessage(options);
 }
 
 export function testModelConnection(modelConfig?: ModelConnectionConfig) {
-  return resolveProvider().testConnection(modelConfig);
+  return resolveProvider(modelConfig).testConnection(modelConfig);
 }

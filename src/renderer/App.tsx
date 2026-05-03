@@ -29,11 +29,12 @@ function sleep(delayMs: number) {
 }
 
 function getApiBaseUrl() {
-  return window.desktopBridge?.getBackendUrl() ?? "http://127.0.0.1:3001";
+  return import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
 }
 
 export function App() {
   const apiBaseUrl = getApiBaseUrl();
+  const apiDisplayUrl = apiBaseUrl || window.location.origin;
   const [runtimeState, setRuntimeState] = useState<RuntimeState>({
     status: "loading",
   });
@@ -100,7 +101,7 @@ export function App() {
         <section className="splash-card">
           <p className="eyebrow">Ranni Local Workbench</p>
           <h1>正在连接 Ranni 本地运行时</h1>
-          <p>目标地址：{apiBaseUrl}</p>
+          <p>目标地址：{apiDisplayUrl}</p>
         </section>
       </main>
     );
@@ -113,7 +114,7 @@ export function App() {
           <p className="eyebrow">连接失败</p>
           <h1>Ranni 本地运行时尚未准备好</h1>
           <p>{runtimeState.message}</p>
-          <p>请确认 `BACKEND_PORT` 与 Electron 配置一致。</p>
+          <p>请确认 Node 后端已启动，且 `BACKEND_PORT` 与网页代理配置一致。</p>
         </section>
       </main>
     );

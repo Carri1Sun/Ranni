@@ -72,6 +72,11 @@ export type CreateAgentMessageResult = {
 };
 
 export type ModelConnectionConfig = {
+  apiKey?: string;
+  baseUrl?: string;
+  deepseekApiKey?: string;
+  model?: string;
+  provider?: string;
   qwenApiKey?: string;
 };
 

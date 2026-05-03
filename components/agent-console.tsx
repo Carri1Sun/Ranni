@@ -22,6 +22,9 @@ type MessageRole = "user" | "assistant";
 type ActivityType = "status" | "tool_call" | "tool_result" | "error";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
+type ProviderId = "custom" | "deepseek" | "qwen";
+type ApiSettingsView = "overview" | "providerConfig" | "providerList";
+type SettingsTab = "about" | "account" | "api" | "appearance";
 
 type ChatMessage = {
   content: string;
@@ -63,6 +66,11 @@ type AgentConsoleProps = {
 };
 
 type AppSettings = {
+  customApiKey: string;
+  customBaseUrl: string;
+  customModel: string;
+  deepseekApiKey: string;
+  provider: ProviderId;
   qwenApiKey: string;
   theme: ThemeMode;
 };
@@ -86,7 +94,7 @@ type TestConnectionState =
 const STARTER_PROMPTS = [
   "先帮我列出当前工作目录的文件结构。",
   "读取 README，如果没有就创建一个项目说明初稿。",
-  "搜索最近关于 Qwen3.6-Plus 的文档更新并总结要点。",
+  "搜索最近关于 DeepSeek API 的文档更新并总结要点。",
 ];
 
 const INITIAL_ASSISTANT_MESSAGE =
@@ -97,19 +105,78 @@ const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
-const QWEN_PROVIDER_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const SETTINGS_NAV_ITEMS = [
+  {
+    id: "account",
+    label: "账号",
+    status: "Local",
+  },
+  {
+    id: "appearance",
+    label: "外观",
+    status: "Theme",
+  },
+  {
+    id: "api",
+    label: "API 设置",
+    status: "Provider",
+  },
+  {
+    id: "about",
+    label: "关于",
+    status: "Info",
+  },
+] as const satisfies Array<{
+  id: SettingsTab;
+  label: string;
+  status: string;
+}>;
 const DEFAULT_SETTINGS: AppSettings = {
+  customApiKey: "",
+  customBaseUrl: "",
+  customModel: "",
+  deepseekApiKey: "",
+  provider: "deepseek",
   qwenApiKey: "",
   theme: "dark",
 };
-const NAV_ITEMS = [
-  { label: "Console", status: "Live" },
-  { label: "Research", status: "Notebook" },
-  { label: "Files", status: "Local" },
-  { label: "Browser", status: "Tools" },
-  { label: "Reports", status: "Drafts" },
-  { label: "Settings", status: "Config" },
-] as const;
+const PROVIDER_OPTIONS = [
+  {
+    baseUrl: "https://api.deepseek.com",
+    description: "默认使用 deepseek-v4-pro，只需要提供 DeepSeek API Key。",
+    envKey: "DEEPSEEK_API_KEY",
+    id: "deepseek",
+    label: "DeepSeek",
+    model: "deepseek-v4-pro",
+    provider: "deepseek-openai-compatible",
+  },
+  {
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    description: "Qwen OpenAI 兼容接口，只需要提供 DashScope API Key。",
+    envKey: "QWEN_API_KEY",
+    id: "qwen",
+    label: "Qwen",
+    model: "qwen3.6-plus",
+    provider: "qwen-openai-compatible",
+  },
+  {
+    baseUrl: "",
+    description: "连接任意 OpenAI-compatible 服务，需要提供 URL、模型和 API Key。",
+    envKey: "LLM_API_KEY",
+    id: "custom",
+    label: "自定义 URL",
+    model: "",
+    provider: "custom-openai-compatible",
+  },
+] as const satisfies Array<{
+  baseUrl: string;
+  description: string;
+  envKey: string;
+  id: ProviderId;
+  label: string;
+  model: string;
+  provider: string;
+}>;
 const STORAGE_PROFILES = [
   {
     activityDetailLimit: 3000,
@@ -198,14 +265,45 @@ function isThemeMode(value: unknown): value is ThemeMode {
   return value === "dark" || value === "light" || value === "system";
 }
 
+function isProviderId(value: unknown): value is ProviderId {
+  return value === "custom" || value === "deepseek" || value === "qwen";
+}
+
 function sanitizeSettings(raw: unknown): AppSettings {
   if (!isObject(raw)) {
     return DEFAULT_SETTINGS;
   }
 
+  const legacyApiKey =
+    typeof raw.apiKey === "string" ? raw.apiKey.trim() : "";
+  const provider = isProviderId(raw.provider)
+    ? raw.provider
+    : DEFAULT_SETTINGS.provider;
+
   return {
+    customApiKey:
+      typeof raw.customApiKey === "string"
+        ? raw.customApiKey.trim()
+        : provider === "custom"
+          ? legacyApiKey
+          : "",
+    customBaseUrl:
+      typeof raw.customBaseUrl === "string" ? raw.customBaseUrl.trim() : "",
+    customModel:
+      typeof raw.customModel === "string" ? raw.customModel.trim() : "",
+    deepseekApiKey:
+      typeof raw.deepseekApiKey === "string"
+        ? raw.deepseekApiKey.trim()
+        : provider === "deepseek"
+          ? legacyApiKey
+          : "",
+    provider,
     qwenApiKey:
-      typeof raw.qwenApiKey === "string" ? raw.qwenApiKey.trim() : "",
+      typeof raw.qwenApiKey === "string"
+        ? raw.qwenApiKey.trim()
+        : provider === "qwen"
+          ? legacyApiKey
+          : "",
     theme: isThemeMode(raw.theme) ? raw.theme : DEFAULT_SETTINGS.theme,
   };
 }
@@ -1041,6 +1139,85 @@ function createWorkspaceLabel(workspaceRoot: string) {
   return parts.at(-1) ?? workspaceRoot;
 }
 
+function getProviderOption(provider: ProviderId) {
+  return (
+    PROVIDER_OPTIONS.find((option) => option.id === provider) ??
+    PROVIDER_OPTIONS[0]
+  );
+}
+
+function getProviderApiKey(settings: AppSettings) {
+  if (settings.provider === "custom") {
+    return settings.customApiKey.trim();
+  }
+
+  if (settings.provider === "qwen") {
+    return settings.qwenApiKey.trim();
+  }
+
+  return settings.deepseekApiKey.trim();
+}
+
+function getProviderBaseUrl(settings: AppSettings) {
+  const provider = getProviderOption(settings.provider);
+
+  if (settings.provider === "custom") {
+    return settings.customBaseUrl.trim();
+  }
+
+  return provider.baseUrl;
+}
+
+function getProviderModel(settings: AppSettings) {
+  const provider = getProviderOption(settings.provider);
+
+  if (settings.provider === "custom") {
+    return settings.customModel.trim();
+  }
+
+  return provider.model;
+}
+
+function buildModelSettings(settings: AppSettings) {
+  const provider = getProviderOption(settings.provider);
+
+  return {
+    apiKey: getProviderApiKey(settings),
+    baseUrl: getProviderBaseUrl(settings),
+    model: getProviderModel(settings),
+    provider: provider.provider,
+  };
+}
+
+function getProviderValidationMessage(
+  settings: AppSettings,
+  hasEnvironmentApiKey: boolean,
+) {
+  const hasApiKey = Boolean(getProviderApiKey(settings)) || hasEnvironmentApiKey;
+
+  if (settings.provider === "custom") {
+    if (!getProviderBaseUrl(settings)) {
+      return "请先填写自定义 Provider URL。";
+    }
+
+    if (!getProviderModel(settings)) {
+      return "请先填写自定义模型名称。";
+    }
+
+    if (!getProviderApiKey(settings)) {
+      return "请先填写自定义 Provider API Key。";
+    }
+
+    return "";
+  }
+
+  if (!hasApiKey) {
+    return `请先填写 ${getProviderOption(settings.provider).label} API Key。`;
+  }
+
+  return "";
+}
+
 function getStatusLabel(status?: string) {
   if (status === "running") {
     return "运行中";
@@ -1352,6 +1529,9 @@ export function AgentConsole({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [apiSettingsView, setApiSettingsView] =
+    useState<ApiSettingsView>("overview");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
   const [testConnectionState, setTestConnectionState] =
     useState<TestConnectionState>({
       status: "idle",
@@ -1426,7 +1606,30 @@ export function AgentConsole({
   }, [isHydrated, settings]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme;
+    const applyTheme = () => {
+      const resolvedTheme =
+        settings.theme === "system"
+          ? window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark"
+          : settings.theme;
+
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.dataset.themeMode = settings.theme;
+    };
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+
+    applyTheme();
+
+    if (settings.theme !== "system") {
+      return;
+    }
+
+    mediaQuery.addEventListener("change", applyTheme);
+
+    return () => {
+      mediaQuery.removeEventListener("change", applyTheme);
+    };
   }, [settings.theme]);
 
   useEffect(() => {
@@ -1632,12 +1835,15 @@ export function AgentConsole({
   };
 
   const testModelSettings = async () => {
-    const qwenApiKey = settings.qwenApiKey.trim();
+    const validationMessage = getProviderValidationMessage(
+      settings,
+      canUseEnvironmentApiKey,
+    );
 
-    if (!qwenApiKey) {
+    if (validationMessage) {
       setTestConnectionState({
         status: "error",
-        message: "请先输入 Qwen Key。",
+        message: validationMessage,
       });
       return;
     }
@@ -1651,9 +1857,7 @@ export function AgentConsole({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          modelSettings: {
-            qwenApiKey,
-          },
+          modelSettings: buildModelSettings(settings),
         }),
       });
       const payload = (await response.json()) as {
@@ -1700,11 +1904,15 @@ export function AgentConsole({
       return;
     }
 
-    if (!hasConfiguredModel) {
+    if (!isProviderReady) {
       setIsSettingsOpen(true);
+      setSettingsTab("api");
+      setApiSettingsView("providerConfig");
       setTestConnectionState({
         status: "error",
-        message: "请先在设置中配置 Qwen Key。",
+        message:
+          getProviderValidationMessage(settings, canUseEnvironmentApiKey) ||
+          "请先完成 Provider 配置。",
       });
       return;
     }
@@ -1762,9 +1970,7 @@ export function AgentConsole({
         },
         body: JSON.stringify({
           messages: history,
-          modelSettings: {
-            qwenApiKey: settings.qwenApiKey.trim(),
-          },
+          modelSettings: buildModelSettings(settings),
         }),
       });
 
@@ -1909,13 +2115,36 @@ export function AgentConsole({
     selectedRun?.steps.find((step) => step.id === selectedStepId) ??
     selectedRun?.steps[selectedRun.steps.length - 1];
   const reportCandidate = getReportCandidate(activeSession.messages);
-  const inspectorRuntime = selectedRun?.runtime ?? runtimeInfo;
   const completedStepCount = getCompletedStepCount(selectedRun);
   const latestStatusMessage =
     selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
   const workspaceLabel = createWorkspaceLabel(workspaceRoot);
-  const hasConfiguredModel = Boolean(settings.qwenApiKey.trim());
-  const effectiveHasApiKey = hasConfiguredModel || hasApiKey;
+  const selectedProvider = getProviderOption(settings.provider);
+  const selectedProviderApiKey = getProviderApiKey(settings);
+  const selectedProviderBaseUrl = getProviderBaseUrl(settings);
+  const selectedProviderModel = getProviderModel(settings);
+  const hasConfiguredModel = Boolean(selectedProviderApiKey);
+  const canUseEnvironmentApiKey =
+    settings.provider !== "custom" &&
+    hasApiKey &&
+    runtimeInfo.provider === selectedProvider.provider;
+  const effectiveHasApiKey = hasConfiguredModel || canUseEnvironmentApiKey;
+  const isProviderReady =
+    Boolean(selectedProviderBaseUrl) &&
+    Boolean(selectedProviderModel) &&
+    effectiveHasApiKey;
+  const settingsRuntimeInfo = {
+    ...runtimeInfo,
+    baseUrl: selectedProviderBaseUrl || runtimeInfo.baseUrl,
+    model: selectedProviderModel || runtimeInfo.model,
+    provider: selectedProvider.provider,
+  };
+  const inspectorRuntime = selectedRun?.runtime ?? settingsRuntimeInfo;
+  const apiStatusLabel = !effectiveHasApiKey
+    ? "Missing key"
+    : hasConfiguredModel
+      ? `Connected · ${maskSecret(selectedProviderApiKey)}`
+      : "Connected via env";
 
   return (
     <main className={styles.shell}>
@@ -1943,28 +2172,6 @@ export function AgentConsole({
                 新研究会话
               </button>
             </div>
-
-            <nav className={styles.navList} aria-label="Ranni workspace">
-              {NAV_ITEMS.map((item, index) => (
-                <button
-                  key={item.label}
-                  className={`${styles.navItem} ${
-                    index === 0 || (item.label === "Settings" && isSettingsOpen)
-                      ? styles.navItemActive
-                      : ""
-                  }`}
-                  onClick={() => {
-                    if (item.label === "Settings") {
-                      setIsSettingsOpen(true);
-                    }
-                  }}
-                  type="button"
-                >
-                  <span>{item.label}</span>
-                  <small>{item.status}</small>
-                </button>
-              ))}
-            </nav>
 
             <div className={styles.sidebarLabel}>
               {`Research Threads · ${sessions.length}`}
@@ -1994,32 +2201,14 @@ export function AgentConsole({
               })}
             </div>
 
-            <div className={styles.sidebarSection}>
-              <div className={styles.sidebarLabel}>Starter Prompts</div>
-              <div className={styles.starterList}>
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    className={styles.starterButton}
-                    type="button"
-                    onClick={() => setInput(prompt)}
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <section className={styles.localStatusCard}>
               <div>
                 <span>Model</span>
-                <strong>{runtimeInfo.model}</strong>
+                <strong>{settingsRuntimeInfo.model}</strong>
               </div>
               <div>
                 <span>API</span>
-                <strong>
-                  {effectiveHasApiKey ? `Connected · ${maskSecret(settings.qwenApiKey)}` : "Missing key"}
-                </strong>
+                <strong>{apiStatusLabel}</strong>
               </div>
               <div>
                 <span>Workspace</span>
@@ -2076,14 +2265,18 @@ export function AgentConsole({
                 <span>{formatSessionTime(activeSession.updatedAt)}</span>
                 <span>{isRunning ? "执行中" : "空闲"}</span>
                 <span>
-                  {effectiveHasApiKey ? runtimeInfo.provider : "模型未连接"}
+                  {isProviderReady ? settingsRuntimeInfo.provider : "模型未连接"}
                 </span>
               </div>
               <button
                 className={styles.iconButton}
                 type="button"
                 aria-label="打开设置"
-                onClick={() => setIsSettingsOpen(true)}
+                onClick={() => {
+                  setSettingsTab("api");
+                  setApiSettingsView("overview");
+                  setIsSettingsOpen(true);
+                }}
               >
                 ⚙
               </button>
@@ -2533,12 +2726,12 @@ export function AgentConsole({
               />
               <button
                 className={styles.submitButton}
-                disabled={isRunning || !input.trim() || !hasConfiguredModel}
+                disabled={isRunning || !input.trim() || !effectiveHasApiKey}
                 type="submit"
               >
                 {isRunning
                   ? "Ranni is working..."
-                  : hasConfiguredModel
+                  : effectiveHasApiKey
                     ? "发送"
                     : "先设置 Key"}
               </button>
@@ -2727,128 +2920,449 @@ export function AgentConsole({
             role="dialog"
             aria-modal="true"
           >
-            <header className={styles.settingsHeader}>
-              <div>
+            <aside className={styles.settingsSidebar}>
+              <div className={styles.settingsBrand}>
                 <p>Ranni Settings</p>
                 <h3 id="ranni-settings-title">设置</h3>
               </div>
-              <button
-                className={styles.iconButton}
-                type="button"
-                onClick={() => setIsSettingsOpen(false)}
-              >
-                ×
-              </button>
-            </header>
 
-            <section className={styles.settingsSection}>
-              <div className={styles.settingsSectionHeader}>
-                <h4>主题</h4>
-                <span>{settings.theme}</span>
-              </div>
-              <div className={styles.themeSegmented}>
-                {(["dark", "light", "system"] as const).map((theme) => (
+              <nav className={styles.settingsNavList} aria-label="设置导航">
+                {SETTINGS_NAV_ITEMS.map((item) => (
                   <button
-                    key={theme}
-                    className={`${styles.themeButton} ${
-                      settings.theme === theme ? styles.themeButtonActive : ""
+                    key={item.id}
+                    className={`${styles.settingsNavItem} ${
+                      settingsTab === item.id ? styles.settingsNavItemActive : ""
                     }`}
                     type="button"
-                    onClick={() =>
-                      setSettings((current) => ({
-                        ...current,
-                        theme,
-                      }))
-                    }
+                    onClick={() => {
+                      setSettingsTab(item.id);
+
+                      if (item.id === "api") {
+                        setApiSettingsView("overview");
+                      }
+                    }}
                   >
-                    {theme === "dark"
-                      ? "深色"
-                      : theme === "light"
-                        ? "浅色"
-                        : "跟随系统"}
+                    <span>{item.label}</span>
+                    <small>{item.status}</small>
                   </button>
                 ))}
+              </nav>
+
+              <div className={styles.settingsSidebarSummary}>
+                <span>Provider</span>
+                <strong>{selectedProvider.label}</strong>
+                <small>{isProviderReady ? "Ready" : "Missing key"}</small>
               </div>
-            </section>
+            </aside>
 
-            <section className={styles.settingsSection}>
-              <div className={styles.settingsSectionHeader}>
-                <h4>模型连接</h4>
-                <span>{effectiveHasApiKey ? "configured" : "missing"}</span>
-              </div>
-
-              <label className={styles.settingsField}>
-                <span>Qwen Key</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  placeholder="sk-..."
-                  value={settings.qwenApiKey}
-                  onChange={(event) => {
-                    setSettings((current) => ({
-                      ...current,
-                      qwenApiKey: event.target.value,
-                    }));
-                    setTestConnectionState({ status: "idle" });
-                  }}
-                />
-              </label>
-
-              <label className={styles.settingsField}>
-                <span>Provider URL</span>
-                <input type="text" readOnly value={QWEN_PROVIDER_URL} />
-              </label>
-
-              <div className={styles.settingsActions}>
+            <section className={styles.settingsContent}>
+              <header className={styles.settingsHeader}>
+                <div>
+                  <p>
+                    {settingsTab === "account"
+                      ? "Local Profile"
+                      : settingsTab === "appearance"
+                        ? "Theme"
+                        : settingsTab === "api"
+                          ? apiSettingsView === "providerList"
+                            ? "Provider Catalog"
+                            : apiSettingsView === "providerConfig"
+                              ? "Provider Credentials"
+                              : "Model Provider"
+                          : "About"}
+                  </p>
+                  <h3>
+                    {settingsTab === "account"
+                      ? "账号"
+                      : settingsTab === "appearance"
+                        ? "外观"
+                        : settingsTab === "api"
+                          ? apiSettingsView === "providerList"
+                            ? "选择 Provider"
+                            : apiSettingsView === "providerConfig"
+                              ? selectedProvider.label
+                              : "API 设置"
+                          : "关于"}
+                  </h3>
+                </div>
                 <button
-                  className={styles.primarySettingsButton}
-                  disabled={
-                    testConnectionState.status === "testing" ||
-                    !settings.qwenApiKey.trim()
-                  }
+                  className={styles.iconButton}
                   type="button"
-                  onClick={() => {
-                    void testModelSettings();
-                  }}
+                  onClick={() => setIsSettingsOpen(false)}
                 >
-                  {testConnectionState.status === "testing"
-                    ? "测试中..."
-                    : "测试连接"}
+                  ×
                 </button>
-                <button
-                  className={styles.secondarySettingsButton}
-                  type="button"
-                  onClick={() => {
-                    setSettings((current) => ({
-                      ...current,
-                      qwenApiKey: "",
-                    }));
-                    setTestConnectionState({ status: "idle" });
-                  }}
-                >
-                  清空 Key
-                </button>
-              </div>
+              </header>
 
-              {testConnectionState.status !== "idle" ? (
-                <p
-                  className={`${styles.connectionNotice} ${
-                    testConnectionState.status === "success"
-                      ? styles.connectionNoticeSuccess
-                      : testConnectionState.status === "error"
-                        ? styles.connectionNoticeError
-                        : ""
-                  }`}
-                >
-                  {testConnectionState.status === "testing"
-                    ? "正在请求 Qwen 兼容接口..."
-                    : testConnectionState.message}
-                </p>
-              ) : (
-                <p className={styles.settingsHint}>
-                  Key 仅保存在本机 localStorage，请不要在共享电脑上保存敏感凭据。
-                </p>
-              )}
+              <div className={styles.settingsContentBody}>
+                {settingsTab === "account" ? (
+                  <>
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>本地账号</h4>
+                        <span>local</span>
+                      </div>
+                      <div className={styles.settingsProfileBlock}>
+                        <div className={styles.settingsAvatar}>R</div>
+                        <div>
+                          <strong>本地工作区用户</strong>
+                          <span>{workspaceLabel}</span>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>同步状态</h4>
+                        <span>offline</span>
+                      </div>
+                      <p className={styles.settingsHint}>
+                        当前版本仅使用本机浏览器存储保存会话、主题和 Provider 配置。
+                      </p>
+                    </section>
+                  </>
+                ) : null}
+
+                {settingsTab === "appearance" ? (
+                  <section className={styles.settingsSection}>
+                    <div className={styles.settingsSectionHeader}>
+                      <h4>主题</h4>
+                      <span>{settings.theme}</span>
+                    </div>
+                    <div className={styles.themeSegmented}>
+                      {(["dark", "light", "system"] as const).map((theme) => (
+                        <button
+                          key={theme}
+                          className={`${styles.themeButton} ${
+                            settings.theme === theme ? styles.themeButtonActive : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            setSettings((current) => ({
+                              ...current,
+                              theme,
+                            }))
+                          }
+                        >
+                          {theme === "dark"
+                            ? "深色"
+                            : theme === "light"
+                              ? "浅色"
+                              : "跟随系统"}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {settingsTab === "api" && apiSettingsView === "overview" ? (
+                  <>
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>当前 Provider</h4>
+                        <span>{isProviderReady ? "ready" : "missing"}</span>
+                      </div>
+                      <button
+                        className={styles.settingsNavButton}
+                        type="button"
+                        onClick={() => setApiSettingsView("providerList")}
+                      >
+                        <span>模型服务</span>
+                        <strong>{selectedProvider.label}</strong>
+                        <small>
+                          {selectedProviderModel || "未配置模型"} ·{" "}
+                          {selectedProviderBaseUrl || "未配置 URL"}
+                        </small>
+                      </button>
+                    </section>
+
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>连接状态</h4>
+                        <span>{apiStatusLabel}</span>
+                      </div>
+                      <div className={styles.settingsInfoGrid}>
+                        <div>
+                          <span>Provider</span>
+                          <strong>{settingsRuntimeInfo.provider}</strong>
+                        </div>
+                        <div>
+                          <span>Model</span>
+                          <strong>{settingsRuntimeInfo.model}</strong>
+                        </div>
+                        <div>
+                          <span>Endpoint</span>
+                          <strong>{settingsRuntimeInfo.baseUrl}</strong>
+                        </div>
+                      </div>
+                      <div className={styles.settingsActions}>
+                        <button
+                          className={styles.primarySettingsButton}
+                          type="button"
+                          onClick={() => setApiSettingsView("providerConfig")}
+                        >
+                          配置 Key
+                        </button>
+                        <button
+                          className={styles.secondarySettingsButton}
+                          type="button"
+                          onClick={() => setApiSettingsView("providerList")}
+                        >
+                          更换 Provider
+                        </button>
+                      </div>
+                    </section>
+                  </>
+                ) : null}
+
+                {settingsTab === "api" && apiSettingsView === "providerList" ? (
+                  <section className={styles.settingsSection}>
+                    <div className={styles.settingsSectionHeader}>
+                      <h4>选择 Provider</h4>
+                      <span>{selectedProvider.label}</span>
+                    </div>
+                    <div className={styles.providerOptionList}>
+                      {PROVIDER_OPTIONS.map((provider) => (
+                        <button
+                          key={provider.id}
+                          className={`${styles.providerOptionButton} ${
+                            settings.provider === provider.id
+                              ? styles.providerOptionButtonActive
+                              : ""
+                          }`}
+                          type="button"
+                          onClick={() => {
+                            setSettings((current) => ({
+                              ...current,
+                              provider: provider.id,
+                            }));
+                            setTestConnectionState({ status: "idle" });
+                            setApiSettingsView("providerConfig");
+                          }}
+                        >
+                          <span>{provider.label}</span>
+                          <strong>
+                            {provider.id === "custom" ? "Custom URL" : provider.model}
+                          </strong>
+                          <small>{provider.description}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      className={styles.secondarySettingsButton}
+                      type="button"
+                      onClick={() => setApiSettingsView("overview")}
+                    >
+                      返回 API 设置
+                    </button>
+                  </section>
+                ) : null}
+
+                {settingsTab === "api" && apiSettingsView === "providerConfig" ? (
+                  <section className={styles.settingsSection}>
+                    <div className={styles.settingsSectionHeader}>
+                      <h4>{selectedProvider.label}</h4>
+                      <span>{isProviderReady ? "ready" : "missing"}</span>
+                    </div>
+
+                    {settings.provider === "custom" ? (
+                      <>
+                        <label className={styles.settingsField}>
+                          <span>Provider URL</span>
+                          <input
+                            type="url"
+                            placeholder="https://api.example.com"
+                            value={settings.customBaseUrl}
+                            onChange={(event) => {
+                              setSettings((current) => ({
+                                ...current,
+                                customBaseUrl: event.target.value,
+                              }));
+                              setTestConnectionState({ status: "idle" });
+                            }}
+                          />
+                        </label>
+
+                        <label className={styles.settingsField}>
+                          <span>Model</span>
+                          <input
+                            type="text"
+                            placeholder="model-name"
+                            value={settings.customModel}
+                            onChange={(event) => {
+                              setSettings((current) => ({
+                                ...current,
+                                customModel: event.target.value,
+                              }));
+                              setTestConnectionState({ status: "idle" });
+                            }}
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <div className={styles.settingsInfoGrid}>
+                        <div>
+                          <span>Provider URL</span>
+                          <strong>{selectedProvider.baseUrl}</strong>
+                        </div>
+                        <div>
+                          <span>Model</span>
+                          <strong>{selectedProvider.model}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    <label className={styles.settingsField}>
+                      <span>API Key</span>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        placeholder="sk-..."
+                        value={selectedProviderApiKey}
+                        onChange={(event) => {
+                          const nextApiKey = event.target.value;
+
+                          setSettings((current) => {
+                            if (current.provider === "custom") {
+                              return {
+                                ...current,
+                                customApiKey: nextApiKey,
+                              };
+                            }
+
+                            if (current.provider === "qwen") {
+                              return {
+                                ...current,
+                                qwenApiKey: nextApiKey,
+                              };
+                            }
+
+                            return {
+                              ...current,
+                              deepseekApiKey: nextApiKey,
+                            };
+                          });
+                          setTestConnectionState({ status: "idle" });
+                        }}
+                      />
+                    </label>
+
+                    <div className={styles.settingsActions}>
+                      <button
+                        className={styles.primarySettingsButton}
+                        disabled={
+                          testConnectionState.status === "testing" ||
+                          Boolean(
+                            getProviderValidationMessage(
+                              settings,
+                              canUseEnvironmentApiKey,
+                            ),
+                          )
+                        }
+                        type="button"
+                        onClick={() => {
+                          void testModelSettings();
+                        }}
+                      >
+                        {testConnectionState.status === "testing"
+                          ? "测试中..."
+                          : "测试连接"}
+                      </button>
+                      <button
+                        className={styles.secondarySettingsButton}
+                        type="button"
+                        onClick={() => {
+                          setSettings((current) => {
+                            if (current.provider === "custom") {
+                              return {
+                                ...current,
+                                customApiKey: "",
+                              };
+                            }
+
+                            if (current.provider === "qwen") {
+                              return {
+                                ...current,
+                                qwenApiKey: "",
+                              };
+                            }
+
+                            return {
+                              ...current,
+                              deepseekApiKey: "",
+                            };
+                          });
+                          setTestConnectionState({ status: "idle" });
+                        }}
+                      >
+                        清空 Key
+                      </button>
+                      <button
+                        className={styles.secondarySettingsButton}
+                        type="button"
+                        onClick={() => setApiSettingsView("providerList")}
+                      >
+                        更换 Provider
+                      </button>
+                    </div>
+
+                    {testConnectionState.status !== "idle" ? (
+                      <p
+                        className={`${styles.connectionNotice} ${
+                          testConnectionState.status === "success"
+                            ? styles.connectionNoticeSuccess
+                            : testConnectionState.status === "error"
+                              ? styles.connectionNoticeError
+                              : ""
+                        }`}
+                      >
+                        {testConnectionState.status === "testing"
+                          ? `正在请求 ${settingsRuntimeInfo.provider}...`
+                          : testConnectionState.message}
+                      </p>
+                    ) : (
+                      <p className={styles.settingsHint}>
+                        预置 Provider 只需要填写 Key；自定义 URL 需要额外填写服务地址和模型名称。
+                      </p>
+                    )}
+                  </section>
+                ) : null}
+
+                {settingsTab === "about" ? (
+                  <>
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>Ranni</h4>
+                        <span>Local AI Agent</span>
+                      </div>
+                      <div className={styles.settingsInfoGrid}>
+                        <div>
+                          <span>Workspace</span>
+                          <strong>{workspaceLabel}</strong>
+                        </div>
+                        <div>
+                          <span>Runtime</span>
+                          <strong>{settingsRuntimeInfo.provider}</strong>
+                        </div>
+                        <div>
+                          <span>Model</span>
+                          <strong>{settingsRuntimeInfo.model}</strong>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
+                        <h4>数据</h4>
+                        <span>browser</span>
+                      </div>
+                      <p className={styles.settingsHint}>
+                        会话、主题和 API 设置保存在当前浏览器环境。敏感 Key 仅用于本地请求后端测试和对话。
+                      </p>
+                    </section>
+                  </>
+                ) : null}
+              </div>
             </section>
           </section>
         </>
@@ -2883,15 +3397,15 @@ export function AgentConsole({
               <article className={styles.infoCard}>
                 <span>模型状态</span>
                 <strong>
-                  {effectiveHasApiKey ? "Qwen Key 已配置" : "缺少 Qwen Key"}
+                  {effectiveHasApiKey ? "API Key 已配置" : "缺少 API Key"}
                 </strong>
               </article>
               <article className={styles.infoCard}>
                 <span>模型配置</span>
                 <strong>
-                  {runtimeInfo.model}
-                  {runtimeInfo.contextWindow
-                    ? ` · ${formatTokenCount(runtimeInfo.contextWindow)} ctx`
+                  {settingsRuntimeInfo.model}
+                  {settingsRuntimeInfo.contextWindow
+                    ? ` · ${formatTokenCount(settingsRuntimeInfo.contextWindow)} ctx`
                     : ""}
                 </strong>
               </article>
@@ -2919,21 +3433,41 @@ export function AgentConsole({
 
             {!effectiveHasApiKey ? (
               <div className={styles.inlineWarning}>
-                需要在设置中填入 Qwen Key 才能连接模型。Key 会保存在本机浏览器存储中。
+                需要在设置中填入 API Key，或在环境变量中配置 LLM_API_KEY。浏览器设置里的 Key 会保存在本机存储中。
               </div>
             ) : null}
           </section>
         </>
       ) : null}
 
-      <button
-        aria-label={isInfoOpen ? "关闭辅助信息" : "打开辅助信息"}
-        className={styles.floatingInfoButton}
-        type="button"
-        onClick={() => setIsInfoOpen((current) => !current)}
-      >
-        {isInfoOpen ? "x" : "i"}
-      </button>
+      {!isSettingsOpen ? (
+        <>
+          <button
+            aria-label="打开设置"
+            className={styles.floatingSettingsButton}
+            title="设置"
+            type="button"
+            onClick={() => {
+              setIsInfoOpen(false);
+              setSettingsTab("api");
+              setApiSettingsView("overview");
+              setIsSettingsOpen(true);
+            }}
+          >
+            ⚙
+          </button>
+
+          <button
+            aria-label={isInfoOpen ? "关闭辅助信息" : "打开辅助信息"}
+            className={styles.floatingInfoButton}
+            title="辅助信息"
+            type="button"
+            onClick={() => setIsInfoOpen((current) => !current)}
+          >
+            {isInfoOpen ? "x" : "i"}
+          </button>
+        </>
+      ) : null}
     </main>
   );
 }

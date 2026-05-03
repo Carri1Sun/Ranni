@@ -4,6 +4,7 @@
   --ranni-bg-0: #050812;
   --ranni-bg-1: #080d19;
   --ranni-bg-2: #0c1323;
+  --ranni-bg-3: #050713;
   --ranni-bg-radial-1: rgba(104, 123, 255, 0.18);
   --ranni-bg-radial-2: rgba(190, 168, 255, 0.1);
   --ranni-surface-0: rgba(12, 18, 32, 0.86);
@@ -27,13 +28,54 @@
   --ranni-gold: #c8b27d;
   --ranni-gold-soft: rgba(200, 178, 125, 0.16);
   --ranni-success: #68d6a3;
+  --ranni-success-soft: rgba(104, 214, 163, 0.08);
   --ranni-warning: #e6c36a;
+  --ranni-warning-soft: rgba(230, 195, 106, 0.1);
   --ranni-danger: #ff6b7a;
+  --ranni-danger-soft: rgba(255, 107, 122, 0.1);
   --ranni-info: #86c7ff;
+  --ranni-info-soft: rgba(134, 199, 255, 0.07);
   --ranni-ivory-0: #f7f3ea;
   --ranni-ivory-1: #ede5d7;
   --ranni-ink: #142033;
   --ranni-ink-muted: #5c6577;
+  --ranni-input-bg: rgba(4, 7, 14, 0.22);
+  --ranni-input-border: var(--ranni-line-1);
+  --ranni-input-placeholder: var(--ranni-text-3);
+  --ranni-input-focus-ring: rgba(143, 167, 255, 0.22);
+  --ranni-code-bg: rgba(4, 7, 14, 0.72);
+  --ranni-code-text: #d7e0f7;
+  --ranni-code-border: var(--ranni-line-1);
+  --ranni-panel-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)),
+    var(--ranni-surface-0);
+  --ranni-sidebar-bg:
+    radial-gradient(circle at 50% 0%, rgba(143, 167, 255, 0.14), transparent 40%),
+    rgba(8, 13, 25, 0.86);
+  --ranni-modal-bg:
+    radial-gradient(circle at 18% 0%, rgba(143, 167, 255, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
+    var(--ranni-surface-0);
+  --ranni-subtle-surface: rgba(255, 255, 255, 0.03);
+  --ranni-soft-surface: rgba(255, 255, 255, 0.035);
+  --ranni-elevated-surface: rgba(255, 255, 255, 0.045);
+  --ranni-inset-surface: rgba(4, 7, 14, 0.24);
+  --ranni-control-surface: rgba(4, 7, 14, 0.32);
+  --ranni-composer-bg: rgba(10, 15, 27, 0.92);
+  --ranni-trace-panel-bg: rgba(10, 15, 27, 0.72);
+  --ranni-primary-bg:
+    linear-gradient(180deg, rgba(143, 167, 255, 0.34), rgba(143, 167, 255, 0.18));
+  --ranni-primary-bg-hover:
+    linear-gradient(180deg, rgba(143, 167, 255, 0.42), rgba(143, 167, 255, 0.22));
+  --ranni-primary-color: var(--ranni-text-0);
+  --ranni-secondary-bg: rgba(255, 255, 255, 0.035);
+  --ranni-user-message-bg: rgba(143, 167, 255, 0.14);
+  --ranni-assistant-message-bg: rgba(17, 25, 43, 0.82);
+  --ranni-modal-backdrop: rgba(2, 4, 9, 0.58);
+  --ranni-selection-bg: rgba(143, 167, 255, 0.34);
+  --ranni-selection-text: var(--ranni-text-0);
+  --ranni-focus-ring: rgba(143, 167, 255, 0.72);
+  --ranni-scrollbar-thumb: rgba(143, 167, 255, 0.34);
 
   --background: var(--ranni-bg-0);
   --background-strong: var(--ranni-bg-1);
@@ -44,6 +86,24 @@
   --line: var(--ranni-line-1);
   --accent: var(--ranni-accent-0);
   --accent-strong: var(--ranni-accent-1);
+  --ranni-bg: var(--ranni-bg-0);
+  --ranni-bg-soft: var(--ranni-bg-1);
+  --ranni-bg-cool: var(--ranni-bg-2);
+  --ranni-canvas: var(--ranni-ivory-0);
+  --ranni-surface: var(--ranni-surface-1);
+  --ranni-surface-muted: var(--ranni-surface-2);
+  --ranni-surface-elevated: var(--ranni-surface-raised);
+  --ranni-text: var(--ranni-text-1);
+  --ranni-text-strong: var(--ranni-text-0);
+  --ranni-text-muted: var(--ranni-text-2);
+  --ranni-text-subtle: var(--ranni-text-3);
+  --ranni-text-inverse: var(--ranni-bg-0);
+  --ranni-border: var(--ranni-line-1);
+  --ranni-border-soft: var(--ranni-line-0);
+  --ranni-border-cool: var(--ranni-line-1);
+  --ranni-border-strong: var(--ranni-line-2);
+  --ranni-accent: var(--ranni-accent-0);
+  --ranni-accent-hover: var(--ranni-accent-1);
 
   --radius-xs: 6px;
   --radius-sm: 10px;
@@ -79,69 +139,116 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --ranni-bg-0: #eef3fb;
-  --ranni-bg-1: #e7edf7;
-  --ranni-bg-2: #dce5f2;
-  --ranni-bg-radial-1: rgba(88, 112, 206, 0.16);
-  --ranni-bg-radial-2: rgba(200, 178, 125, 0.14);
-  --ranni-surface-0: rgba(255, 255, 255, 0.86);
-  --ranni-surface-1: rgba(248, 250, 255, 0.88);
-  --ranni-surface-2: rgba(238, 243, 251, 0.82);
-  --ranni-surface-solid: #f7f9fd;
-  --ranni-surface-raised: #ffffff;
-  --ranni-surface-hover: #e8eef9;
-  --ranni-text-0: #101827;
-  --ranni-text-1: #28354b;
-  --ranni-text-2: #5d6a80;
-  --ranni-text-3: #8490a4;
-  --ranni-line-0: rgba(20, 32, 51, 0.08);
-  --ranni-line-1: rgba(20, 32, 51, 0.13);
-  --ranni-line-2: rgba(20, 32, 51, 0.22);
-  --ranni-accent-0: #506ee8;
-  --ranni-accent-1: #7567d6;
-  --ranni-accent-2: #314aa8;
-  --ranni-accent-soft: rgba(80, 110, 232, 0.12);
-  --ranni-accent-glow: rgba(80, 110, 232, 0.2);
-  --ranni-gold: #927741;
-  --ranni-gold-soft: rgba(146, 119, 65, 0.13);
-  --shadow-soft: 0 18px 60px rgba(31, 42, 68, 0.16);
-  --shadow-panel: 0 12px 36px rgba(31, 42, 68, 0.13);
-  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-}
+  --ranni-light-bg: #f6f0e6;
+  --ranni-light-bg-soft: #f9f5ec;
+  --ranni-light-bg-cool: #f3f5fa;
+  --ranni-light-canvas: #fbf8f1;
+  --ranni-light-surface: #fffcf7;
+  --ranni-light-surface-muted: #f4eee2;
+  --ranni-light-surface-elevated: #ffffff;
+  --ranni-light-sidebar: #ece5d8;
+  --ranni-light-sidebar-active: #e6ecff;
+  --ranni-light-text: #172033;
+  --ranni-light-text-strong: #0f1728;
+  --ranni-light-text-muted: #4b5570;
+  --ranni-light-text-subtle: #747d96;
+  --ranni-light-text-disabled: #a3a9b8;
+  --ranni-light-text-inverse: #f8faff;
+  --ranni-light-border: #ded5c5;
+  --ranni-light-border-soft: #e9e1d4;
+  --ranni-light-border-cool: #d7deef;
+  --ranni-light-border-strong: #c9bdaa;
+  --ranni-light-focus: #6f8fe8;
+  --ranni-light-accent: #2f4f8f;
+  --ranni-light-accent-hover: #263f73;
+  --ranni-light-accent-active: #1e315a;
+  --ranni-light-accent-soft: #e6ecff;
+  --ranni-light-accent-subtle: #f1f4ff;
+  --ranni-light-violet: #5a4fa3;
+  --ranni-light-violet-soft: #eeeafe;
+  --ranni-light-gold: #8a5a18;
+  --ranni-light-gold-soft: #fff3d5;
+  --ranni-moon-silver: #c9d3e8;
+  --ranni-moon-blue: #8fa7e6;
+  --ranni-mist-violet: #c8bdf2;
+  --ranni-old-gold: #d8c48f;
+  --ranni-ink-blue: #172033;
 
-@media (prefers-color-scheme: light) {
-  :root[data-theme="system"] {
-    color-scheme: light;
-
-    --ranni-bg-0: #eef3fb;
-    --ranni-bg-1: #e7edf7;
-    --ranni-bg-2: #dce5f2;
-    --ranni-bg-radial-1: rgba(88, 112, 206, 0.16);
-    --ranni-bg-radial-2: rgba(200, 178, 125, 0.14);
-    --ranni-surface-0: rgba(255, 255, 255, 0.86);
-    --ranni-surface-1: rgba(248, 250, 255, 0.88);
-    --ranni-surface-2: rgba(238, 243, 251, 0.82);
-    --ranni-surface-solid: #f7f9fd;
-    --ranni-surface-raised: #ffffff;
-    --ranni-surface-hover: #e8eef9;
-    --ranni-text-0: #101827;
-    --ranni-text-1: #28354b;
-    --ranni-text-2: #5d6a80;
-    --ranni-text-3: #8490a4;
-    --ranni-line-0: rgba(20, 32, 51, 0.08);
-    --ranni-line-1: rgba(20, 32, 51, 0.13);
-    --ranni-line-2: rgba(20, 32, 51, 0.22);
-    --ranni-accent-0: #506ee8;
-    --ranni-accent-1: #7567d6;
-    --ranni-accent-2: #314aa8;
-    --ranni-accent-soft: rgba(80, 110, 232, 0.12);
-    --ranni-accent-glow: rgba(80, 110, 232, 0.2);
-    --ranni-gold: #927741;
-    --ranni-gold-soft: rgba(146, 119, 65, 0.13);
-    --shadow-soft: 0 18px 60px rgba(31, 42, 68, 0.16);
-    --shadow-panel: 0 12px 36px rgba(31, 42, 68, 0.13);
-    --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  }
+  --ranni-bg-0: var(--ranni-light-bg);
+  --ranni-bg-1: var(--ranni-light-bg-soft);
+  --ranni-bg-2: var(--ranni-light-bg-cool);
+  --ranni-bg-3: var(--ranni-light-bg-cool);
+  --ranni-bg-radial-1: rgba(111, 143, 232, 0.16);
+  --ranni-bg-radial-2: rgba(90, 79, 163, 0.1);
+  --ranni-surface-0: rgba(255, 252, 247, 0.72);
+  --ranni-surface-1: var(--ranni-light-surface);
+  --ranni-surface-2: var(--ranni-light-surface-muted);
+  --ranni-surface-solid: var(--ranni-light-surface);
+  --ranni-surface-raised: var(--ranni-light-surface-elevated);
+  --ranni-surface-hover: var(--ranni-light-accent-subtle);
+  --ranni-text-0: var(--ranni-light-text-strong);
+  --ranni-text-1: var(--ranni-light-text);
+  --ranni-text-2: var(--ranni-light-text-muted);
+  --ranni-text-3: var(--ranni-light-text-subtle);
+  --ranni-line-0: var(--ranni-light-border-soft);
+  --ranni-line-1: var(--ranni-light-border);
+  --ranni-line-2: var(--ranni-light-border-strong);
+  --ranni-border-cool: var(--ranni-light-border-cool);
+  --ranni-text-inverse: var(--ranni-light-text-inverse);
+  --ranni-accent-0: var(--ranni-light-accent);
+  --ranni-accent-1: var(--ranni-light-violet);
+  --ranni-accent-2: var(--ranni-light-accent);
+  --ranni-accent-soft: var(--ranni-light-accent-soft);
+  --ranni-accent-glow: rgba(111, 143, 232, 0.14);
+  --ranni-gold: var(--ranni-light-gold);
+  --ranni-gold-soft: var(--ranni-light-gold-soft);
+  --ranni-success: #2b6a4f;
+  --ranni-success-soft: #e5f3ec;
+  --ranni-warning: #8a5a18;
+  --ranni-warning-soft: #fff3d5;
+  --ranni-danger: #a43b45;
+  --ranni-danger-soft: #fce8ea;
+  --ranni-info: #2f4f8f;
+  --ranni-info-soft: #e6ecff;
+  --ranni-ivory-0: var(--ranni-light-canvas);
+  --ranni-ivory-1: var(--ranni-light-surface-muted);
+  --ranni-ink: var(--ranni-light-text);
+  --ranni-ink-muted: var(--ranni-light-text-muted);
+  --ranni-input-bg: var(--ranni-light-surface);
+  --ranni-input-border: #d7cbbb;
+  --ranni-input-placeholder: #8a91a5;
+  --ranni-input-focus-ring: rgba(111, 143, 232, 0.22);
+  --ranni-code-bg: #f0e8da;
+  --ranni-code-text: #263047;
+  --ranni-code-border: var(--ranni-light-border);
+  --ranni-panel-bg: var(--ranni-surface-0);
+  --ranni-sidebar-bg:
+    linear-gradient(180deg, rgba(236, 229, 216, 0.96), rgba(244, 238, 226, 0.9));
+  --ranni-modal-bg:
+    radial-gradient(circle at 18% 0%, rgba(111, 143, 232, 0.12), transparent 34%),
+    var(--ranni-light-surface-elevated);
+  --ranni-subtle-surface: var(--ranni-light-surface-muted);
+  --ranni-soft-surface: var(--ranni-light-surface);
+  --ranni-elevated-surface: var(--ranni-light-surface-elevated);
+  --ranni-inset-surface: rgba(244, 238, 226, 0.72);
+  --ranni-control-surface: rgba(244, 238, 226, 0.78);
+  --ranni-composer-bg: rgba(255, 252, 247, 0.92);
+  --ranni-trace-panel-bg: #f8f4ea;
+  --ranni-primary-bg: linear-gradient(180deg, #355a9f 0%, #2f4f8f 100%);
+  --ranni-primary-bg-hover: linear-gradient(180deg, #2f4f8f 0%, #263f73 100%);
+  --ranni-primary-color: var(--ranni-light-text-inverse);
+  --ranni-secondary-bg: var(--ranni-light-surface);
+  --ranni-user-message-bg: #eef2ff;
+  --ranni-assistant-message-bg: var(--ranni-light-surface);
+  --ranni-modal-backdrop: rgba(23, 32, 51, 0.34);
+  --ranni-selection-bg: #dde7ff;
+  --ranni-selection-text: #172033;
+  --ranni-focus-ring: rgba(111, 143, 232, 0.72);
+  --ranni-scrollbar-thumb: rgba(47, 79, 143, 0.28);
+  --shadow-soft: 0 24px 72px rgba(23, 32, 51, 0.16);
+  --shadow-panel: 0 12px 32px rgba(23, 32, 51, 0.12);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  --glow-accent: 0 0 32px rgba(111, 143, 232, 0.14);
 }
 
 html {
@@ -169,7 +276,7 @@ body {
       180deg,
       var(--ranni-bg-0) 0%,
       var(--ranni-bg-1) 58%,
-      #050713 100%
+      var(--ranni-bg-3) 100%
     );
   font-family: inherit;
   -webkit-font-smoothing: antialiased;
@@ -201,18 +308,18 @@ button:focus-visible,
 a:focus-visible,
 textarea:focus-visible,
 input:focus-visible {
-  outline: 2px solid rgba(143, 167, 255, 0.72);
+  outline: 2px solid var(--ranni-focus-ring);
   outline-offset: 3px;
 }
 
 ::selection {
-  color: var(--ranni-text-0);
-  background: rgba(143, 167, 255, 0.34);
+  color: var(--ranni-selection-text);
+  background: var(--ranni-selection-bg);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(143, 167, 255, 0.42) transparent;
+  scrollbar-color: var(--ranni-scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -223,7 +330,7 @@ input:focus-visible {
 *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--radius-pill);
-  background: rgba(143, 167, 255, 0.34);
+  background: var(--ranni-scrollbar-thumb);
   background-clip: padding-box;
 }
 
@@ -253,9 +360,7 @@ pre {
   padding: 30px;
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-xl);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
-    rgba(10, 15, 27, 0.88);
+  background: var(--ranni-modal-bg);
   box-shadow: var(--shadow-soft), var(--shadow-inset);
   backdrop-filter: blur(18px);
 }
