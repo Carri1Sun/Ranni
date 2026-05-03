@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "assets:logo": "python3 scripts/generate-logo-assets.py",
     "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "tsx watch src/server/index.ts",
     "dev:frontend": "vite",

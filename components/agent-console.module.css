@@ -72,21 +72,11 @@
   width: 42px;
   height: 42px;
   flex: none;
-  display: grid;
-  place-items: center;
   border: 1px solid rgba(143, 167, 255, 0.26);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle, var(--ranni-accent-soft), transparent),
-    var(--ranni-soft-surface);
+  border-radius: 13px;
+  background: var(--ranni-soft-surface);
   box-shadow: var(--glow-accent);
-}
-
-.brandMark::before {
-  content: "☾";
-  color: var(--ranni-accent-2);
-  font-size: 24px;
-  line-height: 1;
+  object-fit: cover;
 }
 
 .brandText {

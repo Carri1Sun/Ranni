@@ -99,6 +99,7 @@ export function App() {
     return (
       <main className="app-shell">
         <section className="splash-card">
+          <img className="splash-logo" src="/logo-192.png" alt="" aria-hidden="true" />
           <p className="eyebrow">Ranni Local Workbench</p>
           <h1>正在连接 Ranni 本地运行时</h1>
           <p>目标地址：{apiDisplayUrl}</p>
@@ -111,6 +112,7 @@ export function App() {
     return (
       <main className="app-shell">
         <section className="splash-card">
+          <img className="splash-logo" src="/logo-192.png" alt="" aria-hidden="true" />
           <p className="eyebrow">连接失败</p>
           <h1>Ranni 本地运行时尚未准备好</h1>
           <p>{runtimeState.message}</p>
