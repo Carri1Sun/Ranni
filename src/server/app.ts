@@ -1,4 +1,6 @@
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 
 import { runAgentTurn } from "../../lib/agent";
@@ -9,9 +11,29 @@ import {
 } from "../../lib/llm";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
-const modelSettingsSchema = z.object({
-  qwenApiKey: z.string().trim().min(1),
-});
+const optionalSecretSchema = z
+  .string()
+  .trim()
+  .optional()
+  .transform((value) => value || undefined);
+
+const modelSettingsSchema = z
+  .object({
+    apiKey: optionalSecretSchema,
+    baseUrl: optionalSecretSchema,
+    deepseekApiKey: optionalSecretSchema,
+    model: optionalSecretSchema,
+    provider: optionalSecretSchema,
+    qwenApiKey: optionalSecretSchema,
+  })
+  .transform((settings) => ({
+    apiKey: settings.apiKey ?? settings.deepseekApiKey ?? settings.qwenApiKey,
+    baseUrl: settings.baseUrl,
+    deepseekApiKey: settings.deepseekApiKey,
+    model: settings.model,
+    provider: settings.provider,
+    qwenApiKey: settings.qwenApiKey,
+  }));
 
 const requestSchema = z.object({
   messages: z
@@ -28,6 +50,20 @@ const requestSchema = z.object({
 const testModelSchema = z.object({
   modelSettings: modelSettingsSchema,
 });
+
+function resolveFrontendDistDir() {
+  const configuredDir = process.env.FRONTEND_DIST_DIR?.trim();
+  const candidates = [
+    configuredDir ? path.resolve(configuredDir) : "",
+    path.resolve(process.cwd(), "dist", "client"),
+  ].filter(Boolean);
+
+  return (
+    candidates.find((candidate) =>
+      fs.existsSync(path.join(candidate, "index.html")),
+    ) ?? null
+  );
+}
 
 function setCorsHeaders(response: express.Response, origin?: string) {
   if (origin === "null") {
@@ -148,6 +184,25 @@ export function createServerApp() {
       });
     }
   });
+
+  const frontendDistDir = resolveFrontendDistDir();
+
+  if (frontendDistDir) {
+    app.use(express.static(frontendDistDir));
+    app.use((request, response, next) => {
+      if (
+        request.method !== "GET" ||
+        request.path.startsWith("/api/") ||
+        request.path === "/health" ||
+        !request.accepts("html")
+      ) {
+        next();
+        return;
+      }
+
+      response.sendFile(path.join(frontendDistDir, "index.html"));
+    });
+  }
 
   return app;
 }
