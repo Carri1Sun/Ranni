@@ -102,7 +102,7 @@ export type TraceStep = {
   researchState?: string;
   response?: TraceModelResponse;
   startedAt: number;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
   statusMessages: TraceStatusMessage[];
   stepIndex: number;
   stopReason?: string | null;
@@ -120,7 +120,7 @@ export type TraceRun = {
   prompt: string;
   runtime: TraceRuntimeInfo;
   startedAt: number;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
   steps: TraceStep[];
   totalSteps: number;
 };
@@ -218,7 +218,7 @@ export type StreamEvent =
       durationMs: number;
       endedAt: number;
       runId: string;
-      status: "completed" | "failed";
+      status: "completed" | "failed" | "cancelled";
       stepId: string;
       stepIndex: number;
       stopReason?: string | null;
@@ -229,7 +229,7 @@ export type StreamEvent =
       endedAt: number;
       error?: string;
       runId: string;
-      status: "completed" | "failed";
+      status: "completed" | "failed" | "cancelled";
       totalSteps: number;
       type: "run_completed";
     }

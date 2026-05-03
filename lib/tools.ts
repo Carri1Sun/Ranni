@@ -18,6 +18,7 @@ import {
 
 export type ToolExecutionContext = {
   researchNotebook?: ResearchNotebook;
+  signal?: AbortSignal;
 };
 
 type ToolDefinition = {
@@ -153,6 +154,18 @@ function truncate(value: string, maxLength = MAX_TEXT_BYTES) {
   return value.length > maxLength
     ? `${value.slice(0, maxLength).trimEnd()}\n\n...[truncated]`
     : value;
+}
+
+function createAbortError() {
+  const error = new Error("Agent run was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
 }
 
 function formatBytes(bytes: number) {
@@ -419,12 +432,16 @@ async function searchFiles(args: z.infer<typeof searchFilesSchema>) {
     : `未在 ${toWorkspaceRelative(directoryPath)} 中找到 "${args.query}"。`;
 }
 
-async function runTerminal(args: z.infer<typeof terminalSchema>) {
+async function runTerminal(
+  args: z.infer<typeof terminalSchema>,
+  signal?: AbortSignal,
+) {
   if (BLOCKED_COMMAND_PATTERNS.some((pattern) => pattern.test(args.command))) {
     throw new Error("该命令命中安全限制，已拒绝执行。");
   }
 
   const currentDirectory = resolveWorkspacePath(args.cwd);
+  throwIfAborted(signal);
 
   return new Promise<string>((resolve, reject) => {
     const child = spawn(args.command, {
@@ -436,12 +453,30 @@ async function runTerminal(args: z.infer<typeof terminalSchema>) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 500);
     }, args.timeout_ms);
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    };
+    const abort = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 500);
+      reject(createAbortError());
+    };
+
+    signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout += chunk.toString();
@@ -452,12 +487,22 @@ async function runTerminal(args: z.infer<typeof terminalSchema>) {
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
       reject(error);
     });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
 
       const summary = [
         `cwd: ${toWorkspaceRelative(currentDirectory)}`,
@@ -479,21 +524,30 @@ async function fetchWithTimeout(
   url: string,
   init?: RequestInit,
   timeoutMs = WEB_REQUEST_TIMEOUT_MS,
+  signal?: AbortSignal,
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort(signal?.reason);
 
   try {
+    if (signal?.aborted) {
+      abort();
+    } else {
+      signal?.addEventListener("abort", abort, { once: true });
+    }
+
     return await fetch(url, {
       ...init,
       signal: controller.signal,
     });
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
-async function searchTavily(query: string, limit: number) {
+async function searchTavily(query: string, limit: number, signal?: AbortSignal) {
   let response: Response;
 
   try {
@@ -514,8 +568,10 @@ async function searchTavily(query: string, limit: number) {
         include_images: false,
         include_favicon: false,
       }),
-    });
+    }, WEB_REQUEST_TIMEOUT_MS, signal);
   } catch (error) {
+    throwIfAborted(signal);
+
     throw new Error(
       describeNetworkError({
         error,
@@ -542,8 +598,11 @@ async function searchTavily(query: string, limit: number) {
   };
 }
 
-async function searchWeb(args: z.infer<typeof webSearchSchema>) {
-  const response = await searchTavily(args.query, args.max_results);
+async function searchWeb(
+  args: z.infer<typeof webSearchSchema>,
+  signal?: AbortSignal,
+) {
+  const response = await searchTavily(args.query, args.max_results, signal);
 
   if (response.results.length === 0) {
     return `Tavily 没有搜索到与 "${args.query}" 相关的结果。`;
@@ -571,7 +630,10 @@ async function searchWeb(args: z.infer<typeof webSearchSchema>) {
   return lines.join("\n\n");
 }
 
-async function fetchUrl(args: z.infer<typeof fetchUrlSchema>) {
+async function fetchUrl(
+  args: z.infer<typeof fetchUrlSchema>,
+  signal?: AbortSignal,
+) {
   let response: Response;
 
   try {
@@ -582,8 +644,11 @@ async function fetchUrl(args: z.infer<typeof fetchUrlSchema>) {
         redirect: "follow",
       },
       WEB_REQUEST_TIMEOUT_MS,
+      signal,
     );
   } catch (error) {
+    throwIfAborted(signal);
+
     throw new Error(
       describeNetworkError({
         error,
@@ -914,7 +979,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["command"],
         },
       },
-      execute: async (rawArgs) => runTerminal(terminalSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        runTerminal(terminalSchema.parse(rawArgs), context.signal),
     },
   ],
   [
@@ -1112,7 +1178,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["query"],
         },
       },
-      execute: async (rawArgs) => searchWeb(webSearchSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        searchWeb(webSearchSchema.parse(rawArgs), context.signal),
     },
   ],
   [
@@ -1135,7 +1202,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["url"],
         },
       },
-      execute: async (rawArgs) => fetchUrl(fetchUrlSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        fetchUrl(fetchUrlSchema.parse(rawArgs), context.signal),
     },
   ],
 ]);
@@ -1149,6 +1217,8 @@ export async function executeTool(
   rawArguments: string,
   context: ToolExecutionContext = {},
 ) {
+  throwIfAborted(context.signal);
+
   const tool = toolRegistry.get(name);
 
   if (!tool) {

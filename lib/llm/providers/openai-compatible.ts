@@ -250,9 +250,35 @@ function getConfig(
   return config;
 }
 
-function sleep(milliseconds: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
+function createAbortError() {
+  const error = new Error("Agent run was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
+
+function sleep(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(createAbortError());
+    };
+
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -637,6 +663,7 @@ export function createOpenAICompatibleProvider(
     messages,
     modelConfig,
     onRetry,
+    signal,
     system,
     tools,
   }: CreateAgentMessageOptions) {
@@ -657,6 +684,8 @@ export function createOpenAICompatibleProvider(
     });
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
+      throwIfAborted(signal);
+
       try {
         const response = await fetch(`${runtime.baseUrl}/chat/completions`, {
           method: "POST",
@@ -665,6 +694,7 @@ export function createOpenAICompatibleProvider(
             "Content-Type": "application/json",
           },
           body: JSON.stringify(requestBody),
+          signal,
         });
 
         if (!response.ok) {
@@ -699,6 +729,8 @@ export function createOpenAICompatibleProvider(
           } satisfies TraceModelResponse,
         } satisfies CreateAgentMessageResult;
       } catch (error) {
+        throwIfAborted(signal);
+
         const shouldRetry =
           attempt === 1 && isRetryableError(error, options.requestFailedPrefix);
 
@@ -707,7 +739,7 @@ export function createOpenAICompatibleProvider(
             attempt,
             reason: formatError(error, options.requestFailedPrefix, false),
           });
-          await sleep(900);
+          await sleep(900, signal);
           continue;
         }
 

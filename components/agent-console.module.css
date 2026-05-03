@@ -925,6 +925,13 @@
   box-shadow: none;
 }
 
+.stopButton {
+  border-color: rgba(255, 107, 122, 0.38);
+  background: var(--ranni-danger-soft);
+  color: var(--ranni-danger);
+  box-shadow: none;
+}
+
 .scrollToBottomButton {
   position: absolute;
   right: 12px;
@@ -1022,6 +1029,12 @@
   border-color: rgba(255, 107, 122, 0.38);
   color: var(--ranni-danger);
   background: var(--ranni-danger-soft);
+}
+
+.cancelled {
+  border-color: rgba(230, 195, 106, 0.34);
+  color: var(--ranni-warning);
+  background: var(--ranni-warning-soft);
 }
 
 .inspectorMetrics {
@@ -1178,6 +1191,13 @@
 .primarySettingsButton:hover:enabled,
 .primarySettingsButton:focus-visible:enabled {
   background: var(--ranni-primary-bg-hover);
+}
+
+.stopButton:hover:enabled,
+.stopButton:focus-visible:enabled {
+  border-color: rgba(255, 107, 122, 0.46);
+  background: rgba(255, 107, 122, 0.14);
+  color: var(--ranni-danger);
 }
 
 .iconButton:hover,

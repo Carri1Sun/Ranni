@@ -128,14 +128,33 @@ export function createServerApp() {
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
 
-    const push = (event: Record<string, unknown>) => {
-      response.write(`${JSON.stringify(event)}\n`);
+    const abortController = new AbortController();
+    let completed = false;
+    const abortRun = () => {
+      if (!completed && !abortController.signal.aborted) {
+        abortController.abort();
+      }
     };
+    const push = (event: Record<string, unknown>) => {
+      if (response.destroyed || response.writableEnded) {
+        return;
+      }
+
+      try {
+        response.write(`${JSON.stringify(event)}\n`);
+      } catch {
+        abortRun();
+      }
+    };
+
+    request.on("aborted", abortRun);
+    response.on("close", abortRun);
 
     try {
       await runAgentTurn({
         messages: payload.messages,
         modelConfig: payload.modelSettings,
+        signal: abortController.signal,
         emit: push,
       });
     } catch (error) {
@@ -145,8 +164,14 @@ export function createServerApp() {
           error instanceof Error ? error.message : "Agent 执行失败，请重试。",
       });
     } finally {
-      push({ type: "done" });
-      response.end();
+      completed = true;
+      request.off("aborted", abortRun);
+      response.off("close", abortRun);
+
+      if (!response.destroyed && !response.writableEnded) {
+        push({ type: "done" });
+        response.end();
+      }
     }
   });
 

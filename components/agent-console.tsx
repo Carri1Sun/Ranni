@@ -91,6 +91,13 @@ type TestConnectionState =
       status: "error";
     };
 
+type ActiveAgentRequest = {
+  controller: AbortController;
+  runId?: string;
+  sessionId: string;
+  stopped: boolean;
+};
+
 const STARTER_PROMPTS = [
   "先帮我列出当前工作目录的文件结构。",
   "读取 README，如果没有就创建一个项目说明初稿。",
@@ -664,7 +671,10 @@ function sanitizeStep(raw: unknown): TraceStep | null {
     response: sanitizeResponse(raw.response),
     startedAt: typeof raw.startedAt === "number" ? raw.startedAt : Date.now(),
     status:
-      raw.status === "completed" || raw.status === "failed" || raw.status === "running"
+      raw.status === "completed" ||
+      raw.status === "failed" ||
+      raw.status === "running" ||
+      raw.status === "cancelled"
         ? raw.status
         : "completed",
     statusMessages,
@@ -711,7 +721,8 @@ function sanitizeRuns(raw: unknown): TraceRun[] {
         status:
           run.status === "completed" ||
           run.status === "failed" ||
-          run.status === "running"
+          run.status === "running" ||
+          run.status === "cancelled"
             ? run.status
             : "completed",
         steps,
@@ -1094,7 +1105,9 @@ function applyTraceEventToSession(
                   durationMs: event.durationMs,
                   endedAt: event.endedAt,
                   error:
-                    event.status === "failed" ? run.error ?? step.error : step.error,
+                    event.status === "failed" || event.status === "cancelled"
+                      ? run.error ?? step.error
+                      : step.error,
                   status: event.status,
                   stopReason: event.stopReason ?? step.stopReason,
                 };
@@ -1251,6 +1264,10 @@ function getStatusLabel(status?: string) {
 
   if (status === "failed") {
     return "失败";
+  }
+
+  if (status === "cancelled") {
+    return "已终止";
   }
 
   return "空闲";
@@ -1576,6 +1593,7 @@ export function AgentConsole({
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeAgentRequestRef = useRef<ActiveAgentRequest | null>(null);
 
   const isNearBottom = (node: HTMLDivElement) =>
     node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
@@ -1736,6 +1754,8 @@ export function AgentConsole({
       if (messageActionTimerRef.current) {
         clearTimeout(messageActionTimerRef.current);
       }
+
+      activeAgentRequestRef.current?.controller.abort();
     };
   }, []);
 
@@ -1856,10 +1876,51 @@ export function AgentConsole({
     }));
   };
 
+  const markRunningRunCancelled = (sessionId: string, runId?: string) => {
+    const endedAt = Date.now();
+
+    updateSession(sessionId, (session) => ({
+      ...session,
+      updatedAt: endedAt,
+      runs: session.runs.map((run) => {
+        const shouldCancel =
+          (runId ? run.id === runId : run.status === "running") &&
+          run.status === "running";
+
+        if (!shouldCancel) {
+          return run;
+        }
+
+        return {
+          ...run,
+          durationMs: endedAt - run.startedAt,
+          endedAt,
+          error: "已手动终止运行。",
+          status: "cancelled",
+          steps: run.steps.map((step) =>
+            step.status === "running"
+              ? {
+                  ...step,
+                  durationMs: endedAt - step.startedAt,
+                  endedAt,
+                  error: "已手动终止运行。",
+                  status: "cancelled",
+                }
+              : step,
+          ),
+        };
+      }),
+    }));
+  };
+
   const applyTraceEvent = (sessionId: string, event: StreamEvent) => {
     updateSession(sessionId, (session) => applyTraceEventToSession(session, event));
 
     if (event.type === "run_started") {
+      if (activeAgentRequestRef.current?.sessionId === sessionId) {
+        activeAgentRequestRef.current.runId = event.runId;
+      }
+
       setSelectedRunId(event.runId);
       setSelectedStepId("");
       return;
@@ -1869,6 +1930,25 @@ export function AgentConsole({
       setSelectedRunId(event.runId);
       setSelectedStepId(event.stepId);
     }
+  };
+
+  const stopAgentRun = () => {
+    const activeRequest = activeAgentRequestRef.current;
+
+    if (!activeRequest || !isRunning) {
+      return;
+    }
+
+    activeRequest.stopped = true;
+    activeRequest.controller.abort();
+    appendActivity(
+      activeRequest.sessionId,
+      "status",
+      "状态",
+      "已手动终止当前运行。",
+    );
+    markRunningRunCancelled(activeRequest.sessionId, activeRequest.runId);
+    setIsRunning(false);
   };
 
   const createNewSession = () => {
@@ -1991,7 +2071,13 @@ export function AgentConsole({
       role,
       content,
     }));
+    const abortController = new AbortController();
 
+    activeAgentRequestRef.current = {
+      controller: abortController,
+      sessionId,
+      stopped: false,
+    };
     setIsRunning(true);
     setInput("");
     updateSession(sessionId, (session) => ({
@@ -2014,6 +2100,7 @@ export function AgentConsole({
         headers: {
           "Content-Type": "application/json",
         },
+        signal: abortController.signal,
         body: JSON.stringify({
           messages: history,
           modelSettings: buildModelSettings(settings),
@@ -2138,10 +2225,22 @@ export function AgentConsole({
         }
       }
     } catch (caughtError) {
+      const wasStopped = activeAgentRequestRef.current?.stopped;
+      const isAbortError =
+        caughtError instanceof DOMException && caughtError.name === "AbortError";
+
+      if (wasStopped || isAbortError) {
+        return;
+      }
+
       const message =
         caughtError instanceof Error ? caughtError.message : "请求失败";
       appendActivity(sessionId, "error", "错误", message);
     } finally {
+      if (activeAgentRequestRef.current?.controller === abortController) {
+        activeAgentRequestRef.current = null;
+      }
+
       setIsRunning(false);
     }
   };
@@ -2767,17 +2866,23 @@ export function AgentConsole({
                   }
                 }}
               />
-              <button
-                className={styles.submitButton}
-                disabled={isRunning || !input.trim() || !effectiveHasApiKey}
-                type="submit"
-              >
-                {isRunning
-                  ? "Ranni is working..."
-                  : effectiveHasApiKey
-                    ? "发送"
-                    : "先设置 Key"}
-              </button>
+              {isRunning ? (
+                <button
+                  className={`${styles.submitButton} ${styles.stopButton}`}
+                  type="button"
+                  onClick={stopAgentRun}
+                >
+                  停止
+                </button>
+              ) : (
+                <button
+                  className={styles.submitButton}
+                  disabled={!input.trim() || !effectiveHasApiKey}
+                  type="submit"
+                >
+                  {effectiveHasApiKey ? "发送" : "先设置 Key"}
+                </button>
+              )}
             </div>
           </form>
         </section>
