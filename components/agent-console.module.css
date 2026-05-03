@@ -1461,9 +1461,65 @@
   gap: var(--space-2);
 }
 
+.providerOptionCard {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-control-surface);
+}
+
+.providerOptionCardActive {
+  border-color: rgba(143, 167, 255, 0.34);
+  background: var(--ranni-accent-soft);
+}
+
+.providerOptionCardExpanded {
+  background: var(--ranni-subtle-surface);
+}
+
+.providerOptionHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.providerOptionBody {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-top: 1px solid var(--ranni-line-1);
+}
+
 .providerOptionButtonActive {
   border-color: rgba(143, 167, 255, 0.34);
   background: var(--ranni-accent-soft);
+}
+
+.providerExpandButton {
+  min-width: 68px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-secondary-bg);
+  color: var(--ranni-text-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  transition:
+    transform var(--motion-fast) var(--ease-ranni),
+    border-color var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni),
+    color var(--motion-fast) var(--ease-ranni);
+}
+
+.providerExpandButton[aria-expanded="true"] {
+  border-color: rgba(143, 167, 255, 0.34);
+  color: var(--ranni-text-0);
 }
 
 .settingsSection {
@@ -1660,7 +1716,8 @@
 }
 
 .settingsHint,
-.connectionNotice {
+.connectionNotice,
+.settingsToast {
   padding: 10px 12px;
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-md);
@@ -1668,6 +1725,12 @@
   font-size: 12px;
   line-height: 1.6;
   background: var(--ranni-subtle-surface);
+}
+
+.settingsToast {
+  border-color: rgba(104, 214, 163, 0.32);
+  color: var(--ranni-success);
+  background: var(--ranni-success-soft);
 }
 
 .connectionNoticeSuccess {
@@ -1690,6 +1753,8 @@
 .settingsNavButton:focus-visible,
 .providerOptionButton:hover,
 .providerOptionButton:focus-visible,
+.providerExpandButton:hover,
+.providerExpandButton:focus-visible,
 .primarySettingsButton:hover:enabled,
 .primarySettingsButton:focus-visible:enabled,
 .secondarySettingsButton:hover,
@@ -1927,6 +1992,14 @@
 
   .settingsInfoGrid {
     grid-template-columns: 1fr;
+  }
+
+  .providerOptionHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .providerExpandButton {
+    min-height: 38px;
   }
 
   .themeSegmented {

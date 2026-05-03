@@ -9,6 +9,7 @@ import {
   hasModelApiKey,
   testModelConnection,
 } from "../../lib/llm";
+import { testTavilyConnection } from "../../lib/tools";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
 const optionalSecretSchema = z
@@ -35,6 +36,11 @@ const modelSettingsSchema = z
     qwenApiKey: settings.qwenApiKey,
   }));
 
+const toolSettingsSchema = z.object({
+  tavilyApiKey: optionalSecretSchema,
+});
+const defaultToolSettings = { tavilyApiKey: undefined };
+
 const requestSchema = z.object({
   messages: z
     .array(
@@ -45,10 +51,15 @@ const requestSchema = z.object({
     )
     .min(1),
   modelSettings: modelSettingsSchema,
+  toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
 });
 
 const testModelSchema = z.object({
   modelSettings: modelSettingsSchema,
+});
+
+const testTavilySchema = z.object({
+  toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
 });
 
 function resolveFrontendDistDir() {
@@ -155,6 +166,7 @@ export function createServerApp() {
         messages: payload.messages,
         modelConfig: payload.modelSettings,
         signal: abortController.signal,
+        toolSettings: payload.toolSettings,
         emit: push,
       });
     } catch (error) {
@@ -202,6 +214,41 @@ export function createServerApp() {
           : typeof error === "object" && error !== null && "message" in error
             ? String((error as { message?: unknown }).message)
             : "模型连接测试失败。";
+
+      response.status(502).json({
+        error: message,
+        ok: false,
+      });
+    }
+  });
+
+  app.post("/api/tavily/test", async (request, response) => {
+    let payload: z.infer<typeof testTavilySchema>;
+
+    try {
+      payload = testTavilySchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message });
+      return;
+    }
+
+    try {
+      const result = await testTavilyConnection(payload.toolSettings);
+
+      response.json({
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+            ? String((error as { message?: unknown }).message)
+            : "Tavily 连接测试失败。";
 
       response.status(502).json({
         error: message,

@@ -8,7 +8,11 @@ import {
   type ModelConnectionConfig,
 } from "./llm";
 import { createResearchNotebook } from "./research";
-import { executeTool, getToolDefinitions } from "./tools";
+import {
+  executeTool,
+  getToolDefinitions,
+  type ToolSettings,
+} from "./tools";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -35,6 +39,7 @@ type RunAgentTurnOptions = {
   messages: PlainMessage[];
   modelConfig?: ModelConnectionConfig;
   signal?: AbortSignal;
+  toolSettings?: ToolSettings;
 };
 
 const CANCELLED_MESSAGE = "已手动终止运行。";
@@ -302,6 +307,7 @@ export async function runAgentTurn({
   messages,
   modelConfig,
   signal,
+  toolSettings,
 }: RunAgentTurnOptions) {
   const toolDefinitions = getToolDefinitions();
   const traceToolDefinitions = toTraceToolDefinitions();
@@ -532,6 +538,7 @@ export async function runAgentTurn({
             {
               researchNotebook,
               signal,
+              toolSettings,
             },
           );
           assertNotAborted(signal);
