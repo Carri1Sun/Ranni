@@ -32,6 +32,7 @@ type OpenAIChatMessage =
     }
   | {
       content?: string | null;
+      reasoning_content?: string | null;
       role: "assistant";
       tool_calls?: OpenAIToolCall[];
     }
@@ -125,6 +126,7 @@ type OpenAICompatibleProviderOptions = {
   defaultReasoningEffort?: "high" | "max";
   missingApiKeyMessage: string;
   providerName: string;
+  replayAssistantThinking?: (runtime: RuntimeConfig) => boolean;
   requestFailedPrefix: string;
   resolveRuntimeOptions: (runtime: RuntimeConfig) => ProviderRuntimeOptions;
 };
@@ -279,6 +281,19 @@ function joinTextContent(message: AgentMessage) {
     .trim();
 }
 
+function joinThinkingContent(message: AgentMessage) {
+  return message.content
+    .filter(
+      (
+        block,
+      ): block is Extract<AgentMessage["content"][number], { type: "thinking" }> =>
+        block.type === "thinking",
+    )
+    .map((block) => block.thinking)
+    .filter((thinking) => thinking.trim())
+    .join("\n\n");
+}
+
 function toOpenAITools(tools: AgentToolDefinition[]) {
   return tools.map((tool) => ({
     type: "function" as const,
@@ -303,9 +318,11 @@ function toTraceToolDefinitions(tools: AgentToolDefinition[]) {
 }
 
 function toOpenAIChatMessages({
+  includeReasoningContent,
   messages,
   system,
 }: {
+  includeReasoningContent: boolean;
   messages: AgentMessage[];
   system: string;
 }) {
@@ -319,6 +336,9 @@ function toOpenAIChatMessages({
   for (const message of messages) {
     if (message.role === "assistant") {
       const content = joinTextContent(message);
+      const reasoningContent = includeReasoningContent
+        ? joinThinkingContent(message)
+        : "";
       const toolCalls = message.content
         .filter(
           (
@@ -344,6 +364,7 @@ function toOpenAIChatMessages({
       chatMessages.push({
         role: "assistant",
         content: content || null,
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
       });
       continue;
@@ -485,10 +506,13 @@ function normalizeAssistantBlocks(
   message: NonNullable<OpenAIChatResponse["choices"]>[number]["message"],
 ) {
   const blocks: AgentAssistantBlock[] = [];
-  const thinking = message?.reasoning_content?.trim();
+  const thinking =
+    typeof message?.reasoning_content === "string"
+      ? message.reasoning_content
+      : "";
   const content = message?.content?.trim();
 
-  if (thinking) {
+  if (thinking.trim()) {
     blocks.push({
       type: "thinking",
       thinking,
@@ -531,7 +555,11 @@ function buildRequestPayload({
 
   return {
     max_tokens: runtime.maxTokens,
-    messages: toOpenAIChatMessages({ messages, system }),
+    messages: toOpenAIChatMessages({
+      includeReasoningContent: options.replayAssistantThinking?.(runtime) ?? false,
+      messages,
+      system,
+    }),
     model: runtime.model,
     ...options.resolveRuntimeOptions(runtime).requestExtras,
     ...(openAITools.length > 0 ? { tools: openAITools } : {}),
@@ -557,7 +585,11 @@ function buildTraceRequest({
 
   return {
     maxTokens: runtime.maxTokens,
-    messages: toOpenAIChatMessages({ messages, system }),
+    messages: toOpenAIChatMessages({
+      includeReasoningContent: options.replayAssistantThinking?.(runtime) ?? false,
+      messages,
+      system,
+    }),
     providerOptions: options.resolveRuntimeOptions(runtime).traceOptions,
     runtime: traceRuntime,
     systemPrompt: system,
