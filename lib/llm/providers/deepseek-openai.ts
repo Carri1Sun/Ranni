@@ -12,6 +12,7 @@ export const deepseekOpenAIProvider = createOpenAICompatibleProvider({
   missingApiKeyMessage:
     "未配置 DeepSeek API Key。请在设置中填入 API Key 并测试连接。",
   providerName: "deepseek-openai-compatible",
+  replayAssistantThinking: (runtime) => runtime.enableThinking,
   requestFailedPrefix: "DeepSeek 请求失败",
   resolveRuntimeOptions: (runtime) => {
     if (!runtime.enableThinking) {
