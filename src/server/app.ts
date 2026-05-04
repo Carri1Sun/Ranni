@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { runAgentTurn } from "../../lib/agent";
 import {
+  createMessage,
   getModelRuntimeInfo,
   hasModelApiKey,
   testModelConnection,
@@ -17,6 +18,8 @@ import { getWorkspaceRoot } from "../../lib/workspace";
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_PICKER_TIMEOUT_MS = 120_000;
+const SESSION_TITLE_MAX_LENGTH = 15;
+const SESSION_TITLE_PROMPT_MAX_LENGTH = 4000;
 
 const optionalSecretSchema = z
   .string()
@@ -67,6 +70,11 @@ const requestSchema = z.object({
 });
 
 const testModelSchema = z.object({
+  modelSettings: modelSettingsSchema,
+});
+
+const sessionTitleSchema = z.object({
+  message: z.string().trim().min(1),
   modelSettings: modelSettingsSchema,
 });
 
@@ -384,6 +392,35 @@ function setCorsHeaders(response: express.Response, origin?: string) {
   }
 }
 
+function normalizeSessionTitle(value: string) {
+  const normalized = value
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^(标题|名称|会话名|session\s*title)\s*[:：]\s*/i, "")
+    .replace(/^\d+[.)、]\s*/, "")
+    .replace(/^[`"'“”‘’「『《【[(（\s]+/, "")
+    .replace(/[`"'“”‘’」』》】\])）\s。.!！?？,，、:：;；]+$/, "")
+    .trim();
+
+  return Array.from(normalized).slice(0, SESSION_TITLE_MAX_LENGTH).join("");
+}
+
+function deriveFallbackSessionTitle(message: string) {
+  return normalizeSessionTitle(message) || "新研究会话";
+}
+
+function extractAssistantText(
+  content: Awaited<ReturnType<typeof createMessage>>["message"]["content"],
+) {
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
 export function createServerApp() {
   const app = express();
 
@@ -510,6 +547,80 @@ export function createServerApp() {
             : "无法打开系统目录选择器。",
         ok: false,
       });
+    }
+  });
+
+  app.post("/api/session/title", async (request, response) => {
+    let payload: z.infer<typeof sessionTitleSchema>;
+
+    try {
+      payload = sessionTitleSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message, ok: false });
+      return;
+    }
+
+    const abortController = new AbortController();
+    const abort = () => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    };
+
+    request.on("aborted", abort);
+
+    try {
+      const firstMessage = payload.message.slice(
+        0,
+        SESSION_TITLE_PROMPT_MAX_LENGTH,
+      );
+      const result = await createMessage({
+        modelConfig: payload.modelSettings,
+        signal: abortController.signal,
+        system: [
+          "你是一个会话命名助手。",
+          "根据用户第一条消息生成一个简洁中文标题。",
+          "要求：十五个字以内；不要引号；不要标点；不要换行；只输出标题。",
+        ].join("\n"),
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `用户第一条消息：\n${firstMessage}`,
+              },
+            ],
+          },
+        ],
+        tools: [],
+      });
+      const rawTitle = extractAssistantText(result.message.content);
+      const title =
+        normalizeSessionTitle(rawTitle) ||
+        deriveFallbackSessionTitle(payload.message);
+
+      response.json({
+        ok: true,
+        result: {
+          title,
+        },
+      });
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      response.status(502).json({
+        error:
+          error instanceof Error ? error.message : "会话命名请求失败。",
+        ok: false,
+      });
+    } finally {
+      request.off("aborted", abort);
     }
   });
 
