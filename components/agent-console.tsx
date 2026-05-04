@@ -24,6 +24,7 @@ type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "qwen";
 type SettingsTab = "about" | "account" | "api" | "appearance";
+type WorkspacePickerMode = "initial" | "newSession";
 
 type ChatMessage = {
   content: string;
@@ -55,6 +56,12 @@ type SessionRecord = {
   runs: TraceRun[];
   title: string;
   updatedAt: number;
+  workspaceRoot: string;
+};
+
+type WorkspaceDirectoryEntry = {
+  name: string;
+  path: string;
 };
 
 type AgentConsoleProps = {
@@ -113,6 +120,7 @@ const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
+const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -270,7 +278,13 @@ function createAssistantMessage(): ChatMessage {
   };
 }
 
-function createSession(title = DEFAULT_SESSION_TITLE): SessionRecord {
+function createSession({
+  title = DEFAULT_SESSION_TITLE,
+  workspaceRoot,
+}: {
+  title?: string;
+  workspaceRoot: string;
+}): SessionRecord {
   const initialAssistantMessage = createAssistantMessage();
   const now = Date.now();
 
@@ -279,6 +293,7 @@ function createSession(title = DEFAULT_SESSION_TITLE): SessionRecord {
     title,
     createdAt: now,
     updatedAt: now,
+    workspaceRoot,
     researchContext: "",
     messages: [initialAssistantMessage],
     runs: [],
@@ -736,7 +751,7 @@ function sanitizeRuns(raw: unknown): TraceRun[] {
     .filter(Boolean) as TraceRun[];
 }
 
-function sanitizeSessions(raw: unknown) {
+function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -814,6 +829,11 @@ function sanitizeSessions(raw: unknown) {
         title: candidate.title,
         createdAt: candidate.createdAt,
         updatedAt: candidate.updatedAt,
+        workspaceRoot:
+          typeof candidate.workspaceRoot === "string" &&
+          candidate.workspaceRoot.trim()
+            ? candidate.workspaceRoot.trim()
+            : defaultWorkspaceRoot,
         messages,
         researchContext:
           typeof candidate.researchContext === "string"
@@ -1175,6 +1195,70 @@ function createWorkspaceLabel(workspaceRoot: string) {
   }
 
   return parts.at(-1) ?? workspaceRoot;
+}
+
+function createWorkspaceDirectoryEntry(workspacePath: string) {
+  const path = workspacePath.trim();
+
+  return {
+    name: createWorkspaceLabel(path),
+    path,
+  };
+}
+
+function mergeWorkspaceDirectories(entries: WorkspaceDirectoryEntry[]) {
+  const seen = new Set<string>();
+  const merged: WorkspaceDirectoryEntry[] = [];
+
+  for (const entry of entries) {
+    const entryPath = entry.path.trim();
+
+    if (!entryPath || seen.has(entryPath)) {
+      continue;
+    }
+
+    seen.add(entryPath);
+    merged.push({
+      name: entry.name.trim() || createWorkspaceLabel(entryPath),
+      path: entryPath,
+    });
+  }
+
+  return merged;
+}
+
+function sanitizeWorkspaceDirectories(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return mergeWorkspaceDirectories(
+    raw
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return createWorkspaceDirectoryEntry(entry);
+        }
+
+        if (typeof entry !== "object" || entry === null) {
+          return null;
+        }
+
+        const candidate = entry as Partial<WorkspaceDirectoryEntry>;
+
+        if (typeof candidate.path !== "string" || !candidate.path.trim()) {
+          return null;
+        }
+
+        return {
+          name:
+            typeof candidate.name === "string" && candidate.name.trim()
+              ? candidate.name.trim()
+              : createWorkspaceLabel(candidate.path),
+          path: candidate.path.trim(),
+        };
+      })
+      .filter(Boolean) as WorkspaceDirectoryEntry[],
+  );
 }
 
 function getProviderOption(provider: ProviderId) {
@@ -1623,9 +1707,24 @@ export function AgentConsole({
   const [isHydrated, setIsHydrated] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isWorkspacePickerOpen, setIsWorkspacePickerOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
+  const [workspacePickerMode, setWorkspacePickerMode] =
+    useState<WorkspacePickerMode>("newSession");
+  const [workspacePickerDirectories, setWorkspacePickerDirectories] = useState<
+    WorkspaceDirectoryEntry[]
+  >([]);
+  const [workspacePickerRoots, setWorkspacePickerRoots] = useState<
+    WorkspaceDirectoryEntry[]
+  >([]);
+  const [workspacePickerSelectedPath, setWorkspacePickerSelectedPath] =
+    useState("");
+  const [workspacePickerStatus, setWorkspacePickerStatus] = useState<
+    "error" | "idle" | "loading"
+  >("idle");
+  const [workspacePickerError, setWorkspacePickerError] = useState("");
   const [expandedProviderId, setExpandedProviderId] = useState<ProviderId | "">(
     DEFAULT_SETTINGS.provider,
   );
@@ -1673,11 +1772,25 @@ export function AgentConsole({
   useEffect(() => {
     try {
       const storedSessions = localStorage.getItem(SESSIONS_STORAGE_KEY);
+      const storedWorkspaceDirectories = localStorage.getItem(
+        WORKSPACE_DIRECTORIES_STORAGE_KEY,
+      );
       const parsedSessions = sanitizeSessions(
         storedSessions ? JSON.parse(storedSessions) : [],
+        workspaceRoot,
       );
-      const initialSessions =
-        parsedSessions.length > 0 ? parsedSessions : [createSession()];
+      const initialSessions = parsedSessions;
+      const sessionDirectories = initialSessions.map((session) =>
+        createWorkspaceDirectoryEntry(session.workspaceRoot),
+      );
+      const initialWorkspaceDirectories = mergeWorkspaceDirectories([
+        ...sanitizeWorkspaceDirectories(
+          storedWorkspaceDirectories
+            ? JSON.parse(storedWorkspaceDirectories)
+            : [],
+        ),
+        ...sessionDirectories,
+      ]);
       const storedActiveSessionId =
         localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY) ?? "";
       const activeSessionExists = initialSessions.some(
@@ -1691,10 +1804,22 @@ export function AgentConsole({
 
       setSessions(initialSessions);
       setActiveSessionId(
-        activeSessionExists ? storedActiveSessionId : initialSessions[0]!.id,
+        activeSessionExists ? storedActiveSessionId : initialSessions[0]?.id ?? "",
       );
       setIsSidebarCollapsed(storedSidebarCollapsed);
       setIsInspectorCollapsed(storedInspectorCollapsed);
+      setWorkspacePickerDirectories(initialWorkspaceDirectories);
+      setWorkspacePickerSelectedPath(
+        initialSessions[0]?.workspaceRoot ??
+          initialWorkspaceDirectories[0]?.path ??
+          "",
+      );
+
+      if (initialSessions.length === 0) {
+        setWorkspacePickerMode("initial");
+        setIsWorkspacePickerOpen(true);
+      }
+
       const nextSettings = sanitizeSettings(
         storedSettings ? JSON.parse(storedSettings) : null,
       );
@@ -1702,15 +1827,18 @@ export function AgentConsole({
       setSettings(nextSettings);
       setExpandedProviderId(nextSettings.provider);
     } catch {
-      const fallbackSession = createSession();
-      setSessions([fallbackSession]);
-      setActiveSessionId(fallbackSession.id);
+      setSessions([]);
+      setActiveSessionId("");
+      setWorkspacePickerMode("initial");
+      setWorkspacePickerDirectories([]);
+      setWorkspacePickerSelectedPath("");
+      setIsWorkspacePickerOpen(true);
       setSettings(DEFAULT_SETTINGS);
       setExpandedProviderId(DEFAULT_SETTINGS.provider);
     } finally {
       setIsHydrated(true);
     }
-  }, []);
+  }, [workspaceRoot]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -1719,6 +1847,63 @@ export function AgentConsole({
 
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [isHydrated, settings]);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+
+    localStorage.setItem(
+      WORKSPACE_DIRECTORIES_STORAGE_KEY,
+      JSON.stringify(workspacePickerDirectories),
+    );
+  }, [isHydrated, workspacePickerDirectories]);
+
+  useEffect(() => {
+    if (!isWorkspacePickerOpen) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setWorkspacePickerStatus("loading");
+    setWorkspacePickerError("");
+
+    void fetch(`${apiBaseUrl}/api/workspaces/roots`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            roots?: WorkspaceDirectoryEntry[];
+          };
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "无法读取推荐目录。");
+        }
+
+        setWorkspacePickerRoots(payload.result?.roots ?? []);
+        setWorkspacePickerStatus("idle");
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setWorkspacePickerRoots([]);
+        setWorkspacePickerStatus("error");
+        setWorkspacePickerError(
+          error instanceof Error ? error.message : "无法读取推荐目录。",
+        );
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, isWorkspacePickerOpen]);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -1905,6 +2090,132 @@ export function AgentConsole({
     flashSettingsToast(`模型 provider 已更新为 ${provider.label}`);
   };
 
+  const openWorkspacePicker = (mode: WorkspacePickerMode) => {
+    const initialPath = activeSession?.workspaceRoot || workspaceRoot;
+
+    setWorkspacePickerMode(mode);
+    setWorkspacePickerSelectedPath(initialPath);
+    setWorkspacePickerError("");
+    setWorkspacePickerStatus("idle");
+    setIsWorkspacePickerOpen(true);
+  };
+
+  const closeWorkspacePicker = () => {
+    setIsWorkspacePickerOpen(false);
+  };
+
+  const addWorkspaceDirectory = (workspacePath: string) => {
+    const trimmed = workspacePath.trim();
+
+    if (!trimmed) {
+      return;
+    }
+
+    setWorkspacePickerDirectories((current) =>
+      mergeWorkspaceDirectories([
+        createWorkspaceDirectoryEntry(trimmed),
+        ...current,
+      ]),
+    );
+    setWorkspacePickerSelectedPath(trimmed);
+  };
+
+  const confirmWorkspaceSelection = async () => {
+    const nextPath = workspacePickerSelectedPath.trim();
+
+    if (!nextPath) {
+      setWorkspacePickerStatus("error");
+      setWorkspacePickerError("请先选择一个执行目录。");
+      return;
+    }
+
+    setWorkspacePickerStatus("loading");
+    setWorkspacePickerError("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workspaces/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path: nextPath,
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          path?: string;
+        };
+      };
+
+      if (!response.ok || payload.ok === false || !payload.result?.path) {
+        throw new Error(payload.error || "目标目录不可用。");
+      }
+
+      const nextSession = createSession({
+        workspaceRoot: payload.result.path,
+      });
+
+      addWorkspaceDirectory(payload.result.path);
+      setSessions((current) =>
+        workspacePickerMode === "initial" && current.length === 0
+          ? [nextSession]
+          : [nextSession, ...current],
+      );
+      setActiveSessionId(nextSession.id);
+      setSelectedRunId("");
+      setSelectedStepId("");
+      setInput("");
+      setActiveView("chat");
+      setWorkspacePickerSelectedPath(payload.result.path);
+      setWorkspacePickerStatus("idle");
+      setIsWorkspacePickerOpen(false);
+    } catch (error) {
+      setWorkspacePickerStatus("error");
+      setWorkspacePickerError(
+        error instanceof Error ? error.message : "目标目录不可用。",
+      );
+    }
+  };
+
+  const pickWorkspaceWithSystemDialog = async () => {
+    setWorkspacePickerStatus("loading");
+    setWorkspacePickerError("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workspaces/pick`, {
+        method: "POST",
+      });
+      const payload = (await response.json()) as {
+        cancelled?: boolean;
+        error?: string;
+        ok?: boolean;
+        result?: {
+          path?: string;
+        };
+      };
+
+      if (payload.cancelled) {
+        setWorkspacePickerStatus("idle");
+        return;
+      }
+
+      if (!response.ok || payload.ok === false || !payload.result?.path) {
+        throw new Error(payload.error || "无法打开系统目录选择器。");
+      }
+
+      addWorkspaceDirectory(payload.result.path);
+      setWorkspacePickerStatus("idle");
+    } catch (error) {
+      setWorkspacePickerStatus("error");
+      setWorkspacePickerError(
+        error instanceof Error ? error.message : "无法打开系统目录选择器。",
+      );
+    }
+  };
+
   const copyMessageContent = async (message: ChatMessage) => {
     try {
       await copyTextToClipboard(message.content);
@@ -2043,12 +2354,7 @@ export function AgentConsole({
   };
 
   const createNewSession = () => {
-    const nextSession = createSession();
-    setSessions((current) => [nextSession, ...current]);
-    setActiveSessionId(nextSession.id);
-    setSelectedRunId("");
-    setSelectedStepId("");
-    setInput("");
+    openWorkspacePicker("newSession");
   };
 
   const testModelSettings = async (providerId: ProviderId = settings.provider) => {
@@ -2253,6 +2559,7 @@ export function AgentConsole({
           messages: history,
           modelSettings: buildModelSettings(settings),
           toolSettings: buildToolSettings(settings),
+          workspaceRoot: activeSession.workspaceRoot,
         }),
       });
 
@@ -2394,10 +2701,165 @@ export function AgentConsole({
     }
   };
 
+  const workspacePickerModal = isWorkspacePickerOpen ? (
+    <>
+      <button
+        aria-label="关闭目录选择"
+        className={styles.modalBackdrop}
+        type="button"
+        onClick={closeWorkspacePicker}
+      />
+
+      <section
+        aria-labelledby="workspace-picker-title"
+        className={styles.workspacePickerModal}
+        role="dialog"
+        aria-modal="true"
+      >
+        <header className={styles.settingsHeader}>
+          <div>
+            <p>Workspace</p>
+            <h3 id="workspace-picker-title">选择执行目录</h3>
+          </div>
+          <button
+            className={styles.secondarySettingsButton}
+            type="button"
+            onClick={closeWorkspacePicker}
+          >
+            取消
+          </button>
+        </header>
+
+        <div className={styles.workspacePickerBody}>
+          <p className={styles.workspacePickerSubtitle}>
+            Agent 会以所选目录作为环境运行任务，可能会编辑该目录下的文件，并在该目录中执行命令。
+          </p>
+
+          <section className={styles.workspacePickerSection}>
+            <div className={styles.settingsSectionHeader}>
+              <h4>已添加的目录</h4>
+              <span>{workspacePickerDirectories.length}</span>
+            </div>
+            <div className={styles.workspaceDirectoryGrid}>
+              <button
+                className={styles.workspaceAddDirectoryButton}
+                disabled={workspacePickerStatus === "loading"}
+                type="button"
+                onClick={() => {
+                  void pickWorkspaceWithSystemDialog();
+                }}
+              >
+                <span>添加项目</span>
+                <small>打开系统选择文件夹</small>
+              </button>
+              {workspacePickerDirectories.map((directory) => {
+                const isSelected =
+                  workspacePickerSelectedPath === directory.path;
+
+                return (
+                  <button
+                    key={directory.path}
+                    className={`${styles.workspaceDirectoryCard} ${
+                      isSelected ? styles.workspaceDirectoryCardActive : ""
+                    }`}
+                    type="button"
+                    onClick={() => setWorkspacePickerSelectedPath(directory.path)}
+                  >
+                    <span>{directory.name}</span>
+                    <small>{directory.path}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className={styles.workspacePickerSection}>
+            <div className={styles.settingsSectionHeader}>
+              <h4>推荐目录</h4>
+              <span>{workspacePickerRoots.length}</span>
+            </div>
+            <div className={styles.workspaceDirectoryGrid}>
+              {workspacePickerRoots.length > 0 ? (
+                workspacePickerRoots.map((root) => {
+                  const isSelected = workspacePickerSelectedPath === root.path;
+
+                  return (
+                    <button
+                      key={root.path}
+                      className={`${styles.workspaceDirectoryCard} ${
+                        isSelected ? styles.workspaceDirectoryCardActive : ""
+                      }`}
+                      type="button"
+                      onClick={() => setWorkspacePickerSelectedPath(root.path)}
+                    >
+                      <span>{root.name}</span>
+                      <small>{root.path}</small>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className={styles.settingsHint}>
+                  {workspacePickerStatus === "loading"
+                    ? "正在读取推荐目录..."
+                    : "暂无推荐目录。"}
+                </p>
+              )}
+            </div>
+          </section>
+
+          {workspacePickerStatus === "error" ? (
+            <p
+              className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+            >
+              {workspacePickerError}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className={styles.workspacePickerFooter}>
+          <div>
+            <span>将作为新 session 的执行目录</span>
+            <strong>{workspacePickerSelectedPath || "未选择"}</strong>
+          </div>
+          <button
+            className={styles.primarySettingsButton}
+            type="button"
+            disabled={
+              workspacePickerStatus === "loading" ||
+              !workspacePickerSelectedPath
+            }
+            onClick={() => {
+              void confirmWorkspaceSelection();
+            }}
+          >
+            确定
+          </button>
+        </footer>
+      </section>
+    </>
+  ) : null;
+
   if (!isHydrated || !activeSession) {
     return (
       <main className={styles.shell}>
-        <section className={styles.loadingCard}>正在加载本地会话...</section>
+        <section className={styles.loadingCard}>
+          {isHydrated ? (
+            <div className={styles.workspaceEmptyState}>
+              <strong>还没有 session</strong>
+              <span>创建 session 前需要先选择执行目录。</span>
+              <button
+                className={styles.primarySettingsButton}
+                type="button"
+                onClick={() => openWorkspacePicker("initial")}
+              >
+                选择执行目录
+              </button>
+            </div>
+          ) : (
+            "正在加载本地会话..."
+          )}
+        </section>
+        {workspacePickerModal}
       </main>
     );
   }
@@ -2412,7 +2874,8 @@ export function AgentConsole({
   const completedStepCount = getCompletedStepCount(selectedRun);
   const latestStatusMessage =
     selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
-  const workspaceLabel = createWorkspaceLabel(workspaceRoot);
+  const activeWorkspaceRoot = activeSession.workspaceRoot;
+  const workspaceLabel = createWorkspaceLabel(activeWorkspaceRoot);
   const selectedProvider = getProviderOption(settings.provider);
   const selectedProviderApiKey = getProviderApiKey(settings);
   const selectedProviderBaseUrl = getProviderBaseUrl(settings);
@@ -2522,6 +2985,7 @@ export function AgentConsole({
                     <div className={styles.sessionMeta}>
                       <strong>{session.title}</strong>
                       <span>{formatSessionTime(session.updatedAt)}</span>
+                      <small>{createWorkspaceLabel(session.workspaceRoot)}</small>
                     </div>
                   </button>
                 );
@@ -2565,6 +3029,7 @@ export function AgentConsole({
                 <span>
                   {isProviderReady ? settingsRuntimeInfo.provider : "模型未连接"}
                 </span>
+                <span>{workspaceLabel}</span>
               </div>
               <button
                 className={styles.iconButton}
@@ -3726,6 +4191,8 @@ export function AgentConsole({
         </>
       ) : null}
 
+      {workspacePickerModal}
+
       {isInfoOpen ? (
         <>
           <button
@@ -3750,7 +4217,7 @@ export function AgentConsole({
             <div className={styles.infoGrid}>
               <article className={styles.infoCard}>
                 <span>工作空间</span>
-                <strong>{workspaceRoot}</strong>
+                <strong>{activeWorkspaceRoot}</strong>
               </article>
               <article className={styles.infoCard}>
                 <span>模型状态</span>

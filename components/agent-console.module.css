@@ -47,6 +47,24 @@
   color: var(--ranni-text-1);
 }
 
+.workspaceEmptyState {
+  width: min(360px, 100%);
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  text-align: center;
+}
+
+.workspaceEmptyState strong {
+  color: var(--ranni-text-0);
+  font-size: 16px;
+}
+
+.workspaceEmptyState span {
+  color: var(--ranni-text-2);
+  font-size: 13px;
+}
+
 .sidebar {
   min-width: 0;
   min-height: 0;
@@ -287,7 +305,8 @@
 }
 
 .sessionMeta strong,
-.sessionMeta span {
+.sessionMeta span,
+.sessionMeta small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -304,6 +323,11 @@
   color: var(--ranni-text-3);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.sessionMeta small {
+  color: var(--ranni-text-2);
+  font-size: 11px;
 }
 
 .infoPromptButton {
@@ -1260,6 +1284,120 @@
   transform: translate(-50%, -50%);
 }
 
+.workspacePickerModal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(680px, calc(100dvh - 40px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-xl);
+  background: var(--ranni-modal-bg);
+  box-shadow: var(--shadow-soft), var(--shadow-inset);
+  backdrop-filter: blur(22px);
+  transform: translate(-50%, -50%);
+}
+
+.workspacePickerBody {
+  min-height: 0;
+  display: grid;
+  gap: var(--space-4);
+  overflow: auto;
+  padding: var(--space-5);
+}
+
+.workspacePickerSubtitle {
+  margin: 0;
+  color: var(--ranni-text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workspacePickerSection {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspaceDirectoryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.workspaceDirectoryCard,
+.workspaceAddDirectoryButton {
+  min-height: 86px;
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-soft-surface);
+  color: var(--ranni-text-1);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform var(--motion-fast) var(--ease-ranni),
+    border-color var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni),
+    color var(--motion-fast) var(--ease-ranni);
+}
+
+.workspaceAddDirectoryButton {
+  border-style: dashed;
+  background: var(--ranni-control-surface);
+}
+
+.workspaceDirectoryCardActive {
+  border-color: rgba(143, 167, 255, 0.38);
+  background: var(--ranni-accent-soft);
+  color: var(--ranni-text-0);
+}
+
+.workspaceDirectoryCard span,
+.workspaceAddDirectoryButton span,
+.workspacePickerFooter span {
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceDirectoryCard small,
+.workspaceAddDirectoryButton small,
+.workspacePickerFooter strong {
+  overflow: hidden;
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspacePickerFooter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--ranni-line-1);
+  background: var(--ranni-modal-bg);
+}
+
+.workspacePickerFooter div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
 .settingsSidebar {
   min-width: 0;
   min-height: 0;
@@ -1710,7 +1848,9 @@
   color: var(--ranni-text-2);
 }
 
-.primarySettingsButton:disabled {
+.primarySettingsButton:disabled,
+.secondarySettingsButton:disabled,
+.workspaceAddDirectoryButton:disabled {
   cursor: not-allowed;
   opacity: 0.46;
 }
@@ -1755,6 +1895,10 @@
 .providerOptionButton:focus-visible,
 .providerExpandButton:hover,
 .providerExpandButton:focus-visible,
+.workspaceDirectoryCard:hover,
+.workspaceDirectoryCard:focus-visible,
+.workspaceAddDirectoryButton:hover:enabled,
+.workspaceAddDirectoryButton:focus-visible:enabled,
 .primarySettingsButton:hover:enabled,
 .primarySettingsButton:focus-visible:enabled,
 .secondarySettingsButton:hover,
@@ -1957,6 +2101,23 @@
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
     padding: 0;
+  }
+
+  .workspacePickerModal {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .workspacePickerBody {
+    padding: var(--space-4);
+  }
+
+  .workspacePickerFooter {
+    grid-template-columns: 1fr;
+  }
+
+  .workspaceDirectoryGrid {
+    grid-template-columns: 1fr;
   }
 
   .settingsSidebar {

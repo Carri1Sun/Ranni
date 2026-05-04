@@ -159,11 +159,13 @@ export type ResearchNotebook = ReturnType<typeof createResearchNotebook>;
 export function createResearchNotebook({
   latestUserPrompt,
   runId,
+  workspaceRoot,
 }: {
   latestUserPrompt: string;
   runId: string;
+  workspaceRoot?: string;
 }) {
-  const workspaceRoot = getWorkspaceRoot();
+  const resolvedWorkspaceRoot = getWorkspaceRoot(workspaceRoot);
   const createdAt = Date.now();
   let updatedAt = createdAt;
   let latestCheckpointPath: string | null = null;
@@ -187,7 +189,7 @@ export function createResearchNotebook({
       "",
       "## 元信息",
       `- Run ID: \`${runId}\``,
-      `- 工作目录: \`${workspaceRoot}\``,
+      `- 工作目录: \`${resolvedWorkspaceRoot}\``,
       `- 创建时间: ${formatTimestamp(createdAt)}`,
       `- 更新时间: ${formatTimestamp(updatedAt)}`,
       `- 用户原始请求: ${latestUserPrompt || "(empty)"}`,
@@ -281,7 +283,7 @@ export function createResearchNotebook({
 
       return [
         `Research Notebook | run=${runId}`,
-        `Workspace: ${workspaceRoot}`,
+        `Workspace: ${resolvedWorkspaceRoot}`,
         `Created At: ${formatTimestamp(createdAt)}`,
         `Updated At: ${formatTimestamp(updatedAt)}`,
         latestCheckpointPath ? `Latest Checkpoint: ${latestCheckpointPath}` : "",
@@ -337,7 +339,10 @@ export function createResearchNotebook({
         "research",
         `${topicSegment || "research"}-${runId.slice(0, 8)}.md`,
       );
-      const targetPath = resolveWorkspacePath(input.path?.trim() || defaultRelativePath);
+      const targetPath = resolveWorkspacePath(
+        input.path?.trim() || defaultRelativePath,
+        resolvedWorkspaceRoot,
+      );
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
       const markdown = buildCheckpointMarkdown({
@@ -347,7 +352,7 @@ export function createResearchNotebook({
 
       await fs.writeFile(targetPath, markdown, "utf8");
       updatedAt = Date.now();
-      latestCheckpointPath = toWorkspaceRelative(targetPath);
+      latestCheckpointPath = toWorkspaceRelative(targetPath, resolvedWorkspaceRoot);
 
       return [
         `已保存 research checkpoint。`,
