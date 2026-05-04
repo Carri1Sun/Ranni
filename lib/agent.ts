@@ -40,6 +40,7 @@ type RunAgentTurnOptions = {
   modelConfig?: ModelConnectionConfig;
   signal?: AbortSignal;
   toolSettings?: ToolSettings;
+  workspaceRoot?: string;
 };
 
 const CANCELLED_MESSAGE = "已手动终止运行。";
@@ -66,9 +67,11 @@ function assertNotAborted(signal?: AbortSignal) {
 function createSystemPrompt({
   runtime,
   toolNames,
+  workspaceRoot,
 }: {
   runtime: ReturnType<typeof getModelRuntimeInfo>;
   toolNames: string[];
+  workspaceRoot?: string;
 }) {
   const currentDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
@@ -150,7 +153,7 @@ function createSystemPrompt({
     "4. If you are blocked, say what you tried and why it did not work.",
     "",
     "Runtime context:",
-    `- Workspace root: ${getWorkspaceRoot()}`,
+    `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
     `- Current date: ${currentDate}`,
     `- Max tool steps: ${MAX_TOOL_STEPS}`,
     `- Current model: ${runtime.model}`,
@@ -308,6 +311,7 @@ export async function runAgentTurn({
   modelConfig,
   signal,
   toolSettings,
+  workspaceRoot,
 }: RunAgentTurnOptions) {
   const toolDefinitions = getToolDefinitions();
   const traceToolDefinitions = toTraceToolDefinitions();
@@ -315,6 +319,7 @@ export async function runAgentTurn({
   const system = createSystemPrompt({
     runtime,
     toolNames: toolDefinitions.map((tool) => tool.name),
+    workspaceRoot,
   });
   const runId = crypto.randomUUID();
   const runStartedAt = Date.now();
@@ -333,6 +338,7 @@ export async function runAgentTurn({
   const researchNotebook = createResearchNotebook({
     latestUserPrompt,
     runId,
+    workspaceRoot,
   });
 
   emit({
@@ -539,6 +545,7 @@ export async function runAgentTurn({
               researchNotebook,
               signal,
               toolSettings,
+              workspaceRoot,
             },
           );
           assertNotAborted(signal);

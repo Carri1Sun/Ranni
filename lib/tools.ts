@@ -24,6 +24,7 @@ export type ToolExecutionContext = {
   researchNotebook?: ResearchNotebook;
   signal?: AbortSignal;
   toolSettings?: ToolSettings;
+  workspaceRoot?: string;
 };
 
 type ToolDefinition = {
@@ -254,6 +255,7 @@ async function collectEntries(
   directoryPath: string,
   recursive: boolean,
   limit: number,
+  workspaceRoot?: string,
 ) {
   const queue = [directoryPath];
   const lines: string[] = [];
@@ -278,7 +280,7 @@ async function collectEntries(
       }
 
       const absolutePath = path.join(currentDirectory, entry.name);
-      const relativePath = toWorkspaceRelative(absolutePath);
+      const relativePath = toWorkspaceRelative(absolutePath, workspaceRoot);
 
       if (entry.isDirectory()) {
         lines.push(`[dir]  ${relativePath}`);
@@ -298,60 +300,85 @@ async function collectEntries(
   return lines;
 }
 
-async function listFiles(args: z.infer<typeof listFilesSchema>) {
-  const targetPath = resolveWorkspacePath(args.path);
+async function listFiles(
+  args: z.infer<typeof listFilesSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const targetPath = resolveWorkspacePath(args.path, workspaceRoot);
   const stats = await fs.stat(targetPath);
 
   if (!stats.isDirectory()) {
     throw new Error("list_files 只能作用于目录路径。");
   }
 
-  const lines = await collectEntries(targetPath, args.recursive, args.limit);
+  const lines = await collectEntries(
+    targetPath,
+    args.recursive,
+    args.limit,
+    workspaceRoot,
+  );
 
   return [
-    `Workspace Root: ${getWorkspaceRoot()}`,
-    `Directory: ${toWorkspaceRelative(targetPath)}`,
+    `Workspace Root: ${getWorkspaceRoot(workspaceRoot)}`,
+    `Directory: ${toWorkspaceRelative(targetPath, workspaceRoot)}`,
     `Entries: ${lines.length}`,
     "",
     lines.join("\n") || "(empty directory)",
   ].join("\n");
 }
 
-async function readFile(args: z.infer<typeof readFileSchema>) {
-  const filePath = resolveWorkspacePath(args.path);
+async function readFile(
+  args: z.infer<typeof readFileSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const filePath = resolveWorkspacePath(args.path, workspaceRoot);
   const buffer = await fs.readFile(filePath);
 
   if (buffer.includes(0)) {
-    return `文件 ${toWorkspaceRelative(filePath)} 可能是二进制文件，大小 ${formatBytes(buffer.length)}。`;
+    return `文件 ${toWorkspaceRelative(filePath, workspaceRoot)} 可能是二进制文件，大小 ${formatBytes(buffer.length)}。`;
   }
 
   return [
-    `Path: ${toWorkspaceRelative(filePath)}`,
+    `Path: ${toWorkspaceRelative(filePath, workspaceRoot)}`,
     `Bytes: ${formatBytes(buffer.length)}`,
     "",
     truncate(buffer.toString("utf8")),
   ].join("\n");
 }
 
-async function writeFile(args: z.infer<typeof writeFileSchema>) {
-  const filePath = resolveWorkspacePath(args.path);
+async function writeFile(
+  args: z.infer<typeof writeFileSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const filePath = resolveWorkspacePath(args.path, workspaceRoot);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, args.content, "utf8");
 
-  return `已写入 ${toWorkspaceRelative(filePath)}，共 ${formatBytes(Buffer.byteLength(args.content, "utf8"))}。`;
+  return `已写入 ${toWorkspaceRelative(filePath, workspaceRoot)}，共 ${formatBytes(Buffer.byteLength(args.content, "utf8"))}。`;
 }
 
-async function movePath(args: z.infer<typeof movePathSchema>) {
-  const sourcePath = resolveWorkspacePath(args.from);
-  const targetPath = resolveWorkspacePath(args.to);
+async function movePath(
+  args: z.infer<typeof movePathSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const sourcePath = resolveWorkspacePath(args.from, workspaceRoot);
+  const targetPath = resolveWorkspacePath(args.to, workspaceRoot);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.rename(sourcePath, targetPath);
 
-  return `已移动 ${toWorkspaceRelative(sourcePath)} -> ${toWorkspaceRelative(targetPath)}。`;
+  return `已移动 ${toWorkspaceRelative(sourcePath, workspaceRoot)} -> ${toWorkspaceRelative(targetPath, workspaceRoot)}。`;
 }
 
-async function deletePath(args: z.infer<typeof deletePathSchema>) {
-  const targetPath = resolveWorkspacePath(args.path);
+async function deletePath(
+  args: z.infer<typeof deletePathSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const targetPath = resolveWorkspacePath(args.path, workspaceRoot);
   const stats = await fs.stat(targetPath);
 
   if (stats.isDirectory() && !args.recursive) {
@@ -363,7 +390,7 @@ async function deletePath(args: z.infer<typeof deletePathSchema>) {
     recursive: args.recursive,
   });
 
-  return `已删除 ${toWorkspaceRelative(targetPath)}。`;
+  return `已删除 ${toWorkspaceRelative(targetPath, workspaceRoot)}。`;
 }
 
 function escapeRegExp(value: string) {
@@ -375,6 +402,7 @@ async function searchInFile(
   query: string,
   results: string[],
   limit: number,
+  workspaceRoot?: string,
 ) {
   const buffer = await fs.readFile(absolutePath);
 
@@ -388,7 +416,7 @@ async function searchInFile(
   for (let index = 0; index < lines.length && results.length < limit; index += 1) {
     if (matcher.test(lines[index] ?? "")) {
       results.push(
-        `${toWorkspaceRelative(absolutePath)}:${index + 1}: ${lines[index]?.trim() ?? ""}`,
+        `${toWorkspaceRelative(absolutePath, workspaceRoot)}:${index + 1}: ${lines[index]?.trim() ?? ""}`,
       );
     }
   }
@@ -399,6 +427,7 @@ async function walkAndSearch(
   query: string,
   results: string[],
   limit: number,
+  workspaceRoot?: string,
 ) {
   const entries = await fs.readdir(directoryPath, { withFileTypes: true });
 
@@ -414,16 +443,20 @@ async function walkAndSearch(
     const absolutePath = path.join(directoryPath, entry.name);
 
     if (entry.isDirectory()) {
-      await walkAndSearch(absolutePath, query, results, limit);
+      await walkAndSearch(absolutePath, query, results, limit, workspaceRoot);
       continue;
     }
 
-    await searchInFile(absolutePath, query, results, limit);
+    await searchInFile(absolutePath, query, results, limit, workspaceRoot);
   }
 }
 
-async function searchFiles(args: z.infer<typeof searchFilesSchema>) {
-  const directoryPath = resolveWorkspacePath(args.path);
+async function searchFiles(
+  args: z.infer<typeof searchFilesSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = context.workspaceRoot;
+  const directoryPath = resolveWorkspacePath(args.path, workspaceRoot);
   const stats = await fs.stat(directoryPath);
 
   if (!stats.isDirectory()) {
@@ -431,22 +464,30 @@ async function searchFiles(args: z.infer<typeof searchFilesSchema>) {
   }
 
   const results: string[] = [];
-  await walkAndSearch(directoryPath, args.query, results, args.limit);
+  await walkAndSearch(
+    directoryPath,
+    args.query,
+    results,
+    args.limit,
+    workspaceRoot,
+  );
 
   return results.length > 0
     ? results.join("\n")
-    : `未在 ${toWorkspaceRelative(directoryPath)} 中找到 "${args.query}"。`;
+    : `未在 ${toWorkspaceRelative(directoryPath, workspaceRoot)} 中找到 "${args.query}"。`;
 }
 
 async function runTerminal(
   args: z.infer<typeof terminalSchema>,
-  signal?: AbortSignal,
+  context: ToolExecutionContext,
 ) {
+  const { signal, workspaceRoot } = context;
+
   if (BLOCKED_COMMAND_PATTERNS.some((pattern) => pattern.test(args.command))) {
     throw new Error("该命令命中安全限制，已拒绝执行。");
   }
 
-  const currentDirectory = resolveWorkspacePath(args.cwd);
+  const currentDirectory = resolveWorkspacePath(args.cwd, workspaceRoot);
   throwIfAborted(signal);
 
   return new Promise<string>((resolve, reject) => {
@@ -511,7 +552,7 @@ async function runTerminal(
       cleanup();
 
       const summary = [
-        `cwd: ${toWorkspaceRelative(currentDirectory)}`,
+        `cwd: ${toWorkspaceRelative(currentDirectory, workspaceRoot)}`,
         `command: ${args.command}`,
         `exit_code: ${code ?? "unknown"}`,
         timedOut ? "timed_out: true" : "timed_out: false",
@@ -838,7 +879,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           },
         },
       },
-      execute: async (rawArgs) => listFiles(listFilesSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        listFiles(listFilesSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -860,7 +902,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["path"],
         },
       },
-      execute: async (rawArgs) => readFile(readFileSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        readFile(readFileSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -888,7 +931,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["path", "content"],
         },
       },
-      execute: async (rawArgs) => writeFile(writeFileSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        writeFile(writeFileSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -914,7 +958,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["from", "to"],
         },
       },
-      execute: async (rawArgs) => movePath(movePathSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        movePath(movePathSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -942,7 +987,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["path"],
         },
       },
-      execute: async (rawArgs) => deletePath(deletePathSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        deletePath(deletePathSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -975,8 +1021,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
           required: ["query"],
         },
       },
-      execute: async (rawArgs) =>
-        searchFiles(searchFilesSchema.parse(rawArgs)),
+      execute: async (rawArgs, context) =>
+        searchFiles(searchFilesSchema.parse(rawArgs), context),
     },
   ],
   [
@@ -1011,7 +1057,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
         },
       },
       execute: async (rawArgs, context) =>
-        runTerminal(terminalSchema.parse(rawArgs), context.signal),
+        runTerminal(terminalSchema.parse(rawArgs), context),
     },
   ],
   [
