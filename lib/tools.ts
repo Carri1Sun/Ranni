@@ -9,6 +9,14 @@ import { z } from "zod";
 
 import type { AgentToolDefinition } from "./llm";
 import type { ResearchNotebook } from "./research";
+import type { TaskMemory } from "./task-memory";
+import {
+  ACTION_MODES,
+  VERIFICATION_STATUSES,
+  summarizeTaskState,
+  type TaskState,
+  type TaskStatePatch,
+} from "./task-state";
 import {
   getWorkspaceRoot,
   isSkippableDir,
@@ -23,7 +31,10 @@ export type ToolSettings = {
 export type ToolExecutionContext = {
   researchNotebook?: ResearchNotebook;
   signal?: AbortSignal;
+  taskMemory?: TaskMemory;
+  taskState?: TaskState;
   toolSettings?: ToolSettings;
+  updateTaskState?: (patch: TaskStatePatch) => TaskState;
   workspaceRoot?: string;
 };
 
@@ -83,6 +94,71 @@ const webSearchSchema = z
 
 const fetchUrlSchema = z.object({
   url: z.string().url(),
+});
+
+const updateTaskStateSchema = z.object({
+  assumptions: z.array(z.string().min(1)).max(12).optional(),
+  commands_run: z.array(z.string().min(1)).max(12).optional(),
+  constraints: z.array(z.string().min(1)).max(12).optional(),
+  deliverable: z.string().min(1).optional(),
+  facts: z.array(z.string().min(1)).max(12).optional(),
+  files_touched: z.array(z.string().min(1)).max(12).optional(),
+  goal: z.string().min(1).optional(),
+  mode: z.enum(ACTION_MODES).optional(),
+  next_action: z.string().min(1).optional(),
+  open_questions: z.array(z.string().min(1)).max(12).optional(),
+  plan: z.array(z.string().min(1)).max(12).optional(),
+  success_criteria: z.array(z.string().min(1)).max(12).optional(),
+  verification_evidence: z.array(z.string().min(1)).max(12).optional(),
+  verification_status: z.enum(VERIFICATION_STATUSES).optional(),
+});
+
+const TASK_MEMORY_APPEND_SECTIONS = [
+  "state",
+  "todo",
+  "decisions",
+  "assumptions",
+  "evidence",
+  "verification",
+  "errors",
+  "negative_results",
+] as const;
+
+const initTaskMemorySchema = z.object({
+  reason: z.string().min(1).optional(),
+});
+
+const readTaskMemorySchema = z.object({
+  purpose: z.string().min(1).optional(),
+});
+
+const updateTaskMemorySchema = z.object({
+  content: z.string().min(1),
+  section: z.enum(TASK_MEMORY_APPEND_SECTIONS),
+  title: z.string().min(1).optional(),
+});
+
+const recordTaskEvidenceSchema = z.object({
+  claim: z.string().min(1),
+  confidence: z.enum(["low", "medium", "high"]).default("medium"),
+  conflicts: z.array(z.string().min(1)).max(8).default([]),
+  notes: z.string().min(1).optional(),
+  sources: z
+    .array(
+      z.object({
+        note: z.string().min(1).optional(),
+        title: z.string().min(1),
+        url: z.string().url().optional(),
+      }),
+    )
+    .min(1)
+    .max(8),
+});
+
+const saveTaskCheckpointSchema = z.object({
+  next_action: z.string().min(1).optional(),
+  summary: z.string().min(1),
+  title: z.string().min(1).optional(),
 });
 
 const planResearchSchema = z.object({
@@ -249,6 +325,158 @@ function requireResearchNotebook(context: ToolExecutionContext) {
   }
 
   return context.researchNotebook;
+}
+
+function requireTaskMemory(context: ToolExecutionContext) {
+  if (!context.taskMemory) {
+    throw new Error("当前运行未初始化 task memory。");
+  }
+
+  return context.taskMemory;
+}
+
+function requireTaskState(context: ToolExecutionContext) {
+  if (!context.taskState) {
+    throw new Error("当前运行未初始化 task state。");
+  }
+
+  return context.taskState;
+}
+
+async function updateTaskState(
+  args: z.infer<typeof updateTaskStateSchema>,
+  context: ToolExecutionContext,
+) {
+  if (!context.updateTaskState) {
+    throw new Error("当前运行未初始化 task state。");
+  }
+
+  const nextTaskState = context.updateTaskState({
+    assumptions: args.assumptions,
+    commandsRun: args.commands_run,
+    constraints: args.constraints,
+    currentMode: args.mode,
+    deliverable: args.deliverable,
+    facts: args.facts,
+    filesTouched: args.files_touched,
+    goal: args.goal,
+    nextAction: args.next_action,
+    openQuestions: args.open_questions,
+    plan: args.plan,
+    successCriteria: args.success_criteria,
+    verificationEvidence: args.verification_evidence,
+    verificationStatus: args.verification_status,
+  });
+
+  if (context.taskMemory) {
+    await context.taskMemory.syncTaskState(nextTaskState);
+    context.updateTaskState({
+      memory: context.taskMemory.getStatus(),
+    });
+  }
+
+  return [
+    "Task state updated.",
+    "",
+    summarizeTaskState(nextTaskState),
+  ].join("\n");
+}
+
+async function initTaskMemory(
+  args: z.infer<typeof initTaskMemorySchema>,
+  context: ToolExecutionContext,
+) {
+  const taskMemory = requireTaskMemory(context);
+  const taskState = requireTaskState(context);
+  await taskMemory.ensureInitialized(taskState);
+  await taskMemory.appendEntry({
+    content: args.reason?.trim()
+      ? `Initialized because: ${args.reason.trim()}`
+      : "Initialized for this agent run.",
+    section: "state",
+    title: "Task memory initialized",
+  });
+  context.updateTaskState?.({
+    memory: taskMemory.getStatus(),
+  });
+
+  return [
+    "Task memory initialized.",
+    `Directory: ${taskMemory.getStatus().relativeRunDirectory}`,
+  ].join("\n");
+}
+
+async function readTaskMemory(
+  args: z.infer<typeof readTaskMemorySchema>,
+  context: ToolExecutionContext,
+) {
+  const taskMemory = requireTaskMemory(context);
+  const summary = await taskMemory.readSummary();
+  context.updateTaskState?.({
+    memory: taskMemory.getStatus(),
+  });
+
+  return [
+    args.purpose?.trim() ? `Purpose: ${args.purpose.trim()}` : "",
+    summary,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+async function updateTaskMemory(
+  args: z.infer<typeof updateTaskMemorySchema>,
+  context: ToolExecutionContext,
+) {
+  const taskMemory = requireTaskMemory(context);
+  const result = await taskMemory.appendEntry({
+    content: args.content,
+    section: args.section,
+    title: args.title,
+  });
+  context.updateTaskState?.({
+    memory: taskMemory.getStatus(),
+  });
+
+  return result;
+}
+
+async function recordTaskEvidence(
+  args: z.infer<typeof recordTaskEvidenceSchema>,
+  context: ToolExecutionContext,
+) {
+  const taskMemory = requireTaskMemory(context);
+  const result = await taskMemory.recordEvidence({
+    claim: args.claim,
+    confidence: args.confidence,
+    conflicts: args.conflicts,
+    notes: args.notes,
+    sources: args.sources,
+  });
+  context.updateTaskState?.({
+    facts: [args.claim],
+    memory: taskMemory.getStatus(),
+  });
+
+  return result;
+}
+
+async function saveTaskCheckpoint(
+  args: z.infer<typeof saveTaskCheckpointSchema>,
+  context: ToolExecutionContext,
+) {
+  const taskMemory = requireTaskMemory(context);
+  const result = await taskMemory.saveCheckpoint({
+    nextAction: args.next_action,
+    summary: args.summary,
+    title: args.title,
+  });
+  context.updateTaskState?.({
+    memory: taskMemory.getStatus(),
+    nextAction: args.next_action,
+  });
+
+  return result;
 }
 
 async function collectEntries(
@@ -850,6 +1078,250 @@ async function saveResearchCheckpoint(
 }
 
 const toolRegistry = new Map<string, ToolDefinition>([
+  [
+    "update_task_state",
+    {
+      schema: updateTaskStateSchema,
+      tool: {
+        name: "update_task_state",
+        description:
+          "Update the run's task contract and working state: mode, goal, deliverable, success criteria, plan, facts, touched files, commands, verification status, and next action. Use this early to clarify the task, after meaningful observations, before edits, and before final synthesis.",
+        input_schema: {
+          type: "object",
+          properties: {
+            mode: {
+              type: "string",
+              enum: [...ACTION_MODES],
+              description: "Current action mode for the next meaningful step.",
+            },
+            goal: {
+              type: "string",
+              description: "What the user ultimately wants.",
+            },
+            deliverable: {
+              type: "string",
+              description: "The concrete output that should be delivered.",
+            },
+            constraints: {
+              type: "array",
+              items: { type: "string" },
+              description: "Constraints, limits, or requirements to preserve.",
+            },
+            success_criteria: {
+              type: "array",
+              items: { type: "string" },
+              description: "Observable checks that determine completion.",
+            },
+            assumptions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Reasonable assumptions being made without asking.",
+            },
+            plan: {
+              type: "array",
+              items: { type: "string" },
+              description: "Short executable plan. This replaces the prior plan.",
+            },
+            facts: {
+              type: "array",
+              items: { type: "string" },
+              description: "Important facts discovered from tools or context.",
+            },
+            files_touched: {
+              type: "array",
+              items: { type: "string" },
+              description: "Files created, edited, moved, or deleted.",
+            },
+            commands_run: {
+              type: "array",
+              items: { type: "string" },
+              description: "Commands that were run or should be recorded.",
+            },
+            verification_status: {
+              type: "string",
+              enum: [...VERIFICATION_STATUSES],
+              description: "Current verification state.",
+            },
+            verification_evidence: {
+              type: "array",
+              items: { type: "string" },
+              description: "Evidence from tests, builds, checks, or explicit rationale.",
+            },
+            open_questions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Questions that still block safe progress.",
+            },
+            next_action: {
+              type: "string",
+              description: "The next concrete action to take.",
+            },
+          },
+        },
+      },
+      execute: async (rawArgs, context) =>
+        updateTaskState(updateTaskStateSchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "init_task_memory",
+    {
+      schema: initTaskMemorySchema,
+      tool: {
+        name: "init_task_memory",
+        description:
+          "Initialize durable task memory under .ranni/runs/<runId>/ in the selected workspace. Use this when a task is multi-step, modifies files, runs commands, researches sources, or needs resumable state.",
+        input_schema: {
+          type: "object",
+          properties: {
+            reason: {
+              type: "string",
+              description: "Why durable task memory is needed for this run.",
+            },
+          },
+        },
+      },
+      execute: async (rawArgs, context) =>
+        initTaskMemory(initTaskMemorySchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "read_task_memory",
+    {
+      schema: readTaskMemorySchema,
+      tool: {
+        name: "read_task_memory",
+        description:
+          "Read the compact durable task memory summary from .ranni before a meaningful action. Use this to continue from state.md, todo.md, verification.md, errors.md, decisions.md, and evidence.md instead of relying on vague memory.",
+        input_schema: {
+          type: "object",
+          properties: {
+            purpose: {
+              type: "string",
+              description: "The next action this memory read should support.",
+            },
+          },
+        },
+      },
+      execute: async (rawArgs, context) =>
+        readTaskMemory(readTaskMemorySchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "update_task_memory",
+    {
+      schema: updateTaskMemorySchema,
+      tool: {
+        name: "update_task_memory",
+        description:
+          "Append a concise durable note to a task memory file. Use this for decisions, assumptions, todo updates, verification notes, errors, negative results, or state notes that should survive context compaction.",
+        input_schema: {
+          type: "object",
+          properties: {
+            section: {
+              type: "string",
+              enum: [...TASK_MEMORY_APPEND_SECTIONS],
+              description: "Task memory file section to update.",
+            },
+            title: {
+              type: "string",
+              description: "Short heading for the appended entry.",
+            },
+            content: {
+              type: "string",
+              description:
+                "Concise auditable content. Do not include secrets or private chain-of-thought.",
+            },
+          },
+          required: ["section", "content"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        updateTaskMemory(updateTaskMemorySchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "record_task_evidence",
+    {
+      schema: recordTaskEvidenceSchema,
+      tool: {
+        name: "record_task_evidence",
+        description:
+          "Record a claim-to-source evidence entry in .ranni/evidence.md. Use this after research or source inspection so final synthesis comes from explicit evidence rather than memory.",
+        input_schema: {
+          type: "object",
+          properties: {
+            claim: {
+              type: "string",
+              description: "The concise claim or conclusion being supported.",
+            },
+            confidence: {
+              type: "string",
+              enum: ["low", "medium", "high"],
+              default: "medium",
+            },
+            sources: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  url: { type: "string" },
+                  note: { type: "string" },
+                },
+                required: ["title"],
+              },
+              description: "Supporting sources or local evidence.",
+            },
+            conflicts: {
+              type: "array",
+              items: { type: "string" },
+              default: [],
+              description: "Known conflicts or caveats.",
+            },
+            notes: {
+              type: "string",
+              description: "Optional extra context or applicability note.",
+            },
+          },
+          required: ["claim", "sources"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        recordTaskEvidence(recordTaskEvidenceSchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "save_task_checkpoint",
+    {
+      schema: saveTaskCheckpointSchema,
+      tool: {
+        name: "save_task_checkpoint",
+        description:
+          "Save a resumable checkpoint under .ranni/runs/<runId>/checkpoints/. Use this after a major milestone, before final synthesis on long tasks, or after repeated failures.",
+        input_schema: {
+          type: "object",
+          properties: {
+            title: {
+              type: "string",
+              description: "Optional checkpoint title.",
+            },
+            summary: {
+              type: "string",
+              description: "What has been completed and what is currently known.",
+            },
+            next_action: {
+              type: "string",
+              description: "The recommended next action when resuming.",
+            },
+          },
+          required: ["summary"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        saveTaskCheckpoint(saveTaskCheckpointSchema.parse(rawArgs), context),
+    },
+  ],
   [
     "list_files",
     {
