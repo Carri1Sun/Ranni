@@ -282,13 +282,29 @@ function sleep(milliseconds: number, signal?: AbortSignal) {
   });
 }
 
-function safeParseJson(value: string) {
+function safeParseJson(value: string):
+  | {
+      ok: true;
+      value: unknown;
+    }
+  | {
+      error: string;
+      ok: false;
+      raw: string;
+    } {
   try {
-    return JSON.parse(value);
-  } catch {
     return {
-      _raw: value,
-      _warning: "Tool arguments were not valid JSON.",
+      ok: true,
+      value: JSON.parse(value),
+    };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Tool arguments were not valid JSON.",
+      ok: false,
+      raw: value,
     };
   }
 }
@@ -378,7 +394,7 @@ function toOpenAIChatMessages({
           id: block.id,
           type: "function" as const,
           function: {
-            arguments: JSON.stringify(block.input ?? {}),
+            arguments: block.rawInput ?? JSON.stringify(block.input ?? {}),
             name: block.name,
           },
         }));
@@ -553,10 +569,19 @@ function normalizeAssistantBlocks(
   }
 
   for (const toolCall of message?.tool_calls ?? []) {
+    const rawInput = toolCall.function?.arguments?.trim() || "{}";
+    const parsedInput = safeParseJson(rawInput);
+
     blocks.push({
       type: "tool_use",
       id: toolCall.id?.trim() || crypto.randomUUID(),
-      input: safeParseJson(toolCall.function?.arguments?.trim() || "{}"),
+      input: parsedInput.ok ? parsedInput.value : {},
+      rawInput,
+      ...(parsedInput.ok
+        ? {}
+        : {
+            inputParseError: parsedInput.error,
+          }),
       name: toolCall.function?.name?.trim() || "unknown_tool",
     });
   }

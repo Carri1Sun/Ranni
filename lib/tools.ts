@@ -201,6 +201,7 @@ const saveResearchCheckpointSchema = z.object({
 
 const MAX_TEXT_BYTES = 20_000;
 const FETCH_URL_TEXT_LIMIT = 12_000;
+const MAX_WRITE_FILE_CHARS = 12_000;
 const WEB_REQUEST_TIMEOUT_MS = 10_000;
 const BLOCKED_COMMAND_PATTERNS = [
   /\bsudo\b/i,
@@ -580,6 +581,12 @@ async function writeFile(
   args: z.infer<typeof writeFileSchema>,
   context: ToolExecutionContext,
 ) {
+  if (args.content.length > MAX_WRITE_FILE_CHARS) {
+    throw new Error(
+      `write_file 内容过长（${args.content.length} chars，限制 ${MAX_WRITE_FILE_CHARS} chars）。不要用 write_file 承载长篇最终回答；如果用户没有明确要求文件，请直接在最终回复中回答。如果确实需要文件，请写入更短的草稿或拆分为更小的文件。`,
+    );
+  }
+
   const workspaceRoot = context.workspaceRoot;
   const filePath = resolveWorkspacePath(args.path, workspaceRoot);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -1385,7 +1392,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "write_file",
         description:
-          "Create a new file or fully overwrite an existing file. Use this for new files or full rewrites only after reading enough context. Do not use it for blind partial edits.",
+          "Create a new file or fully overwrite an existing file. Use this for compact file artifacts or full rewrites only after reading enough context. Do not use it for blind partial edits or long final reports; answer advisory tasks in chat unless the user explicitly asks for a file. Keep content under 12000 characters.",
         input_schema: {
           type: "object",
           properties: {
@@ -1396,8 +1403,9 @@ const toolRegistry = new Map<string, ToolDefinition>([
             },
             content: {
               type: "string",
+              maxLength: MAX_WRITE_FILE_CHARS,
               description:
-                "Complete file contents to write. This replaces the existing file contents entirely.",
+                "Complete file contents to write. This replaces the existing file contents entirely. Keep this compact; do not put long final reports here.",
             },
           },
           required: ["path", "content"],
