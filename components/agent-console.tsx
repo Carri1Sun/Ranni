@@ -14,6 +14,11 @@ import type {
   TraceToolResult,
   TraceUsage,
 } from "../lib/trace";
+import {
+  ACTION_MODES,
+  VERIFICATION_STATUSES,
+  type TaskState,
+} from "../lib/task-state";
 
 import { MarkdownContent } from "./markdown-content";
 import styles from "./agent-console.module.css";
@@ -652,6 +657,84 @@ function sanitizeToolResult(raw: unknown): TraceToolResult | null {
   };
 }
 
+function sanitizeStringList(raw: unknown) {
+  return Array.isArray(raw)
+    ? raw.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function sanitizeTaskMemory(raw: unknown): TaskState["memory"] {
+  if (!isObject(raw)) {
+    return undefined;
+  }
+
+  const todo = isObject(raw.todo) ? raw.todo : {};
+
+  return {
+    initialized: raw.initialized === true,
+    latestCheckpointPath:
+      typeof raw.latestCheckpointPath === "string"
+        ? raw.latestCheckpointPath
+        : null,
+    relativeRunDirectory:
+      typeof raw.relativeRunDirectory === "string"
+        ? raw.relativeRunDirectory
+        : "",
+    runDirectory:
+      typeof raw.runDirectory === "string" ? raw.runDirectory : "",
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+    todo: {
+      blocked: typeof todo.blocked === "number" ? todo.blocked : 0,
+      doing: typeof todo.doing === "number" ? todo.doing : 0,
+      done: typeof todo.done === "number" ? todo.done : 0,
+      pending: typeof todo.pending === "number" ? todo.pending : 0,
+      skipped: typeof todo.skipped === "number" ? todo.skipped : 0,
+      total: typeof todo.total === "number" ? todo.total : 0,
+    },
+    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+  };
+}
+
+function sanitizeTaskState(raw: unknown): TaskState | undefined {
+  if (!isObject(raw)) {
+    return undefined;
+  }
+
+  const verification = isObject(raw.verification) ? raw.verification : {};
+  const currentMode = (ACTION_MODES as readonly string[]).includes(
+    String(raw.currentMode),
+  )
+    ? (raw.currentMode as TaskState["currentMode"])
+    : "intake";
+  const verificationStatus = (VERIFICATION_STATUSES as readonly string[]).includes(
+    String(verification.status),
+  )
+    ? (verification.status as TaskState["verification"]["status"])
+    : "pending";
+
+  return {
+    assumptions: sanitizeStringList(raw.assumptions),
+    commandsRun: sanitizeStringList(raw.commandsRun),
+    constraints: sanitizeStringList(raw.constraints),
+    currentMode,
+    deliverable:
+      typeof raw.deliverable === "string" ? raw.deliverable : "",
+    facts: sanitizeStringList(raw.facts),
+    filesTouched: sanitizeStringList(raw.filesTouched),
+    goal: typeof raw.goal === "string" ? raw.goal : "",
+    memory: sanitizeTaskMemory(raw.memory),
+    nextAction:
+      typeof raw.nextAction === "string" ? raw.nextAction : "",
+    openQuestions: sanitizeStringList(raw.openQuestions),
+    plan: sanitizeStringList(raw.plan),
+    successCriteria: sanitizeStringList(raw.successCriteria),
+    verification: {
+      evidence: sanitizeStringList(verification.evidence),
+      status: verificationStatus,
+    },
+  };
+}
+
 function sanitizeStep(raw: unknown): TraceStep | null {
   if (!isObject(raw) || typeof raw.id !== "string") {
     return null;
@@ -697,6 +780,7 @@ function sanitizeStep(raw: unknown): TraceStep | null {
         : "completed",
     statusMessages,
     stepIndex: typeof raw.stepIndex === "number" ? raw.stepIndex : 1,
+    taskState: sanitizeTaskState(raw.taskState),
     stopReason:
       typeof raw.stopReason === "string" ? raw.stopReason : undefined,
     thinking: typeof raw.thinking === "string" ? raw.thinking : "",
@@ -744,6 +828,7 @@ function sanitizeRuns(raw: unknown): TraceRun[] {
             ? run.status
             : "completed",
         steps,
+        taskState: sanitizeTaskState(run.taskState),
         totalSteps:
           typeof run.totalSteps === "number" ? run.totalSteps : steps.length,
       } satisfies TraceRun;
@@ -989,6 +1074,7 @@ function applyTraceEventToSession(
           event.type === "model_request" ||
           event.type === "model_response" ||
           event.type === "research_state" ||
+          event.type === "task_state" ||
           event.type === "thinking" ||
           event.type === "tool_call" ||
           event.type === "tool_result" ||
@@ -1013,6 +1099,13 @@ function applyTraceEventToSession(
               };
             }
 
+            if (event.type === "task_state") {
+              return {
+                ...run,
+                taskState: event.taskState,
+              };
+            }
+
             return run;
           }
 
@@ -1026,6 +1119,8 @@ function applyTraceEventToSession(
               event.type === "model_request"
                 ? event.request.runtime
                 : run.runtime,
+            taskState:
+              event.type === "task_state" ? event.taskState : run.taskState,
             steps: upsertStep(run.steps, stepId, stepIndex, (step) => {
               if (event.type === "context_snapshot") {
                 return {
@@ -1053,6 +1148,13 @@ function applyTraceEventToSession(
                 return {
                   ...step,
                   researchState: event.researchState,
+                };
+              }
+
+              if (event.type === "task_state") {
+                return {
+                  ...step,
+                  taskState: event.taskState,
                 };
               }
 
@@ -1556,6 +1658,34 @@ function compactResponseForStorage(
   };
 }
 
+function compactTaskStateForStorage(taskState: TaskState | undefined) {
+  if (!taskState) {
+    return undefined;
+  }
+
+  return {
+    ...taskState,
+    assumptions: taskState.assumptions.slice(-12),
+    commandsRun: taskState.commandsRun.slice(-20),
+    constraints: taskState.constraints.slice(-12),
+    facts: taskState.facts.slice(-20),
+    filesTouched: taskState.filesTouched.slice(-30),
+    memory: taskState.memory
+      ? {
+          ...taskState.memory,
+          summary: trimStoredText(taskState.memory.summary, 900),
+        }
+      : undefined,
+    openQuestions: taskState.openQuestions.slice(-12),
+    plan: taskState.plan.slice(-12),
+    successCriteria: taskState.successCriteria.slice(-12),
+    verification: {
+      ...taskState.verification,
+      evidence: taskState.verification.evidence.slice(-20),
+    },
+  };
+}
+
 function compactRunsForStorage(
   runs: TraceRun[],
   profile: (typeof STORAGE_PROFILES)[number],
@@ -1571,6 +1701,7 @@ function compactRunsForStorage(
       ? trimStoredText(run.finalAssistantMessage, profile.textLimit)
       : undefined,
     prompt: trimStoredText(run.prompt, Math.min(1200, profile.textLimit)),
+    taskState: compactTaskStateForStorage(run.taskState),
     steps: run.steps.slice(-profile.stepLimit).map((step) => ({
       ...step,
       assistantText: trimStoredText(step.assistantText, profile.textLimit),
@@ -1597,6 +1728,7 @@ function compactRunsForStorage(
         ...message,
         message: trimStoredText(message.message, 400),
       })),
+      taskState: compactTaskStateForStorage(step.taskState),
       thinking: trimStoredText(step.thinking, Math.min(4000, profile.textLimit)),
       toolCalls: step.toolCalls.slice(-24).map((toolCall) => ({
         ...toolCall,
@@ -2870,6 +3002,7 @@ export function AgentConsole({
   const selectedStep =
     selectedRun?.steps.find((step) => step.id === selectedStepId) ??
     selectedRun?.steps[selectedRun.steps.length - 1];
+  const currentTaskState = selectedStep?.taskState ?? selectedRun?.taskState;
   const reportCandidate = getReportCandidate(activeSession.messages);
   const completedStepCount = getCompletedStepCount(selectedRun);
   const latestStatusMessage =
@@ -3405,6 +3538,16 @@ export function AgentConsole({
 
                         <article className={styles.traceBlock}>
                           <div className={styles.traceBlockHeader}>
+                            <h3>Task State</h3>
+                            <span>
+                              {selectedStep.taskState?.currentMode ?? "未知"}
+                            </span>
+                          </div>
+                          <pre>{renderCodeBlock(selectedStep.taskState ?? {})}</pre>
+                        </article>
+
+                        <article className={styles.traceBlock}>
+                          <div className={styles.traceBlockHeader}>
                             <h3>Status Messages</h3>
                             <span>{selectedStep.statusMessages.length}</span>
                           </div>
@@ -3552,10 +3695,85 @@ export function AgentConsole({
                     {selectedRun.totalSteps || selectedRun.steps.length}
                   </strong>
                 </div>
+                <div>
+                  <span>Mode</span>
+                  <strong>{currentTaskState?.currentMode ?? "未知"}</strong>
+                </div>
+                <div>
+                  <span>Verify</span>
+                  <strong>
+                    {currentTaskState?.verification.status ?? "pending"}
+                  </strong>
+                </div>
               </div>
             ) : (
               <p className={styles.inspectorEmpty}>
                 发送任务后，这里会显示本轮执行状态。
+              </p>
+            )}
+          </section>
+
+          <section className={styles.inspectorSection}>
+            <div className={styles.inspectorHeader}>
+              <h3>Task State</h3>
+              <span>{currentTaskState?.currentMode ?? "Idle"}</span>
+            </div>
+            {currentTaskState ? (
+              <div className={styles.taskStatePanel}>
+                <div>
+                  <span>Goal</span>
+                  <strong>{shorten(currentTaskState.goal || "未设置", 120)}</strong>
+                </div>
+                <div>
+                  <span>Next</span>
+                  <strong>
+                    {shorten(currentTaskState.nextAction || "未设置", 120)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Verification</span>
+                  <strong>{currentTaskState.verification.status}</strong>
+                </div>
+                <div>
+                  <span>Files</span>
+                  <strong>{currentTaskState.filesTouched.length}</strong>
+                </div>
+                {currentTaskState.memory ? (
+                  <>
+                    <div>
+                      <span>Memory</span>
+                      <strong>
+                        {shorten(
+                          currentTaskState.memory.relativeRunDirectory || "未初始化",
+                          120,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Todo</span>
+                      <strong>
+                        {currentTaskState.memory.todo.done}/
+                        {currentTaskState.memory.todo.total}
+                        {currentTaskState.memory.todo.blocked > 0
+                          ? ` · ${currentTaskState.memory.todo.blocked} blocked`
+                          : ""}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Checkpoint</span>
+                      <strong>
+                        {shorten(
+                          currentTaskState.memory.latestCheckpointPath ?? "暂无",
+                          120,
+                        )}
+                      </strong>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <p className={styles.inspectorEmpty}>
+                Task state 会在模型开始执行后出现。
               </p>
             )}
           </section>

@@ -1,3 +1,5 @@
+import type { TaskState } from "./task-state";
+
 export type TraceRuntimeInfo = {
   baseUrl: string;
   contextWindow: number | null;
@@ -105,6 +107,7 @@ export type TraceStep = {
   status: "running" | "completed" | "failed" | "cancelled";
   statusMessages: TraceStatusMessage[];
   stepIndex: number;
+  taskState?: TaskState;
   stopReason?: string | null;
   thinking: string;
   toolCalls: TraceToolCall[];
@@ -122,6 +125,7 @@ export type TraceRun = {
   startedAt: number;
   status: "running" | "completed" | "failed" | "cancelled";
   steps: TraceStep[];
+  taskState?: TaskState;
   totalSteps: number;
 };
 
@@ -198,6 +202,13 @@ export type StreamEvent =
       stepId: string;
       stepIndex: number;
       type: "research_state";
+    }
+  | {
+      runId: string;
+      stepId?: string;
+      stepIndex?: number;
+      taskState: TaskState;
+      type: "task_state";
     }
   | {
       message: string;
