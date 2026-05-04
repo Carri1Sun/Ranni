@@ -33,6 +33,7 @@ export type {
   AgentAssistantBlock,
   AgentMessage,
   AgentToolDefinition,
+  AgentToolUseBlock,
   AgentToolResultBlock,
   ModelConnectionConfig,
   ModelConnectionTestResult,

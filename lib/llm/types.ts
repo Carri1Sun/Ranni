@@ -23,7 +23,9 @@ export type AgentThinkingBlock = {
 export type AgentToolUseBlock = {
   id: string;
   input: unknown;
+  inputParseError?: string;
   name: string;
+  rawInput?: string;
   type: "tool_use";
 };
 
