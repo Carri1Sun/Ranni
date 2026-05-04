@@ -35,6 +35,7 @@ type ChatMessage = {
   content: string;
   id: string;
   role: MessageRole;
+  traceRunId?: string;
 };
 
 type FeedMessage = ChatMessage & {
@@ -120,6 +121,7 @@ const INITIAL_ASSISTANT_MESSAGE =
   "我可以读取文件、搜索网页、调用工具并整理研究报告。给我一个主题，或让我先检查当前工作区。";
 
 const DEFAULT_SESSION_TITLE = "新研究会话";
+const SESSION_TITLE_MAX_LENGTH = 15;
 const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
@@ -376,6 +378,10 @@ function sanitizeFileNameSegment(value: string) {
     .slice(0, 48);
 }
 
+function createTimestampFileSegment(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
 function prettifyPayload(value: unknown) {
   if (typeof value === "string") {
     return value;
@@ -406,9 +412,17 @@ function summarizeForStorage(value: unknown, maxLength: number) {
   }
 }
 
-function deriveSessionTitle(prompt: string) {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized;
+function normalizeSessionTitle(value: string) {
+  const normalized = value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^(标题|名称|会话名|session\s*title)\s*[:：]\s*/i, "")
+    .replace(/^\d+[.)、]\s*/, "")
+    .replace(/^[`"'“”‘’「『《【[(（\s]+/, "")
+    .replace(/[`"'“”‘’」』》】\])）\s。.!！?？,，、:：;；]+$/, "")
+    .trim();
+
+  return Array.from(normalized).slice(0, SESSION_TITLE_MAX_LENGTH).join("");
 }
 
 function isCollapsibleToolResult(item: FeedActivity) {
@@ -862,48 +876,90 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
         return null;
       }
 
-      const messages = candidate.messages.filter((message) => {
-        if (typeof message !== "object" || message === null) {
-          return false;
-        }
+      const messages = candidate.messages
+        .map((message) => {
+          if (typeof message !== "object" || message === null) {
+            return null;
+          }
 
-        const maybeMessage = message as Partial<ChatMessage>;
-        return (
-          typeof maybeMessage.id === "string" &&
-          typeof maybeMessage.content === "string" &&
-          isValidMessageRole(maybeMessage.role)
-        );
-      }) as ChatMessage[];
+          const maybeMessage = message as Partial<ChatMessage>;
 
-      const feed = candidate.feed.filter((item) => {
+          if (
+            typeof maybeMessage.id !== "string" ||
+            typeof maybeMessage.content !== "string" ||
+            !isValidMessageRole(maybeMessage.role)
+          ) {
+            return null;
+          }
+
+          return {
+            content: maybeMessage.content,
+            id: maybeMessage.id,
+            role: maybeMessage.role,
+            ...(typeof maybeMessage.traceRunId === "string"
+              ? { traceRunId: maybeMessage.traceRunId }
+              : {}),
+          } satisfies ChatMessage;
+        })
+        .filter((message): message is ChatMessage => message !== null);
+
+      const feed = candidate.feed.map((item) => {
         if (typeof item !== "object" || item === null) {
-          return false;
+          return null;
         }
 
         const maybeItem = item as Partial<FeedItem>;
 
         if (maybeItem.kind === "message") {
-          return (
-            typeof maybeItem.id === "string" &&
-            typeof maybeItem.content === "string" &&
-            isValidMessageRole(maybeItem.role)
-          );
+          if (
+            typeof maybeItem.id !== "string" ||
+            typeof maybeItem.content !== "string" ||
+            !isValidMessageRole(maybeItem.role)
+          ) {
+            return null;
+          }
+
+          return {
+            content: maybeItem.content,
+            id: maybeItem.id,
+            kind: "message" as const,
+            role: maybeItem.role,
+            ...(typeof maybeItem.traceRunId === "string"
+              ? { traceRunId: maybeItem.traceRunId }
+              : {}),
+          } satisfies FeedMessage;
         }
 
         if (maybeItem.kind === "activity") {
-          return (
-            typeof maybeItem.id === "string" &&
-            typeof maybeItem.label === "string" &&
-            typeof maybeItem.detail === "string" &&
-            (maybeItem.type === "status" ||
+          if (
+            typeof maybeItem.id !== "string" ||
+            typeof maybeItem.label !== "string" ||
+            typeof maybeItem.detail !== "string" ||
+            !(
+              maybeItem.type === "status" ||
               maybeItem.type === "tool_call" ||
               maybeItem.type === "tool_result" ||
-              maybeItem.type === "error")
-          );
+              maybeItem.type === "error"
+            )
+          ) {
+            return null;
+          }
+
+          return {
+            detail: maybeItem.detail,
+            id: maybeItem.id,
+            kind: "activity" as const,
+            label: maybeItem.label,
+            toolName:
+              typeof maybeItem.toolName === "string"
+                ? maybeItem.toolName
+                : undefined,
+            type: maybeItem.type,
+          } satisfies FeedActivity;
         }
 
-        return false;
-      }) as FeedItem[];
+        return null;
+      }).filter((item): item is FeedItem => item !== null);
 
       if (messages.length === 0 || feed.length === 0) {
         return null;
@@ -1871,7 +1927,7 @@ export function AgentConsole({
       status: "idle",
     });
   const [messageActionState, setMessageActionState] = useState<{
-    action: "copied" | "exported";
+    action: "copied" | "exported" | "trace_exported";
     id: string;
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -2181,7 +2237,7 @@ export function AgentConsole({
 
   const flashMessageAction = (
     id: string,
-    action: "copied" | "exported",
+    action: "copied" | "exported" | "trace_exported",
   ) => {
     setMessageActionState({ action, id });
 
@@ -2357,11 +2413,17 @@ export function AgentConsole({
     }
   };
 
-  const exportMessageAsMarkdown = (message: ChatMessage) => {
-    const sessionSegment = sanitizeFileNameSegment(activeSession?.title || "session");
-    const fileName = `${sessionSegment || "session"}-${message.id.slice(0, 8)}.md`;
-    const blob = new Blob([message.content], {
-      type: "text/markdown;charset=utf-8",
+  const downloadTextFile = ({
+    content,
+    fileName,
+    mimeType,
+  }: {
+    content: string;
+    fileName: string;
+    mimeType: string;
+  }) => {
+    const blob = new Blob([content], {
+      type: mimeType,
     });
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2371,7 +2433,72 @@ export function AgentConsole({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(objectUrl);
+  };
+
+  const exportMessageAsMarkdown = (message: ChatMessage) => {
+    const sessionSegment = sanitizeFileNameSegment(activeSession?.title || "session");
+    const fileName = `${sessionSegment || "session"}-${message.id.slice(0, 8)}.md`;
+    downloadTextFile({
+      content: message.content,
+      fileName,
+      mimeType: "text/markdown;charset=utf-8",
+    });
     flashMessageAction(message.id, "exported");
+  };
+
+  const findTraceRunForMessage = (message: ChatMessage) => {
+    if (!activeSession) {
+      return undefined;
+    }
+
+    if (message.traceRunId) {
+      return activeSession.runs.find((run) => run.id === message.traceRunId);
+    }
+
+    return activeSession.runs.length === 1 ? activeSession.runs[0] : undefined;
+  };
+
+  const buildTraceExportText = (message: ChatMessage, run: TraceRun) => {
+    const session = activeSession;
+
+    return [
+      "# Ranni Trace Export",
+      "",
+      "## Export Metadata",
+      `- Exported At: ${new Date().toISOString()}`,
+      `- Session ID: ${session?.id ?? "(unknown)"}`,
+      `- Session Title: ${session?.title ?? "(unknown)"}`,
+      `- Workspace Root: ${session?.workspaceRoot ?? "(unknown)"}`,
+      `- Message ID: ${message.id}`,
+      `- Trace Run ID: ${run.id}`,
+      "",
+      "## Assistant Message",
+      "",
+      message.content,
+      "",
+      "## Trace JSON",
+      "",
+      JSON.stringify(run, null, 2),
+      "",
+    ].join("\n");
+  };
+
+  const exportMessageTrace = (message: ChatMessage) => {
+    const traceRun = findTraceRunForMessage(message);
+
+    if (!traceRun) {
+      console.warn("No trace run found for message.", message.id);
+      return;
+    }
+
+    const fileName = `${createTimestampFileSegment()}-trace.txt`;
+
+    downloadTextFile({
+      content: buildTraceExportText(message, traceRun),
+      fileName,
+      mimeType: "text/plain;charset=utf-8",
+    });
+    flashMessageAction(message.id, "trace_exported");
   };
 
   const updateSession = (
@@ -2605,6 +2732,59 @@ export function AgentConsole({
     }
   };
 
+  const requestSessionTitle = async (messageText: string) => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/session/title`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: messageText,
+          modelSettings: buildModelSettings(settings),
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          title?: string;
+        };
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "会话命名失败。");
+      }
+
+      return normalizeSessionTitle(payload.result?.title ?? "");
+    } catch (error) {
+      console.warn("Failed to generate session title.", error);
+      return "";
+    }
+  };
+
+  const generateSessionTitleInBackground = (
+    sessionId: string,
+    messageText: string,
+  ) => {
+    void requestSessionTitle(messageText).then((title) => {
+      if (!title) {
+        return;
+      }
+
+      updateSession(sessionId, (session) => {
+        if (session.title !== DEFAULT_SESSION_TITLE) {
+          return session;
+        }
+
+        return {
+          ...session,
+          title,
+        };
+      });
+    });
+  };
+
   const sendMessage = async (messageText: string) => {
     if (!activeSession) {
       return;
@@ -2635,28 +2815,9 @@ export function AgentConsole({
       role: "user",
       content: trimmed,
     };
-    const nextTitle =
-      activeSession.title === DEFAULT_SESSION_TITLE
-        ? deriveSessionTitle(trimmed)
-        : activeSession.title;
-    const history = [
-      ...activeSession.messages,
-      ...(activeSession.researchContext
-        ? [
-            {
-              role: "assistant" as const,
-              content: [
-                "以下是当前 session 持续维护的 research notebook 摘要，请把它视为先前已经验证过的研究上下文，在新的请求里继续复用：",
-                activeSession.researchContext,
-              ].join("\n\n"),
-            },
-          ]
-        : []),
-      userMessage,
-    ].map(({ role, content }) => ({
-      role,
-      content,
-    }));
+    const shouldGenerateSessionTitle =
+      activeSession.title === DEFAULT_SESSION_TITLE &&
+      !activeSession.messages.some((message) => message.role === "user");
     const abortController = new AbortController();
 
     activeAgentRequestRef.current = {
@@ -2666,21 +2827,44 @@ export function AgentConsole({
     };
     setIsRunning(true);
     setInput("");
-    updateSession(sessionId, (session) => ({
-      ...session,
-      title: nextTitle,
-      updatedAt: Date.now(),
-      messages: [...session.messages, userMessage],
-      feed: [
-        ...session.feed,
-        {
-          kind: "message",
-          ...userMessage,
-        },
-      ],
-    }));
 
     try {
+      const history = [
+        ...activeSession.messages,
+        ...(activeSession.researchContext
+          ? [
+              {
+                role: "assistant" as const,
+                content: [
+                  "以下是当前 session 持续维护的 research notebook 摘要，请把它视为先前已经验证过的研究上下文，在新的请求里继续复用：",
+                  activeSession.researchContext,
+                ].join("\n\n"),
+              },
+            ]
+          : []),
+        userMessage,
+      ].map(({ role, content }) => ({
+        role,
+        content,
+      }));
+
+      updateSession(sessionId, (session) => ({
+        ...session,
+        updatedAt: Date.now(),
+        messages: [...session.messages, userMessage],
+        feed: [
+          ...session.feed,
+          {
+            kind: "message",
+            ...userMessage,
+          },
+        ],
+      }));
+
+      if (shouldGenerateSessionTitle) {
+        generateSessionTitleInBackground(sessionId, trimmed);
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/chat`, {
         method: "POST",
         headers: {
@@ -2766,6 +2950,7 @@ export function AgentConsole({
                 id: nextId,
                 role: "assistant",
                 content: event.message,
+                traceRunId: event.runId,
               };
               const messageExists = session.messages.some(
                 (message) => message.id === nextId,
@@ -3217,6 +3402,18 @@ export function AgentConsole({
                                   ? "已导出"
                                   : "导出 .md"}
                               </button>
+                              {findTraceRunForMessage(item) ? (
+                                <button
+                                  className={styles.messageActionButton}
+                                  type="button"
+                                  onClick={() => exportMessageTrace(item)}
+                                >
+                                  {messageActionState?.id === item.id &&
+                                  messageActionState.action === "trace_exported"
+                                    ? "已导出"
+                                    : "导出 trace"}
+                                </button>
+                              ) : null}
                             </div>
                           </div>
                         </>
@@ -3294,6 +3491,18 @@ export function AgentConsole({
                           ? "已导出"
                           : "导出 .md"}
                       </button>
+                      {findTraceRunForMessage(reportCandidate) ? (
+                        <button
+                          className={styles.messageActionButton}
+                          type="button"
+                          onClick={() => exportMessageTrace(reportCandidate)}
+                        >
+                          {messageActionState?.id === reportCandidate.id &&
+                          messageActionState.action === "trace_exported"
+                            ? "已导出"
+                            : "导出 trace"}
+                        </button>
+                      ) : null}
                     </div>
                   </header>
                   <MarkdownContent content={reportCandidate.content} />
