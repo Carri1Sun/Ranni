@@ -29,7 +29,7 @@ Ranni 的当前产品模型可以概括为四件事：
 会话栏是主工作区：
 
 - 展示用户消息、assistant 回复和运行活动。
-- 运行活动以过程项展示，覆盖 run 生命周期、step 进度、task state、工具调用、工具结果、research state 和错误。
+- 运行活动以过程项展示，覆盖 run 生命周期、异常 step、task state、工具调用、工具结果、research state 和错误。
 - 工具调用会先用本地规则即时生成短标题、说明、图标和 meta，再异步请求模型改写为更自然的中文文案。
 - 支持 Markdown 渲染。
 - 支持复制 assistant 消息。
@@ -102,7 +102,7 @@ Agent 可用工具主要分为六类：
 
 会话过程项按语义分为七类：
 
-- `step`：run 开始/结束、step 开始/结束等生命周期事件。
+- `step`：run 开始/结束，以及失败或终止的 step；成功的 step 开始/完成不进入默认会话流。
 - `state`：`task_state` 中 current mode、next action、verification 的变化。
 - `status`：模型重试、thinking 摘要、运行提示等短状态。
 - `tool_call`：工具调用意图，显示图标、短标题、目标和补充 meta。
