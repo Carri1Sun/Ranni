@@ -903,41 +903,25 @@ function createTaskStateDisplay(taskState: TaskState): ActivityDisplay {
   };
 }
 
-function createStepStartedDisplay(stepIndex: number): ActivityDisplay {
-  return {
-    detail: "构造上下文、调用模型并等待下一步动作",
-    icon: "activity",
-    meta: `Step ${stepIndex}`,
-    source: "fallback",
-    title: `开始第 ${stepIndex} 轮`,
-  };
-}
-
 function createStepCompletedDisplay({
   durationMs,
   status,
   stepIndex,
 }: {
   durationMs?: number;
-  status: "completed" | "failed" | "cancelled";
+  status: "failed" | "cancelled";
   stepIndex: number;
 }): ActivityDisplay {
   return {
     detail:
-      status === "completed"
-        ? "本轮模型与工具动作已结束"
-        : status === "cancelled"
-          ? "本轮已被手动终止"
-          : "本轮执行失败，详情见调试信息",
-    icon: status === "completed" ? "check" : status === "cancelled" ? "activity" : "error",
+      status === "cancelled"
+        ? "本轮已被手动终止"
+        : "本轮执行失败，详情见调试信息",
+    icon: status === "cancelled" ? "activity" : "error",
     meta: formatDuration(durationMs),
     source: "fallback",
     title:
-      status === "completed"
-        ? `完成第 ${stepIndex} 轮`
-        : status === "cancelled"
-          ? `终止第 ${stepIndex} 轮`
-          : `第 ${stepIndex} 轮失败`,
+      status === "cancelled" ? `终止第 ${stepIndex} 轮` : `第 ${stepIndex} 轮失败`,
   };
 }
 
@@ -3676,19 +3660,6 @@ export function AgentConsole({
           }
 
           if (event.type === "step_started") {
-            appendActivity(
-              sessionId,
-              "step",
-              `Step ${event.stepIndex}`,
-              `开始第 ${event.stepIndex} 轮 agent loop。`,
-              {
-                display: createStepStartedDisplay(event.stepIndex),
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-              },
-            );
             continue;
           }
 
@@ -3859,9 +3830,13 @@ export function AgentConsole({
           }
 
           if (event.type === "step_completed") {
+            if (event.status === "completed") {
+              continue;
+            }
+
             appendActivity(
               sessionId,
-              "step",
+              event.status === "failed" ? "error" : "step",
               `Step ${event.stepIndex} ${event.status}`,
               prettifyPayload(event),
               {

@@ -3,7 +3,7 @@
 ## 改动内容
 
 - 将会话中的中间过程从原始 label + JSON 展示改为语义化过程项。
-- 过程项覆盖 run 生命周期、step、task state、status、tool call、tool result、research state 和 error。
+- 过程项覆盖 run 生命周期、异常 step、task state、status、tool call、tool result、research state 和 error。
 - 工具调用先使用前端本地规则即时生成标题、说明、图标和 meta，再通过 `/api/activity/describe` 请求当前模型异步改写。
 - 设置中新增 Debug section，包含「会话过程展示具体内容」开关。
 - Debug 开启后，每条过程项显示 info 按钮，可查看该项对应的 run、step、tool call、tool result 和当前 agent loop trace。
@@ -15,7 +15,7 @@
 
 过程项的主要类型：
 
-- `step`：run 和 step 生命周期。
+- `step`：run 生命周期，以及失败或终止的 step。成功 step 的开始/完成只保留在 trace/debug 中。
 - `state`：结构化任务状态变化。
 - `status`：运行提示、重试、thinking 摘要。
 - `tool_call`：工具调用意图。
