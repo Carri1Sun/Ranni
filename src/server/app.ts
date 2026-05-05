@@ -78,8 +78,34 @@ const sessionTitleSchema = z.object({
   modelSettings: modelSettingsSchema,
 });
 
+const activityDescribeSchema = z.object({
+  event: z.object({ type: z.string().trim().min(1) }).passthrough(),
+  modelSettings: modelSettingsSchema,
+});
+
 const testTavilySchema = z.object({
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
+});
+
+const processIconSchema = z.enum([
+  "activity",
+  "check",
+  "database",
+  "error",
+  "file",
+  "globe",
+  "research",
+  "search",
+  "spark",
+  "state",
+  "terminal",
+  "tool",
+]);
+const activityRewriteResultSchema = z.object({
+  detail: z.string().trim().min(1).max(140),
+  icon: processIconSchema.optional(),
+  meta: z.string().trim().max(32).optional(),
+  title: z.string().trim().min(1).max(40),
 });
 
 const workspaceDirectorySchema = z.object({
@@ -421,6 +447,78 @@ function extractAssistantText(
     .trim();
 }
 
+function redactActivityPayload(value: unknown, depth = 0): unknown {
+  if (depth > 5) {
+    return "[depth-trimmed]";
+  }
+
+  if (typeof value === "string") {
+    return value.length > 900 ? `${value.slice(0, 900)}...[trimmed]` : value;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 12).map((item) => redactActivityPayload(item, depth + 1));
+  }
+
+  const result: Record<string, unknown> = {};
+
+  for (const [key, item] of Object.entries(value).slice(0, 24)) {
+    if (/api[-_]?key|token|secret|password|authorization|cookie/i.test(key)) {
+      result[key] = "[redacted]";
+      continue;
+    }
+
+    result[key] = redactActivityPayload(item, depth + 1);
+  }
+
+  return result;
+}
+
+function buildActivityRewritePrompt(event: Record<string, unknown>) {
+  return [
+    "请把下面的 Ranni agent 过程事件改写成适合消息流展示的中文短文案。",
+    "",
+    "输出 JSON：",
+    '{"title":"不超过 14 个中文字","detail":"不超过 36 个中文字","meta":"可选补充信息","icon":"activity|check|database|error|file|globe|research|search|spark|state|terminal|tool"}',
+    "",
+    "规则：",
+    "- 只描述正在做什么，不编造工具结果。",
+    "- 不展示原始 JSON、密钥、token、cookie、完整命令输出或长 URL。",
+    "- title 用动宾结构，例如「搜索骨片获取途径」「读取项目 README」「运行类型检查」。",
+    "- detail 补充目标、范围、最多条数、文件名、域名、Step 等信息。",
+    "- search_web 要从 query 中提炼搜索意图，例如 query 为「饥荒 联机版 骨片 刷 鳗鱼 腐烂 鱼人 化石 传送门」时，title 写「搜索骨片获取途径」。",
+    "- fetch_url 用「读取网页内容」或更具体的页面主题。",
+    "- run_terminal 用「运行终端命令」，detail 只保留安全的短命令摘要。",
+    "",
+    "事件：",
+    JSON.stringify(redactActivityPayload(event), null, 2).slice(0, 3200),
+  ].join("\n");
+}
+
+function parseJsonObjectFromText(text: string) {
+  const withoutFence = text
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(withoutFence);
+  } catch {
+    const start = withoutFence.indexOf("{");
+    const end = withoutFence.lastIndexOf("}");
+
+    if (start >= 0 && end > start) {
+      return JSON.parse(withoutFence.slice(start, end + 1));
+    }
+
+    throw new Error("模型没有返回可解析的 JSON。");
+  }
+}
+
 export function createServerApp() {
   const app = express();
 
@@ -617,6 +715,77 @@ export function createServerApp() {
       response.status(502).json({
         error:
           error instanceof Error ? error.message : "会话命名请求失败。",
+        ok: false,
+      });
+    } finally {
+      request.off("aborted", abort);
+    }
+  });
+
+  app.post("/api/activity/describe", async (request, response) => {
+    let payload: z.infer<typeof activityDescribeSchema>;
+
+    try {
+      payload = activityDescribeSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message, ok: false });
+      return;
+    }
+
+    const abortController = new AbortController();
+    const abort = () => {
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    };
+
+    request.on("aborted", abort);
+
+    try {
+      const result = await createMessage({
+        modelConfig: payload.modelSettings,
+        signal: abortController.signal,
+        system: [
+          "你是 Ranni 的 agent 过程展示改写器。",
+          "你的任务是把机器事件改写为短、清晰、可信的中文 UI 文案。",
+          "只输出一个 JSON 对象，不要输出 Markdown，不要解释。",
+        ].join("\n"),
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: buildActivityRewritePrompt(payload.event),
+              },
+            ],
+          },
+        ],
+        tools: [],
+      });
+      const parsed = parseJsonObjectFromText(
+        extractAssistantText(result.message.content),
+      );
+      const rewrite = activityRewriteResultSchema.parse(parsed);
+
+      response.json({
+        ok: true,
+        result: {
+          ...rewrite,
+          source: "model",
+        },
+      });
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      response.status(502).json({
+        error:
+          error instanceof Error ? error.message : "过程展示改写请求失败。",
         ok: false,
       });
     } finally {

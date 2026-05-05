@@ -136,6 +136,7 @@
 .stepButton,
 .messageActionButton,
 .scrollToBottomButton,
+.activityInfoButton,
 .inspectorStep {
   cursor: pointer;
   transition:
@@ -283,6 +284,13 @@
   color: var(--ranni-text-0);
 }
 
+.sessionItemRunning {
+  border-color: rgba(134, 199, 255, 0.36);
+  background:
+    linear-gradient(90deg, rgba(134, 199, 255, 0.1), transparent 68%),
+    var(--ranni-soft-surface);
+}
+
 .sessionIndex {
   width: 30px;
   height: 30px;
@@ -329,6 +337,31 @@
 .sessionMeta small {
   color: var(--ranni-text-2);
   font-size: 11px;
+}
+
+.sessionRunningBadge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(134, 199, 255, 0.28);
+  border-radius: var(--radius-pill);
+  background: var(--ranni-info-soft);
+  color: var(--ranni-info);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.sessionRunningBadge span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 12px currentColor;
+  animation: statusPulse 1.2s ease-in-out infinite;
 }
 
 .infoPromptButton {
@@ -403,7 +436,7 @@
   gap: var(--space-2);
 }
 
-.chatMeta span {
+.chatMeta > span {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
@@ -412,6 +445,47 @@
   border-radius: var(--radius-pill);
   background: var(--ranni-soft-surface);
   white-space: nowrap;
+}
+
+.runStateBadge {
+  gap: 7px;
+}
+
+.runStateBadge > span {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ranni-text-3);
+}
+
+.runStateBadgeActive {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(134, 199, 255, 0.34) !important;
+  color: var(--ranni-info) !important;
+  background: var(--ranni-info-soft) !important;
+}
+
+.runStateBadgeActive > span {
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+  animation: statusPulse 1.2s ease-in-out infinite;
+}
+
+.runStateBadgeActive::after {
+  content: "";
+  position: absolute;
+  inset: -1px auto -1px -45%;
+  width: 42%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+  transform: skewX(-18deg);
+  animation: statusSweep 1.8s ease-in-out infinite;
 }
 
 .feedWrap {
@@ -434,6 +508,7 @@
 }
 
 .message {
+  flex: none;
   display: grid;
   gap: var(--space-3);
   width: fit-content;
@@ -491,13 +566,106 @@
 
 .activity {
   align-self: stretch;
+  flex: none;
+  position: relative;
   display: grid;
-  gap: var(--space-2);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
   margin: 0 4%;
-  padding: 10px 12px;
+  min-height: 58px;
+  overflow: hidden;
+  padding: 11px 12px;
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-md);
   background: var(--ranni-subtle-surface);
+}
+
+.activityActive {
+  border-color: rgba(134, 199, 255, 0.32);
+  box-shadow: 0 0 0 1px rgba(134, 199, 255, 0.06);
+}
+
+.activityActive::after {
+  content: "";
+  position: absolute;
+  inset: -1px auto -1px -35%;
+  width: 32%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.18),
+    transparent
+  );
+  transform: skewX(-18deg);
+  animation: statusSweep 1.7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.activityIcon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-control-surface);
+  color: var(--ranni-text-2);
+}
+
+.activityContent {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.activityTopLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.activityTopLine strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityTopLine span {
+  flex: none;
+  max-width: 160px;
+  overflow: hidden;
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.activityContent p {
+  overflow: hidden;
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityInfoButton {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-secondary-bg);
+  color: var(--ranni-text-2);
 }
 
 .activityDisclosure {
@@ -560,9 +728,37 @@
   background: var(--ranni-success-soft);
 }
 
+.step {
+  border-color: rgba(134, 199, 255, 0.22);
+  background: var(--ranni-info-soft);
+}
+
+.state {
+  border-color: rgba(200, 178, 125, 0.26);
+  background: var(--ranni-gold-soft);
+}
+
+.research {
+  border-color: rgba(104, 214, 163, 0.24);
+  background: rgba(104, 214, 163, 0.07);
+}
+
 .error {
   border-color: rgba(164, 59, 69, 0.28);
   background: var(--ranni-danger-soft);
+}
+
+.tool_call .activityIcon {
+  color: var(--ranni-accent-2);
+}
+
+.tool_result .activityIcon,
+.research .activityIcon {
+  color: var(--ranni-success);
+}
+
+.error .activityIcon {
+  color: var(--ranni-danger);
 }
 
 .reportWrap {
@@ -1211,6 +1407,8 @@
 .messageActionButton:focus-visible,
 .scrollToBottomButton:hover,
 .scrollToBottomButton:focus-visible,
+.activityInfoButton:hover,
+.activityInfoButton:focus-visible,
 .inspectorStep:hover,
 .inspectorStep:focus-visible {
   transform: translateY(-1px);
@@ -1241,7 +1439,9 @@
 .infoPromptButton:hover,
 .infoPromptButton:focus-visible,
 .messageActionButton:hover,
-.messageActionButton:focus-visible {
+.messageActionButton:focus-visible,
+.activityInfoButton:hover,
+.activityInfoButton:focus-visible {
   border-color: rgba(143, 167, 255, 0.32);
   background: var(--ranni-accent-soft);
   color: var(--ranni-text-0);
@@ -1259,6 +1459,7 @@
 .floatingInfoButton:active,
 .messageActionButton:active,
 .scrollToBottomButton:active,
+.activityInfoButton:active,
 .inspectorStep:active {
   transform: translateY(0);
 }
@@ -1308,6 +1509,66 @@
   box-shadow: var(--shadow-soft), var(--shadow-inset);
   backdrop-filter: blur(22px);
   transform: translate(-50%, -50%);
+}
+
+.processDebugModal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(900px, calc(100vw - 32px));
+  height: min(720px, calc(100dvh - 40px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-xl);
+  background: var(--ranni-modal-bg);
+  box-shadow: var(--shadow-soft), var(--shadow-inset);
+  backdrop-filter: blur(22px);
+  transform: translate(-50%, -50%);
+}
+
+.processDebugBody {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  overflow: auto;
+  padding: var(--space-5);
+}
+
+.processDebugSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.processDebugSummary div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: var(--space-3);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-control-surface);
+}
+
+.processDebugSummary span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.processDebugSummary strong {
+  overflow: hidden;
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspacePickerBody {
@@ -1838,6 +2099,71 @@
   box-shadow: 0 0 0 4px var(--ranni-input-focus-ring);
 }
 
+.settingsToggleRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-control-surface);
+}
+
+.settingsToggleRow > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settingsToggleRow strong {
+  color: var(--ranni-text-0);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settingsToggleRow small {
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settingsToggleRow input {
+  width: 42px;
+  height: 24px;
+  appearance: none;
+  border: 1px solid var(--ranni-line-2);
+  border-radius: var(--radius-pill);
+  background: var(--ranni-inset-surface);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--ease-ranni),
+    border-color var(--motion-fast) var(--ease-ranni);
+}
+
+.settingsToggleRow input::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  display: block;
+  margin: 2px;
+  border-radius: 50%;
+  background: var(--ranni-text-3);
+  transition:
+    transform var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni);
+}
+
+.settingsToggleRow input:checked {
+  border-color: rgba(143, 167, 255, 0.42);
+  background: var(--ranni-accent-soft);
+}
+
+.settingsToggleRow input:checked::before {
+  background: var(--ranni-accent-2);
+  transform: translateX(18px);
+}
+
 .primarySettingsButton,
 .secondarySettingsButton {
   cursor: pointer;
@@ -1992,6 +2318,30 @@
   box-shadow: var(--shadow-panel), var(--glow-accent);
 }
 
+@keyframes statusPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes statusSweep {
+  0% {
+    left: -45%;
+  }
+
+  58%,
+  100% {
+    left: 112%;
+  }
+}
+
 @media (max-width: 1279px) {
   .workspace,
   .workspaceInspectorCollapsed,
@@ -2089,6 +2439,7 @@
 
   .traceSummaryGrid,
   .kvGrid,
+  .processDebugSummary,
   .inspectorMetrics {
     grid-template-columns: 1fr;
   }
@@ -2111,12 +2462,14 @@
     padding: 0;
   }
 
-  .workspacePickerModal {
+  .workspacePickerModal,
+  .processDebugModal {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 20px);
   }
 
-  .workspacePickerBody {
+  .workspacePickerBody,
+  .processDebugBody {
     padding: var(--space-4);
   }
 

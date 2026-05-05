@@ -41,6 +41,7 @@
 - chat / report / trace 三个页面。
 - `/api/chat` NDJSON 流读取。
 - run、step、tool、task state trace 的前端合并。
+- 会话过程项的本地摘要、模型改写回填、图标展示和 debug info 浮窗。
 - 手动终止运行。
 - assistant 消息复制、导出 markdown、导出 trace。
 - 首条消息异步 session 命名。
@@ -57,6 +58,7 @@
 - 报告页。
 - Trace 页面。
 - 运行状态栏。
+- 会话过程项、运行中状态 badge、扫光动效。
 - 设置弹窗。
 - workspace picker。
 - provider list。
@@ -86,6 +88,7 @@ Express 应用定义。
 - runtime 查询。
 - workspace 推荐、校验、系统目录选择。
 - session title 生成。
+- activity display 改写。
 - chat NDJSON 流式接口。
 - model provider 测试。
 - Tavily 测试。
@@ -100,6 +103,7 @@ Express 应用定义。
 - `POST /api/workspaces/validate`
 - `POST /api/workspaces/pick`
 - `POST /api/session/title`
+- `POST /api/activity/describe`
 - `POST /api/chat`
 - `POST /api/model/test`
 - `POST /api/tavily/test`

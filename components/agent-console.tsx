@@ -1,6 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  AlertCircle,
+  BookOpenText,
+  CheckCircle2,
+  CircleDot,
+  Database,
+  FileText,
+  Globe2,
+  Info,
+  Loader2,
+  Search,
+  Sparkles,
+  SquareTerminal,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 
 import type {
   StreamEvent,
@@ -24,12 +40,41 @@ import { MarkdownContent } from "./markdown-content";
 import styles from "./agent-console.module.css";
 
 type MessageRole = "user" | "assistant";
-type ActivityType = "status" | "tool_call" | "tool_result" | "error";
+type ActivityType =
+  | "status"
+  | "tool_call"
+  | "tool_result"
+  | "error"
+  | "step"
+  | "state"
+  | "research";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "qwen";
-type SettingsTab = "about" | "account" | "api" | "appearance";
+type SettingsTab = "about" | "account" | "api" | "appearance" | "debug";
 type WorkspacePickerMode = "initial" | "newSession";
+
+type ProcessIconId =
+  | "activity"
+  | "check"
+  | "database"
+  | "error"
+  | "file"
+  | "globe"
+  | "research"
+  | "search"
+  | "spark"
+  | "state"
+  | "terminal"
+  | "tool";
+
+type ActivityDisplay = {
+  detail: string;
+  icon: ProcessIconId;
+  meta?: string;
+  source?: "fallback" | "model";
+  title: string;
+};
 
 type ChatMessage = {
   content: string;
@@ -43,11 +88,17 @@ type FeedMessage = ChatMessage & {
 };
 
 type FeedActivity = {
+  display?: ActivityDisplay;
   detail: string;
+  eventType?: StreamEvent["type"] | "manual";
   id: string;
   kind: "activity";
   label: string;
+  runId?: string;
+  stepId?: string;
+  stepIndex?: number;
   toolName?: string;
+  toolUseId?: string;
   type: ActivityType;
 };
 
@@ -84,6 +135,7 @@ type AppSettings = {
   deepseekApiKey: string;
   provider: ProviderId;
   qwenApiKey: string;
+  showProcessDetails: boolean;
   tavilyApiKey: string;
   theme: ThemeMode;
 };
@@ -109,6 +161,11 @@ type ActiveAgentRequest = {
   runId?: string;
   sessionId: string;
   stopped: boolean;
+};
+
+type ActivityDebugTarget = {
+  activityId: string;
+  sessionId: string;
 };
 
 const STARTER_PROMPTS = [
@@ -166,6 +223,11 @@ const SETTINGS_NAV_ITEMS = [
     status: "Provider",
   },
   {
+    id: "debug",
+    label: "Debug",
+    status: "Trace",
+  },
+  {
     id: "about",
     label: "关于",
     status: "Info",
@@ -182,9 +244,24 @@ const DEFAULT_SETTINGS: AppSettings = {
   deepseekApiKey: "",
   provider: "deepseek",
   qwenApiKey: "",
+  showProcessDetails: false,
   tavilyApiKey: "",
   theme: "dark",
 };
+const PROCESS_ICON_IDS = [
+  "activity",
+  "check",
+  "database",
+  "error",
+  "file",
+  "globe",
+  "research",
+  "search",
+  "spark",
+  "state",
+  "terminal",
+  "tool",
+] as const satisfies ProcessIconId[];
 const PROVIDER_OPTIONS = [
   {
     baseUrl: "https://api.deepseek.com",
@@ -272,9 +349,27 @@ const EMPTY_RUNTIME_INFO: TraceRuntimeInfo = {
   model: "未知模型",
   provider: "unknown-provider",
 };
+const PROCESS_ICON_COMPONENTS: Record<ProcessIconId, LucideIcon> = {
+  activity: CircleDot,
+  check: CheckCircle2,
+  database: Database,
+  error: AlertCircle,
+  file: FileText,
+  globe: Globe2,
+  research: BookOpenText,
+  search: Search,
+  spark: Sparkles,
+  state: Loader2,
+  terminal: SquareTerminal,
+  tool: Wrench,
+};
 
 function createId() {
   return crypto.randomUUID();
+}
+
+function getProcessIconComponent(icon: ProcessIconId) {
+  return PROCESS_ICON_COMPONENTS[icon] ?? CircleDot;
 }
 
 function createAssistantMessage(): ChatMessage {
@@ -356,6 +451,10 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
+    showProcessDetails:
+      typeof raw.showProcessDetails === "boolean"
+        ? raw.showProcessDetails
+        : DEFAULT_SETTINGS.showProcessDetails,
     tavilyApiKey:
       typeof raw.tavilyApiKey === "string" ? raw.tavilyApiKey.trim() : "",
     theme: isThemeMode(raw.theme) ? raw.theme : DEFAULT_SETTINGS.theme,
@@ -425,17 +524,6 @@ function normalizeSessionTitle(value: string) {
   return Array.from(normalized).slice(0, SESSION_TITLE_MAX_LENGTH).join("");
 }
 
-function isCollapsibleToolResult(item: FeedActivity) {
-  const collapsibleToolNames = new Set(["search_web", "fetch_url"]);
-  const collapsibleLabels = new Set(["search_web 返回", "fetch_url 返回"]);
-
-  return (
-    item.type === "tool_result" &&
-    (collapsibleToolNames.has(item.toolName ?? "") ||
-      collapsibleLabels.has(item.label))
-  );
-}
-
 function formatSessionTime(timestamp?: number) {
   if (typeof timestamp !== "number") {
     return "未记录";
@@ -481,12 +569,493 @@ function formatTokenCount(value?: number | null) {
   return new Intl.NumberFormat("zh-CN").format(value);
 }
 
+function getObjectField(value: unknown, key: string) {
+  return isObject(value) ? value[key] : undefined;
+}
+
+function getStringField(value: unknown, key: string) {
+  const field = getObjectField(value, key);
+
+  return typeof field === "string" ? field.trim() : "";
+}
+
+function getNumberField(value: unknown, key: string) {
+  const field = getObjectField(value, key);
+
+  return typeof field === "number" ? field : undefined;
+}
+
+function compactText(value: string, maxLength = 80) {
+  return shorten(value.replace(/\s+/g, " ").trim(), maxLength);
+}
+
+function compactPathLabel(value: string) {
+  const normalized = value.trim().replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+
+  if (parts.length <= 2) {
+    return normalized || "未指定路径";
+  }
+
+  return `${parts.at(-2)}/${parts.at(-1)}`;
+}
+
+function getUrlHost(value: string) {
+  try {
+    return new URL(value).host || value;
+  } catch {
+    return value;
+  }
+}
+
+function getToolDisplayName(toolName: string) {
+  const labels: Record<string, string> = {
+    delete_path: "删除路径",
+    fetch_url: "读取网页",
+    init_task_memory: "初始化任务记忆",
+    list_files: "列出文件",
+    move_path: "移动路径",
+    plan_research: "规划研究",
+    read_file: "读取文件",
+    read_task_memory: "读取任务记忆",
+    record_research_finding: "记录研究发现",
+    record_task_evidence: "记录证据",
+    review_research_state: "检查研究状态",
+    run_terminal: "运行终端命令",
+    save_research_checkpoint: "保存研究快照",
+    save_task_checkpoint: "保存任务快照",
+    search_in_files: "搜索工作区文件",
+    search_web: "搜索网页",
+    update_task_memory: "更新任务记忆",
+    update_task_state: "更新任务状态",
+    write_file: "写入文件",
+  };
+
+  return labels[toolName] ?? toolName.replace(/_/g, " ");
+}
+
+function getToolIcon(toolName: string): ProcessIconId {
+  if (toolName === "search_web" || toolName === "search_in_files") {
+    return "search";
+  }
+
+  if (toolName === "fetch_url") {
+    return "globe";
+  }
+
+  if (
+    toolName === "read_file" ||
+    toolName === "write_file" ||
+    toolName === "move_path" ||
+    toolName === "delete_path" ||
+    toolName === "list_files"
+  ) {
+    return "file";
+  }
+
+  if (toolName === "run_terminal") {
+    return "terminal";
+  }
+
+  if (toolName.includes("memory")) {
+    return "database";
+  }
+
+  if (toolName.includes("research")) {
+    return "research";
+  }
+
+  if (toolName === "update_task_state") {
+    return "state";
+  }
+
+  return "tool";
+}
+
+function inferSearchIntent(query: string) {
+  const normalized = query
+    .replace(/\b(site|filetype|intitle|inurl):\S+/gi, "")
+    .replace(/[|"'“”‘’`]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return "相关信息";
+  }
+
+  if (/骨片/.test(normalized) && /(刷|获取|途径|来源|掉落|获得)/.test(normalized)) {
+    return "骨片获取途径";
+  }
+
+  if (/(官方|文档|docs?|api|sdk|reference)/i.test(normalized)) {
+    const topic = normalized
+      .replace(/官方|文档|docs?|api|sdk|reference/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return topic ? `${compactText(topic, 10)}官方文档` : "官方文档";
+  }
+
+  const stopWords = new Set([
+    "怎么",
+    "如何",
+    "为什么",
+    "是否",
+    "教程",
+    "攻略",
+    "方法",
+    "最新",
+    "查询",
+    "搜索",
+    "获取",
+    "获得",
+    "途径",
+    "刷",
+    "the",
+    "a",
+    "an",
+    "how",
+    "to",
+    "latest",
+  ]);
+  const tokens = normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token && !stopWords.has(token.toLowerCase()));
+  const compacted = tokens.slice(0, 3).join(" ") || normalized;
+
+  return compactText(compacted, 14);
+}
+
+function createToolCallDisplay(toolName: string, args: unknown): ActivityDisplay {
+  const displayName = getToolDisplayName(toolName);
+  const icon = getToolIcon(toolName);
+
+  if (toolName === "search_web") {
+    const query = getStringField(args, "query");
+    const maxResults = getNumberField(args, "max_results");
+
+    return {
+      detail: query ? `Query: ${compactText(query, 72)}` : "准备搜索公开网页",
+      icon,
+      meta: maxResults ? `最多 ${maxResults} 条` : "web",
+      source: "fallback",
+      title: `搜索${inferSearchIntent(query)}`,
+    };
+  }
+
+  if (toolName === "fetch_url") {
+    const url = getStringField(args, "url");
+
+    return {
+      detail: url ? getUrlHost(url) : "准备读取页面正文",
+      icon,
+      meta: "url",
+      source: "fallback",
+      title: "读取网页内容",
+    };
+  }
+
+  if (toolName === "run_terminal") {
+    const command = getStringField(args, "command");
+
+    return {
+      detail: command ? compactText(command, 86) : "准备执行终端命令",
+      icon,
+      meta: "terminal",
+      source: "fallback",
+      title: "运行终端命令",
+    };
+  }
+
+  if (toolName === "search_in_files") {
+    const query = getStringField(args, "query");
+    const targetPath = getStringField(args, "path");
+
+    return {
+      detail: [
+        query ? `查找 ${compactText(query, 44)}` : "查找文本",
+        targetPath ? `范围 ${compactPathLabel(targetPath)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      icon,
+      meta: "workspace",
+      source: "fallback",
+      title: "搜索工作区文件",
+    };
+  }
+
+  if (
+    toolName === "read_file" ||
+    toolName === "write_file" ||
+    toolName === "move_path" ||
+    toolName === "delete_path" ||
+    toolName === "list_files"
+  ) {
+    const targetPath =
+      getStringField(args, "path") ||
+      getStringField(args, "from") ||
+      getStringField(args, "to");
+
+    return {
+      detail: targetPath ? compactPathLabel(targetPath) : "工作区路径",
+      icon,
+      meta: "file",
+      source: "fallback",
+      title: displayName,
+    };
+  }
+
+  if (toolName === "update_task_state") {
+    const currentMode = getStringField(args, "currentMode");
+    const nextAction = getStringField(args, "nextAction");
+
+    return {
+      detail: compactText(nextAction || currentMode || "刷新结构化任务状态", 88),
+      icon,
+      meta: currentMode || "state",
+      source: "fallback",
+      title: "更新任务状态",
+    };
+  }
+
+  return {
+    detail: compactInlinePayload(args, 88),
+    icon,
+    meta: "tool",
+    source: "fallback",
+    title: displayName,
+  };
+}
+
+function createToolResultDisplay({
+  durationMs,
+  result,
+  success,
+  toolName,
+}: {
+  durationMs?: number;
+  result: string;
+  success?: boolean;
+  toolName: string;
+}): ActivityDisplay {
+  const displayName = getToolDisplayName(toolName);
+
+  return {
+    detail: compactText(result, 110),
+    icon: success === false ? "error" : "check",
+    meta: formatDuration(durationMs),
+    source: "fallback",
+    title: success === false ? `${displayName}失败` : `${displayName}完成`,
+  };
+}
+
+function createStatusDisplay(message: string): ActivityDisplay {
+  const compactMessage = compactText(message, 110);
+
+  if (/已连接/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "spark",
+      meta: "run",
+      source: "fallback",
+      title: "开始分析请求",
+    };
+  }
+
+  if (/重试|暂时不稳定/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "activity",
+      meta: "retry",
+      source: "fallback",
+      title: "模型请求重试",
+    };
+  }
+
+  if (message.length > 180) {
+    return {
+      detail: compactMessage,
+      icon: "spark",
+      meta: "thinking",
+      source: "fallback",
+      title: "整理执行思路",
+    };
+  }
+
+  return {
+    detail: compactMessage,
+    icon: "activity",
+    meta: "status",
+    source: "fallback",
+    title: "更新运行状态",
+  };
+}
+
+function createTaskStateDisplay(taskState: TaskState): ActivityDisplay {
+  return {
+    detail: compactText(taskState.nextAction || taskState.goal || "任务状态已刷新", 100),
+    icon: "state",
+    meta: taskState.currentMode,
+    source: "fallback",
+    title: "更新任务状态",
+  };
+}
+
+function createStepStartedDisplay(stepIndex: number): ActivityDisplay {
+  return {
+    detail: "构造上下文、调用模型并等待下一步动作",
+    icon: "activity",
+    meta: `Step ${stepIndex}`,
+    source: "fallback",
+    title: `开始第 ${stepIndex} 轮`,
+  };
+}
+
+function createStepCompletedDisplay({
+  durationMs,
+  status,
+  stepIndex,
+}: {
+  durationMs?: number;
+  status: "completed" | "failed" | "cancelled";
+  stepIndex: number;
+}): ActivityDisplay {
+  return {
+    detail:
+      status === "completed"
+        ? "本轮模型与工具动作已结束"
+        : status === "cancelled"
+          ? "本轮已被手动终止"
+          : "本轮执行失败，详情见调试信息",
+    icon: status === "completed" ? "check" : status === "cancelled" ? "activity" : "error",
+    meta: formatDuration(durationMs),
+    source: "fallback",
+    title:
+      status === "completed"
+        ? `完成第 ${stepIndex} 轮`
+        : status === "cancelled"
+          ? `终止第 ${stepIndex} 轮`
+          : `第 ${stepIndex} 轮失败`,
+  };
+}
+
+function createRunStartedDisplay(): ActivityDisplay {
+  return {
+    detail: "已建立本轮 run，开始进入 agent loop",
+    icon: "spark",
+    meta: "run",
+    source: "fallback",
+    title: "开始执行任务",
+  };
+}
+
+function createRunCompletedDisplay({
+  durationMs,
+  status,
+  totalSteps,
+}: {
+  durationMs?: number;
+  status: "completed" | "failed" | "cancelled";
+  totalSteps: number;
+}): ActivityDisplay {
+  return {
+    detail: `共 ${totalSteps} 轮 · ${formatDuration(durationMs)}`,
+    icon: status === "completed" ? "check" : status === "cancelled" ? "activity" : "error",
+    meta: getStatusLabel(status),
+    source: "fallback",
+    title:
+      status === "completed"
+        ? "任务执行完成"
+        : status === "cancelled"
+          ? "任务已终止"
+          : "任务执行失败",
+  };
+}
+
+function createResearchDisplay(): ActivityDisplay {
+  return {
+    detail: "研究笔记已产生新的结构化状态",
+    icon: "research",
+    meta: "research",
+    source: "fallback",
+    title: "更新研究笔记",
+  };
+}
+
+function createErrorDisplay(message: string): ActivityDisplay {
+  return {
+    detail: compactText(message, 120),
+    icon: "error",
+    meta: "error",
+    source: "fallback",
+    title: "运行出现错误",
+  };
+}
+
+function createFallbackActivityDisplay(
+  type: ActivityType,
+  label: string,
+  detail: string,
+  toolName?: string,
+): ActivityDisplay {
+  if (type === "tool_call" && toolName) {
+    return createToolCallDisplay(toolName, detail);
+  }
+
+  if (type === "tool_result" && toolName) {
+    return createToolResultDisplay({
+      result: detail,
+      success: true,
+      toolName,
+    });
+  }
+
+  if (type === "error") {
+    return createErrorDisplay(detail);
+  }
+
+  return {
+    detail: compactText(detail || label, 110),
+    icon: type === "state" ? "state" : type === "research" ? "research" : "activity",
+    meta: type,
+    source: "fallback",
+    title: compactText(label, 28),
+  };
+}
+
 function isValidMessageRole(role: unknown): role is MessageRole {
   return role === "user" || role === "assistant";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isProcessIconId(value: unknown): value is ProcessIconId {
+  return (
+    typeof value === "string" &&
+    (PROCESS_ICON_IDS as readonly string[]).includes(value)
+  );
+}
+
+function sanitizeActivityDisplay(raw: unknown): ActivityDisplay | undefined {
+  if (!isObject(raw)) {
+    return undefined;
+  }
+
+  if (typeof raw.title !== "string" || typeof raw.detail !== "string") {
+    return undefined;
+  }
+
+  return {
+    detail: raw.detail,
+    icon: isProcessIconId(raw.icon) ? raw.icon : "activity",
+    meta: typeof raw.meta === "string" ? raw.meta : undefined,
+    source: raw.source === "model" ? "model" : "fallback",
+    title: raw.title,
+  };
 }
 
 function sanitizeRuntimeInfo(raw: unknown): TraceRuntimeInfo {
@@ -903,7 +1472,7 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
         })
         .filter((message): message is ChatMessage => message !== null);
 
-      const feed = candidate.feed.map((item) => {
+      const feed = candidate.feed.map((item): FeedItem | null => {
         if (typeof item !== "object" || item === null) {
           return null;
         }
@@ -939,20 +1508,42 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
               maybeItem.type === "status" ||
               maybeItem.type === "tool_call" ||
               maybeItem.type === "tool_result" ||
-              maybeItem.type === "error"
+              maybeItem.type === "error" ||
+              maybeItem.type === "step" ||
+              maybeItem.type === "state" ||
+              maybeItem.type === "research"
             )
           ) {
             return null;
           }
 
           return {
+            display: sanitizeActivityDisplay(maybeItem.display),
             detail: maybeItem.detail,
+            eventType:
+              typeof maybeItem.eventType === "string"
+                ? maybeItem.eventType
+                : undefined,
             id: maybeItem.id,
             kind: "activity" as const,
             label: maybeItem.label,
+            runId:
+              typeof maybeItem.runId === "string" ? maybeItem.runId : undefined,
+            stepId:
+              typeof maybeItem.stepId === "string"
+                ? maybeItem.stepId
+                : undefined,
+            stepIndex:
+              typeof maybeItem.stepIndex === "number"
+                ? maybeItem.stepIndex
+                : undefined,
             toolName:
               typeof maybeItem.toolName === "string"
                 ? maybeItem.toolName
+                : undefined,
+            toolUseId:
+              typeof maybeItem.toolUseId === "string"
+                ? maybeItem.toolUseId
                 : undefined,
             type: maybeItem.type,
           } satisfies FeedActivity;
@@ -1623,6 +2214,55 @@ function renderCodeBlock(value: unknown) {
   return prettifyPayload(value);
 }
 
+function buildActivityDebugPayload({
+  item,
+  step,
+  toolCall,
+  toolResult,
+}: {
+  item: FeedActivity;
+  step?: TraceStep;
+  toolCall?: TraceToolCall;
+  toolResult?: TraceToolResult;
+}) {
+  return {
+    processItem: {
+      detail: item.detail,
+      display: item.display,
+      eventType: item.eventType,
+      id: item.id,
+      label: item.label,
+      runId: item.runId,
+      stepId: item.stepId,
+      stepIndex: item.stepIndex,
+      toolName: item.toolName,
+      toolUseId: item.toolUseId,
+      type: item.type,
+    },
+    round: step
+      ? {
+          assistantText: step.assistantText || undefined,
+          context: step.context,
+          durationMs: step.durationMs,
+          endedAt: step.endedAt,
+          error: step.error,
+          id: step.id,
+          modelRequest: step.request,
+          modelResponse: step.response,
+          startedAt: step.startedAt,
+          status: step.status,
+          statusMessages: step.statusMessages,
+          stepIndex: step.stepIndex,
+          stopReason: step.stopReason,
+          taskState: step.taskState,
+          thinking: step.thinking || undefined,
+          toolInput: toolCall,
+          ...(toolResult ? { output: toolResult } : {}),
+        }
+      : undefined,
+  };
+}
+
 async function copyTextToClipboard(value: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
@@ -1824,6 +2464,16 @@ function compactSessionsForStorage(
                 }
               : {
                   ...item,
+                  display: item.display
+                    ? {
+                        ...item.display,
+                        detail: trimStoredText(
+                          item.display.detail,
+                          Math.min(260, profile.activityDetailLimit),
+                        ),
+                        title: trimStoredText(item.display.title, 80),
+                      }
+                    : undefined,
                   detail: trimStoredText(item.detail, profile.activityDetailLimit),
                 },
           );
@@ -1896,6 +2546,8 @@ export function AgentConsole({
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWorkspacePickerOpen, setIsWorkspacePickerOpen] = useState(false);
+  const [activityDebugTarget, setActivityDebugTarget] =
+    useState<ActivityDebugTarget | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
@@ -2518,22 +3170,57 @@ export function AgentConsole({
     label: string,
     detail: string,
     options?: {
+      display?: ActivityDisplay;
+      eventType?: FeedActivity["eventType"];
+      runId?: string;
+      stepId?: string;
+      stepIndex?: number;
       toolName?: string;
+      toolUseId?: string;
     },
   ) => {
     const nextItem: FeedActivity = {
+      display:
+        options?.display ??
+        createFallbackActivityDisplay(type, label, detail, options?.toolName),
       id: createId(),
       kind: "activity",
       type,
       label,
       detail,
+      eventType: options?.eventType,
+      runId: options?.runId,
+      stepId: options?.stepId,
+      stepIndex: options?.stepIndex,
       toolName: options?.toolName,
+      toolUseId: options?.toolUseId,
     };
 
     updateSession(sessionId, (session) => ({
       ...session,
       updatedAt: Date.now(),
       feed: [...session.feed, nextItem],
+    }));
+
+    return nextItem.id;
+  };
+
+  const updateActivityDisplay = (
+    sessionId: string,
+    activityId: string,
+    display: ActivityDisplay,
+  ) => {
+    updateSession(sessionId, (session) => ({
+      ...session,
+      updatedAt: Date.now(),
+      feed: session.feed.map((item) =>
+        item.kind === "activity" && item.id === activityId
+          ? {
+              ...item,
+              display,
+            }
+          : item,
+      ),
     }));
   };
 
@@ -2607,6 +3294,17 @@ export function AgentConsole({
       "status",
       "状态",
       "已手动终止当前运行。",
+      {
+        display: {
+          detail: "用户手动停止了当前 agent run",
+          icon: "activity",
+          meta: "cancelled",
+          source: "fallback",
+          title: "终止当前运行",
+        },
+        eventType: "manual",
+        runId: activeRequest.runId,
+      },
     );
     markRunningRunCancelled(activeRequest.sessionId, activeRequest.runId);
     setIsRunning(false);
@@ -2729,6 +3427,63 @@ export function AgentConsole({
         message:
           error instanceof Error ? error.message : "Tavily 连接测试失败。",
       });
+    }
+  };
+
+  const requestActivityRewrite = async ({
+    event,
+    fallback,
+    sessionId,
+    activityId,
+    signal,
+  }: {
+    activityId: string;
+    event: Partial<StreamEvent> & Record<string, unknown>;
+    fallback: ActivityDisplay;
+    sessionId: string;
+    signal?: AbortSignal;
+  }) => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/activity/describe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        signal,
+        body: JSON.stringify({
+          event,
+          modelSettings: buildModelSettings(settings),
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: Partial<ActivityDisplay>;
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "过程展示改写失败。");
+      }
+
+      const result = payload.result;
+
+      if (!result?.title || !result.detail) {
+        return;
+      }
+
+      updateActivityDisplay(sessionId, activityId, {
+        detail: result.detail,
+        icon: isProcessIconId(result.icon) ? result.icon : fallback.icon,
+        meta: typeof result.meta === "string" ? result.meta : fallback.meta,
+        source: "model",
+        title: result.title,
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        return;
+      }
+
+      console.warn("Failed to rewrite process activity.", error);
     }
   };
 
@@ -2888,6 +3643,7 @@ export function AgentConsole({
       const decoder = new TextDecoder();
       let buffer = "";
       let assistantMessageId: string | null = null;
+      let lastTaskStateSignature = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -2904,18 +3660,108 @@ export function AgentConsole({
           const event = JSON.parse(line) as StreamEvent;
           applyTraceEvent(sessionId, event);
 
+          if (event.type === "run_started") {
+            appendActivity(
+              sessionId,
+              "step",
+              "开始执行任务",
+              event.prompt,
+              {
+                display: createRunStartedDisplay(),
+                eventType: event.type,
+                runId: event.runId,
+              },
+            );
+            continue;
+          }
+
+          if (event.type === "step_started") {
+            appendActivity(
+              sessionId,
+              "step",
+              `Step ${event.stepIndex}`,
+              `开始第 ${event.stepIndex} 轮 agent loop。`,
+              {
+                display: createStepStartedDisplay(event.stepIndex),
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+              },
+            );
+            continue;
+          }
+
+          if (event.type === "task_state") {
+            const signature = [
+              event.taskState.currentMode,
+              event.taskState.nextAction,
+              event.taskState.verification.status,
+            ].join("|");
+
+            if (signature !== lastTaskStateSignature) {
+              lastTaskStateSignature = signature;
+              appendActivity(
+                sessionId,
+                "state",
+                "任务状态",
+                prettifyPayload(event.taskState),
+                {
+                  display: createTaskStateDisplay(event.taskState),
+                  eventType: event.type,
+                  runId: event.runId,
+                  stepId: event.stepId,
+                  stepIndex: event.stepIndex,
+                },
+              );
+            }
+            continue;
+          }
+
           if (event.type === "status") {
-            appendActivity(sessionId, "status", "状态", shorten(event.message));
+            appendActivity(sessionId, "status", "状态", event.message, {
+              display: createStatusDisplay(event.message),
+              eventType: event.type,
+              runId: event.runId,
+              stepId: event.stepId,
+              stepIndex: event.stepIndex,
+            });
             continue;
           }
 
           if (event.type === "tool_call") {
-            appendActivity(
+            const fallbackDisplay = createToolCallDisplay(
+              event.name,
+              event.arguments,
+            );
+            const activityId = appendActivity(
               sessionId,
               "tool_call",
               `调用 ${event.name}`,
               prettifyPayload(event.arguments),
+              {
+                display: fallbackDisplay,
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+                toolName: event.name,
+                toolUseId: event.toolUseId,
+              },
             );
+
+            void requestActivityRewrite({
+              activityId,
+              event: {
+                arguments: event.arguments,
+                name: event.name,
+                stepIndex: event.stepIndex,
+                type: event.type,
+              },
+              fallback: fallbackDisplay,
+              sessionId,
+              signal: abortController.signal,
+            });
             continue;
           }
 
@@ -2926,13 +3772,37 @@ export function AgentConsole({
               `${event.name} 返回`,
               event.result,
               {
+                display: createToolResultDisplay({
+                  durationMs: event.durationMs,
+                  result: event.result,
+                  success: event.success,
+                  toolName: event.name,
+                }),
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
                 toolName: event.name,
+                toolUseId: event.toolUseId,
               },
             );
             continue;
           }
 
           if (event.type === "research_state") {
+            appendActivity(
+              sessionId,
+              "research",
+              "研究状态",
+              event.researchState,
+              {
+                display: createResearchDisplay(),
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+              },
+            );
             updateSession(sessionId, (session) => ({
               ...session,
               updatedAt: Date.now(),
@@ -2988,8 +3858,54 @@ export function AgentConsole({
             continue;
           }
 
+          if (event.type === "step_completed") {
+            appendActivity(
+              sessionId,
+              "step",
+              `Step ${event.stepIndex} ${event.status}`,
+              prettifyPayload(event),
+              {
+                display: createStepCompletedDisplay({
+                  durationMs: event.durationMs,
+                  status: event.status,
+                  stepIndex: event.stepIndex,
+                }),
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+              },
+            );
+            continue;
+          }
+
+          if (event.type === "run_completed") {
+            appendActivity(
+              sessionId,
+              event.status === "failed" ? "error" : "step",
+              `Run ${event.status}`,
+              prettifyPayload(event),
+              {
+                display: createRunCompletedDisplay({
+                  durationMs: event.durationMs,
+                  status: event.status,
+                  totalSteps: event.totalSteps,
+                }),
+                eventType: event.type,
+                runId: event.runId,
+              },
+            );
+            continue;
+          }
+
           if (event.type === "error") {
-            appendActivity(sessionId, "error", "错误", event.message);
+            appendActivity(sessionId, "error", "错误", event.message, {
+              display: createErrorDisplay(event.message),
+              eventType: event.type,
+              runId: event.runId,
+              stepId: event.stepId,
+              stepIndex: event.stepIndex,
+            });
           }
         }
 
@@ -3226,6 +4142,49 @@ export function AgentConsole({
     provider: selectedProvider.provider,
   };
   const inspectorRuntime = selectedRun?.runtime ?? settingsRuntimeInfo;
+  const runningSessionId = isRunning
+    ? activeAgentRequestRef.current?.sessionId
+    : undefined;
+  const latestProcessActivityId =
+    runningSessionId === activeSession.id
+      ? [...activeSession.feed]
+          .reverse()
+          .find((item) => item.kind === "activity")?.id
+      : undefined;
+  const activityDebugSession = activityDebugTarget
+    ? sessions.find((session) => session.id === activityDebugTarget.sessionId)
+    : undefined;
+  const activityDebugItem = activityDebugSession?.feed.find(
+    (item): item is FeedActivity =>
+      item.kind === "activity" &&
+      item.id === activityDebugTarget?.activityId,
+  );
+  const activityDebugRun = activityDebugItem?.runId
+    ? activityDebugSession?.runs.find((run) => run.id === activityDebugItem.runId)
+    : activityDebugSession?.runs[0];
+  const activityDebugStep = activityDebugItem?.stepId
+    ? activityDebugRun?.steps.find((step) => step.id === activityDebugItem.stepId)
+    : activityDebugRun?.steps.at(-1);
+  const activityDebugToolCall =
+    activityDebugItem?.toolUseId && activityDebugStep
+      ? activityDebugStep.toolCalls.find(
+          (toolCall) => toolCall.toolUseId === activityDebugItem.toolUseId,
+        )
+      : undefined;
+  const activityDebugToolResult =
+    activityDebugItem?.toolUseId && activityDebugStep
+      ? activityDebugStep.toolResults.find(
+          (toolResult) => toolResult.toolUseId === activityDebugItem.toolUseId,
+        )
+      : undefined;
+  const activityDebugPayload = activityDebugItem
+    ? buildActivityDebugPayload({
+        item: activityDebugItem,
+        step: activityDebugStep,
+        toolCall: activityDebugToolCall,
+        toolResult: activityDebugToolResult,
+      })
+    : undefined;
   const workspaceClassName = [
     styles.workspace,
     isSidebarCollapsed ? styles.workspaceCollapsed : "",
@@ -3288,13 +4247,16 @@ export function AgentConsole({
             <div className={styles.sessionList}>
               {orderedSessions.map((session, index) => {
                 const isActive = session.id === activeSession.id;
+                const sessionIsRunning =
+                  runningSessionId === session.id ||
+                  session.runs.some((run) => run.status === "running");
 
                 return (
                   <button
                     key={session.id}
                     className={`${styles.sessionItem} ${
                       isActive ? styles.sessionItemActive : ""
-                    }`}
+                    } ${sessionIsRunning ? styles.sessionItemRunning : ""}`}
                     type="button"
                     onClick={() => setActiveSessionId(session.id)}
                     title={session.title}
@@ -3305,6 +4267,12 @@ export function AgentConsole({
                       <span>{formatSessionTime(session.updatedAt)}</span>
                       <small>{createWorkspaceLabel(session.workspaceRoot)}</small>
                     </div>
+                    {sessionIsRunning ? (
+                      <span className={styles.sessionRunningBadge}>
+                        <span />
+                        运行中
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
@@ -3321,7 +4289,7 @@ export function AgentConsole({
                 }}
               >
                 <span>设置</span>
-                <small>Provider / 外观 / 关于</small>
+                <small>Provider / 外观 / Debug</small>
               </button>
             </div>
           </aside>
@@ -3343,7 +4311,14 @@ export function AgentConsole({
             <div className={styles.headerControls}>
               <div className={styles.chatMeta}>
                 <span>{formatSessionTime(activeSession.updatedAt)}</span>
-                <span>{isRunning ? "执行中" : "空闲"}</span>
+                <span
+                  className={`${styles.runStateBadge} ${
+                    isRunning ? styles.runStateBadgeActive : ""
+                  }`}
+                >
+                  <span />
+                  {isRunning ? "执行中" : "空闲"}
+                </span>
                 <span>
                   {isProviderReady ? settingsRuntimeInfo.provider : "模型未连接"}
                 </span>
@@ -3421,29 +4396,55 @@ export function AgentConsole({
                         <p>{item.content}</p>
                       )}
                     </article>
-                  ) : (
-                    <article
-                      key={item.id}
-                      className={`${styles.activity} ${styles[item.type]}`}
-                    >
-                      {isCollapsibleToolResult(item) ? (
-                        <details className={styles.activityDisclosure}>
-                          <summary className={styles.activitySummary}>
-                            <div className={styles.activityLabel}>{item.label}</div>
-                            <span className={styles.activitySummaryHint}>
-                              点击展开结果
-                            </span>
-                          </summary>
-                          <pre>{item.detail}</pre>
-                        </details>
-                      ) : (
-                        <>
-                          <div className={styles.activityLabel}>{item.label}</div>
-                          <pre>{item.detail}</pre>
-                        </>
-                      )}
-                    </article>
-                  ),
+                  ) : (() => {
+                    const display =
+                      item.display ??
+                      createFallbackActivityDisplay(
+                        item.type,
+                        item.label,
+                        item.detail,
+                        item.toolName,
+                      );
+                    const ActivityIcon = getProcessIconComponent(display.icon);
+                    const isLatestActive =
+                      isRunning && latestProcessActivityId === item.id;
+
+                    return (
+                      <article
+                        key={item.id}
+                        className={`${styles.activity} ${styles[item.type]} ${
+                          isLatestActive ? styles.activityActive : ""
+                        }`}
+                      >
+                        <div className={styles.activityIcon} aria-hidden="true">
+                          <ActivityIcon size={16} strokeWidth={2} />
+                        </div>
+                        <div className={styles.activityContent}>
+                          <div className={styles.activityTopLine}>
+                            <strong>{display.title}</strong>
+                            {display.meta ? <span>{display.meta}</span> : null}
+                          </div>
+                          <p>{display.detail}</p>
+                        </div>
+                        {settings.showProcessDetails ? (
+                          <button
+                            aria-label="查看完整过程信息"
+                            className={styles.activityInfoButton}
+                            title="查看完整过程信息"
+                            type="button"
+                            onClick={() =>
+                              setActivityDebugTarget({
+                                activityId: item.id,
+                                sessionId: activeSession.id,
+                              })
+                            }
+                          >
+                            <Info size={14} strokeWidth={2} />
+                          </button>
+                        ) : null}
+                      </article>
+                    );
+                  })(),
                 )}
               </div>
               {!isFeedAtBottom ? (
@@ -4170,6 +5171,8 @@ export function AgentConsole({
                         ? "Theme"
                         : settingsTab === "api"
                           ? "Integrations"
+                          : settingsTab === "debug"
+                            ? "Debug"
                           : "About"}
                   </p>
                   <h3>
@@ -4179,6 +5182,8 @@ export function AgentConsole({
                         ? "外观"
                         : settingsTab === "api"
                           ? "API 设置"
+                          : settingsTab === "debug"
+                            ? "调试"
                           : "关于"}
                   </h3>
                 </div>
@@ -4578,6 +5583,35 @@ export function AgentConsole({
                   </>
                 ) : null}
 
+                {settingsTab === "debug" ? (
+                  <section className={styles.settingsSection}>
+                    <div className={styles.settingsSectionHeader}>
+                      <h4>会话过程</h4>
+                      <span>
+                        {settings.showProcessDetails ? "detail on" : "brief"}
+                      </span>
+                    </div>
+                    <label className={styles.settingsToggleRow}>
+                      <span>
+                        <strong>会话过程展示具体内容</strong>
+                        <small>
+                          开启后，每条过程项会出现 info 按钮，用当前 run / step / tool trace 展示完整信息。
+                        </small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={settings.showProcessDetails}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            showProcessDetails: event.target.checked,
+                          }))
+                        }
+                      />
+                    </label>
+                  </section>
+                ) : null}
+
                 {settingsTab === "about" ? (
                   <>
                     <section className={styles.settingsSection}>
@@ -4619,6 +5653,83 @@ export function AgentConsole({
       ) : null}
 
       {workspacePickerModal}
+
+      {activityDebugTarget ? (
+        <>
+          <button
+            aria-label="关闭过程详情"
+            className={styles.modalBackdrop}
+            type="button"
+            onClick={() => setActivityDebugTarget(null)}
+          />
+
+          <section
+            aria-labelledby="process-debug-title"
+            className={styles.processDebugModal}
+            role="dialog"
+            aria-modal="true"
+          >
+            <header className={styles.settingsHeader}>
+              <div>
+                <p>Process Debug</p>
+                <h3 id="process-debug-title">过程详情</h3>
+              </div>
+              <button
+                className={styles.iconButton}
+                type="button"
+                onClick={() => setActivityDebugTarget(null)}
+              >
+                ×
+              </button>
+            </header>
+
+            <div className={styles.processDebugBody}>
+              {activityDebugItem ? (
+                <>
+                  <section className={styles.processDebugSummary}>
+                    <div>
+                      <span>Event</span>
+                      <strong>
+                        {activityDebugItem.eventType ?? activityDebugItem.type}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Run</span>
+                      <strong>{activityDebugItem.runId ?? "未绑定"}</strong>
+                    </div>
+                    <div>
+                      <span>Step</span>
+                      <strong>
+                        {activityDebugItem.stepIndex
+                          ? `Step ${activityDebugItem.stepIndex}`
+                          : "未绑定"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Tool</span>
+                      <strong>{activityDebugItem.toolName ?? "无"}</strong>
+                    </div>
+                  </section>
+
+                  <section className={styles.traceBlock}>
+                    <div className={styles.traceBlockHeader}>
+                      <h3>当前轮次详情</h3>
+                      <span>
+                        {activityDebugStep
+                          ? `Step ${activityDebugStep.stepIndex}`
+                          : activityDebugRun?.status ?? "unknown"}
+                      </span>
+                    </div>
+                    <pre>{renderCodeBlock(activityDebugPayload)}</pre>
+                  </section>
+                </>
+              ) : (
+                <p className={styles.traceEmpty}>没有找到对应过程项。</p>
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
 
       {isInfoOpen ? (
         <>
