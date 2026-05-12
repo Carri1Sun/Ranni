@@ -10,14 +10,20 @@ import {
 export type ResearchPlanInput = {
   angles: string[];
   assumptions: string[];
+  coverageDimensions: string[];
   deliverable: string;
   goal: string;
   questions: string[];
+  sourceStrategy: string[];
+  stopRules: string[];
   topic: string;
 };
 
 export type ResearchEvidenceInput = {
   note: string;
+  publishedAt?: string;
+  quoteOrClaimSpan?: string;
+  sourceType?: string;
   title: string;
   url?: string;
 };
@@ -85,7 +91,17 @@ function formatEvidenceList(evidence: ResearchEvidenceInput[]) {
       const prefix = item.url?.trim()
         ? `- [${item.title.trim()}](${item.url.trim()})`
         : `- ${item.title.trim()}`;
-      return `${prefix}: ${item.note.trim()}`;
+      const metadata = [
+        item.sourceType?.trim() ? `type=${item.sourceType.trim()}` : "",
+        item.publishedAt?.trim() ? `date=${item.publishedAt.trim()}` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const span = item.quoteOrClaimSpan?.trim()
+        ? ` Claim span: ${item.quoteOrClaimSpan.trim()}`
+        : "";
+
+      return `${prefix}${metadata ? ` (${metadata})` : ""}: ${item.note.trim()}${span}`;
     })
     .join("\n");
 }
@@ -109,6 +125,9 @@ function summarizePlan(plan: ResearchPlan) {
     `交付物：${plan.deliverable}`,
     `问题数：${plan.questions.length}`,
     `角度数：${plan.angles.length}`,
+    `覆盖维度数：${plan.coverageDimensions.length}`,
+    `来源策略数：${plan.sourceStrategy.length}`,
+    `停止规则数：${plan.stopRules.length}`,
     `更新时间：${formatTimestamp(plan.updatedAt)}`,
   ].join("\n");
 }
@@ -152,6 +171,106 @@ function buildFindingSummary(finding: ResearchFinding) {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function getSourceType(evidence: ResearchEvidenceInput) {
+  if (evidence.sourceType?.trim()) {
+    return evidence.sourceType.trim().toLowerCase();
+  }
+
+  if (!evidence.url) {
+    return "unspecified";
+  }
+
+  const url = evidence.url.toLowerCase();
+
+  if (url.includes("arxiv.org") || url.includes("openreview.net")) {
+    return "paper";
+  }
+
+  if (
+    url.includes("openai.com") ||
+    url.includes("anthropic.com") ||
+    url.includes("deepmind.google") ||
+    url.includes("developers.google") ||
+    url.includes("microsoft.com")
+  ) {
+    return "official";
+  }
+
+  if (url.includes("github.com") || url.includes("gitlab.com")) {
+    return "repo";
+  }
+
+  return "web";
+}
+
+function countBySourceType(findings: ResearchFinding[]) {
+  const counts = new Map<string, number>();
+
+  for (const finding of findings) {
+    for (const evidence of finding.evidence) {
+      const type = getSourceType(evidence);
+      counts.set(type, (counts.get(type) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([type, count]) => `${type}: ${count}`);
+}
+
+function normalizeForCoverage(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function findingMatchesNeed(finding: ResearchFinding, need: string) {
+  const normalizedNeed = normalizeForCoverage(need);
+  const haystack = normalizeForCoverage(
+    [
+      finding.subquestion,
+      finding.summary,
+      ...finding.tags,
+      ...finding.evidence.map((item) => `${item.title} ${item.note}`),
+    ].join(" "),
+  );
+
+  return (
+    haystack.includes(normalizedNeed) ||
+    normalizedNeed
+      .split(/[ /,，、:：;；|]+/)
+      .filter((part) => part.length >= 3)
+      .some((part) => haystack.includes(part))
+  );
+}
+
+function buildCoverageReview(plan: ResearchPlan | null, findings: ResearchFinding[]) {
+  const needs = [
+    ...(plan?.questions ?? []),
+    ...(plan?.coverageDimensions ?? []),
+  ];
+  const gaps = needs.filter(
+    (need) => !findings.some((finding) => findingMatchesNeed(finding, need)),
+  );
+  const lowConfidence = findings.filter((finding) => finding.confidence === "low");
+  const conflicts = findings.flatMap((finding) =>
+    finding.openQuestions.map((question) => `${finding.id}: ${question}`),
+  );
+  const sourceMix = countBySourceType(findings);
+
+  return [
+    "Research Quality Review:",
+    `- Source mix: ${sourceMix.length > 0 ? sourceMix.join("; ") : "(none)"}`,
+    `- Coverage gaps: ${gaps.length > 0 ? gaps.join(" | ") : "(none detected)"}`,
+    `- Low-confidence findings: ${
+      lowConfidence.length > 0
+        ? lowConfidence.map((finding) => finding.id).join(", ")
+        : "(none)"
+    }`,
+    `- Conflicts/open questions: ${
+      conflicts.length > 0 ? conflicts.join(" | ") : "(none recorded)"
+    }`,
+  ].join("\n");
 }
 
 export type ResearchNotebook = ReturnType<typeof createResearchNotebook>;
@@ -204,6 +323,14 @@ export function createResearchNotebook({
             formatBulletList(plan.questions),
             plan.angles.length > 0 ? "- 拆解角度:" : "",
             plan.angles.length > 0 ? formatBulletList(plan.angles) : "",
+            plan.coverageDimensions.length > 0 ? "- 覆盖维度:" : "",
+            plan.coverageDimensions.length > 0
+              ? formatBulletList(plan.coverageDimensions)
+              : "",
+            plan.sourceStrategy.length > 0 ? "- 来源策略:" : "",
+            plan.sourceStrategy.length > 0 ? formatBulletList(plan.sourceStrategy) : "",
+            plan.stopRules.length > 0 ? "- 停止规则:" : "",
+            plan.stopRules.length > 0 ? formatBulletList(plan.stopRules) : "",
             plan.assumptions.length > 0 ? "- 初始假设:" : "",
             plan.assumptions.length > 0 ? formatBulletList(plan.assumptions) : "",
           ]
@@ -256,6 +383,9 @@ export function createResearchNotebook({
             })
             .join("\n")
         : "- 尚未收录来源。",
+      "",
+      "## 调研质量审查",
+      buildCoverageReview(plan, findings),
       openQuestions.length > 0 ? "" : "",
       openQuestions.length > 0 ? "## 待继续验证的问题" : "",
       openQuestions.length > 0 ? formatBulletList(openQuestions) : "",
@@ -290,10 +420,21 @@ export function createResearchNotebook({
         "",
         "Plan:",
         plan ? summarizePlan(plan) : "尚未建立调研计划。",
+        plan?.coverageDimensions.length ? "" : "",
+        plan?.coverageDimensions.length ? "Coverage Dimensions:" : "",
+        plan?.coverageDimensions.length ? formatBulletList(plan.coverageDimensions) : "",
+        plan?.sourceStrategy.length ? "" : "",
+        plan?.sourceStrategy.length ? "Source Strategy:" : "",
+        plan?.sourceStrategy.length ? formatBulletList(plan.sourceStrategy) : "",
+        plan?.stopRules.length ? "" : "",
+        plan?.stopRules.length ? "Stop Rules:" : "",
+        plan?.stopRules.length ? formatBulletList(plan.stopRules) : "",
         "",
         `Findings: ${findings.length}`,
         `Sources: ${sources.length}`,
         `Open Questions: ${openQuestions.length}`,
+        "",
+        buildCoverageReview(plan, findings),
         limitedFindings.length > 0 ? "" : "",
         limitedFindings.length > 0 ? "Recorded Findings:" : "",
         limitedFindings.length > 0
@@ -309,6 +450,9 @@ export function createResearchNotebook({
         createdAt: Date.now(),
         evidence: input.evidence.map((item) => ({
           note: item.note.trim(),
+          publishedAt: item.publishedAt?.trim(),
+          quoteOrClaimSpan: item.quoteOrClaimSpan?.trim(),
+          sourceType: item.sourceType?.trim(),
           title: item.title.trim(),
           url: item.url?.trim(),
         })),
@@ -367,9 +511,12 @@ export function createResearchNotebook({
         ...input,
         angles: trimList(input.angles),
         assumptions: trimList(input.assumptions),
+        coverageDimensions: trimList(input.coverageDimensions),
         deliverable: input.deliverable.trim(),
         goal: input.goal.trim(),
         questions: trimList(input.questions),
+        sourceStrategy: trimList(input.sourceStrategy),
+        stopRules: trimList(input.stopRules),
         topic: input.topic.trim(),
         updatedAt: Date.now(),
       };
@@ -384,6 +531,17 @@ export function createResearchNotebook({
         plan.angles.length > 0 ? "" : "",
         plan.angles.length > 0 ? "拆解角度：" : "",
         plan.angles.length > 0 ? formatBulletList(plan.angles) : "",
+        plan.coverageDimensions.length > 0 ? "" : "",
+        plan.coverageDimensions.length > 0 ? "覆盖维度：" : "",
+        plan.coverageDimensions.length > 0
+          ? formatBulletList(plan.coverageDimensions)
+          : "",
+        plan.sourceStrategy.length > 0 ? "" : "",
+        plan.sourceStrategy.length > 0 ? "来源策略：" : "",
+        plan.sourceStrategy.length > 0 ? formatBulletList(plan.sourceStrategy) : "",
+        plan.stopRules.length > 0 ? "" : "",
+        plan.stopRules.length > 0 ? "停止规则：" : "",
+        plan.stopRules.length > 0 ? formatBulletList(plan.stopRules) : "",
       ]
         .filter(Boolean)
         .join("\n");

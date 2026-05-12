@@ -113,6 +113,10 @@ next_action: 搜索相关文件和入口
 - `decisions.md`
 - `assumptions.md`
 - `evidence.md`
+- `source-ledger.md`
+- `claim-ledger.md`
+- `coverage-matrix.md`
+- `synthesis-brief.md`
 - `negative_results.md`
 - `sources/`
 - `checkpoints/`
@@ -180,6 +184,60 @@ Completion guard 用来防止 agent 改完文件后直接给最终回答。
 3. 如果验证失败，进入 debug 并修复或说明阻塞。
 
 这样可以显著减少“修改了代码但没有跑任何检查就宣布完成”的情况。
+
+## Research Finalization Guard
+
+实现位置：
+
+- `lib/agent.ts`
+
+Research finalization guard 用来防止非平凡调研任务过早从搜索摘要跳到最终综合。它不规定固定研究流程，只检查可见 trajectory 是否暴露出足够的 research discipline。
+
+可见信号包括：
+
+- `search_web` 数量和 query 多样性。
+- `fetch_url` 正文核验。
+- `record_research_finding` / `record_task_evidence` 证据记录。
+- `review_research_state` 或 `coverage_matrix` 覆盖审查。
+- `source_ledger`、`claim_ledger`、`synthesis_brief` 等中间文件使用。
+
+触发后，agent loop 会追加内部消息，要求模型选择下一步最合适动作：继续搜索、抓取正文、记录证据、审查覆盖、写/读中间文件，或者明确说明为什么更多研究不可行。guard 有次数上限，避免把研究任务变成死循环。
+
+## Research Answer Quality Guard
+
+实现位置：
+
+- `lib/agent.ts`
+
+Research finalization guard 关注“是否过早结束研究过程”，research answer quality guard 关注“最终交付是否把已有证据清楚呈现给读者”。在非平凡 research 已经有足够搜索、抓取和 evidence 信号后，如果最终答案缺少可见引用或来源索引，loop 会触发一次修复。
+
+修复消息要求模型：
+
+- 不再调用工具，避免重新开一轮研究。
+- 只使用已有 evidence、sources、coverage notes 和 synthesis brief。
+- 保持 thesis-driven synthesis。
+- 为关键 claim 增加可见引用或来源列表。
+- 说明覆盖边界、冲突和不确定性。
+
+这个 guard 来自实际泛化样本：trajectory 已经较强，但最终答案只保留少量可见来源，导致读者无法审计关键 claim。
+
+## Model Failure Recovery
+
+实现位置：
+
+- `lib/agent.ts`
+- `lib/llm/providers/openai-compatible.ts`
+
+长程 research 的另一个故障模式是：搜索、正文抓取、evidence 和 coverage 都已经完成，但最终综合阶段的模型请求失败，例如 provider 返回 `terminated`。这不是用户取消，也不是来源失败，不能直接丢失整轮研究。
+
+当前处理：
+
+- provider 将 `terminated` 归入可重试错误。
+- 如果重试后仍失败，且当前任务是非平凡 research、已有足够 evidence，agent loop 触发一次 `model_failure_recovery`。
+- recovery 会压缩 conversation，只保留原始问题和内部恢复指令，让下一次模型调用依赖 `.ranni` 的 durable memory 生成最终回答。
+- recovery final 仍要求核心判断、可见引用、来源列表和覆盖边界。
+
+这个机制来自 `enterprise-rag-evaluation` 泛化样本：trajectory 很强，但 final synthesis 请求失败导致无 final。恢复机制的目标是保住交付，而不是重新开始研究。
 
 ## Prompt 协议更新
 

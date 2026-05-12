@@ -98,6 +98,8 @@ Agent 可用工具主要分为六类：
 
 所有文件和终端工具都受 session workspace 边界限制。
 
+Deep research 任务会额外强调动态研究地图、正文核验、证据记录、coverage audit 和 thesis-driven synthesis。来源或 claim 较多时，agent 可把 `source_ledger`、`claim_ledger`、`coverage_matrix`、`synthesis_brief`、`negative_results` 写入 `.ranni/runs/<runId>/`，并在最终综合前读回。
+
 ## 过程展示规范
 
 会话过程项按语义分为七类：
@@ -124,6 +126,8 @@ Agent 可用工具主要分为六类：
 - status message。
 
 Assistant 回复会绑定对应 `traceRunId`。点击 `导出 trace` 会下载完整 `trace.txt`，文件名使用时间戳，便于后续分析失败原因。
+
+本地 `npm run research:eval` 可对 deep research case 进行脚本化回放和分析，产物写入已忽略的 `research/research-eval/`，用于比较不同 prompt / harness 改动下的 trajectory 和最终质量。
 
 ## 当前边界
 

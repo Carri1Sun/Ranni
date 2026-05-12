@@ -19,6 +19,7 @@
   },
   "include": [
     "lib/**/*",
+    "scripts/**/*.ts",
     "src/server/**/*"
   ],
   "exclude": ["dist", "node_modules", "src/renderer/**/*"]

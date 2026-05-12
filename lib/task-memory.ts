@@ -16,6 +16,10 @@ export type TaskMemoryAppendSection =
   | "decisions"
   | "assumptions"
   | "evidence"
+  | "source_ledger"
+  | "claim_ledger"
+  | "coverage_matrix"
+  | "synthesis_brief"
   | "verification"
   | "errors"
   | "negative_results";
@@ -229,6 +233,14 @@ function initialFile(title: string) {
   return [`# ${title}`, "", `Created: ${formatTimestamp()}`, ""].join("\n");
 }
 
+function memoryFileNameForSection(section: TaskMemoryAppendSection) {
+  if (section === "negative_results") {
+    return "negative_results.md";
+  }
+
+  return `${section.replace(/_/g, "-")}.md`;
+}
+
 async function readIfExists(filePath: string) {
   try {
     return await fs.readFile(filePath, "utf8");
@@ -328,6 +340,10 @@ export function createTaskMemory({
         fs.writeFile(filePath("decisions.md"), initialFile("Decisions"), "utf8"),
         fs.writeFile(filePath("assumptions.md"), initialFile("Assumptions"), "utf8"),
         fs.writeFile(filePath("evidence.md"), initialFile("Evidence Ledger"), "utf8"),
+        fs.writeFile(filePath("source-ledger.md"), initialFile("Source Ledger"), "utf8"),
+        fs.writeFile(filePath("claim-ledger.md"), initialFile("Claim Ledger"), "utf8"),
+        fs.writeFile(filePath("coverage-matrix.md"), initialFile("Coverage Matrix"), "utf8"),
+        fs.writeFile(filePath("synthesis-brief.md"), initialFile("Synthesis Brief"), "utf8"),
         fs.writeFile(filePath("negative_results.md"), initialFile("Negative Results"), "utf8"),
       ]);
       initialized = true;
@@ -343,14 +359,24 @@ export function createTaskMemory({
     }
 
     const summaryParts = await Promise.all(
-      ["state.md", "todo.md", "verification.md", "errors.md", "decisions.md", "evidence.md"].map(
-        async (name) => {
-          const content = await readIfExists(filePath(name));
-          return content
-            ? `## ${name}\n${truncate(content, MAX_FILE_SNIPPET_CHARS)}`
-            : `## ${name}\n(missing)`;
-        },
-      ),
+      [
+        "state.md",
+        "todo.md",
+        "verification.md",
+        "errors.md",
+        "decisions.md",
+        "evidence.md",
+        "source-ledger.md",
+        "claim-ledger.md",
+        "coverage-matrix.md",
+        "synthesis-brief.md",
+        "negative_results.md",
+      ].map(async (name) => {
+        const content = await readIfExists(filePath(name));
+        return content
+          ? `## ${name}\n${truncate(content, MAX_FILE_SNIPPET_CHARS)}`
+          : `## ${name}\n(missing)`;
+      }),
     );
 
     lastSummary = truncate(
@@ -404,7 +430,7 @@ export function createTaskMemory({
     title?: string;
   }) {
     await ensureDirectories();
-    const targetName = section === "negative_results" ? "negative_results.md" : `${section}.md`;
+    const targetName = memoryFileNameForSection(section);
     const targetPath = filePath(targetName);
     const heading = title?.trim() || `${section} update`;
     await fs.appendFile(
