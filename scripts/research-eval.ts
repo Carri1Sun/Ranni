@@ -4,8 +4,11 @@ import path from "node:path";
 
 import { runAgentTurn } from "../lib/agent";
 import {
+  createMessage,
   getModelRuntimeInfo,
   hasModelApiKey,
+  type AgentAssistantBlock,
+  type AgentMessage,
   type ModelConnectionConfig,
 } from "../lib/llm";
 import type { StreamEvent } from "../lib/trace";
@@ -23,6 +26,9 @@ type ResearchCase = {
 type CliOptions = {
   caseId?: string;
   compare?: [string, string];
+  judge: boolean;
+  judgePair?: [string, string];
+  judgeRun?: string;
   label: string;
   outDir: string;
   reanalyze?: string;
@@ -62,7 +68,10 @@ type ResearchMetrics = {
     headingCount: number;
   };
   guard: {
+    chunkedFinalContinueCount: number;
     completionGuardCount: number;
+    lengthFinalChunkRepairCount: number;
+    lengthFinalRepairCount: number;
     modelFailureRecoveryCount: number;
     researchAnswerQualityGuardCount: number;
     researchFinalizationGuardCount: number;
@@ -95,6 +104,78 @@ type ResearchMetrics = {
     uniqueSearchQueryCount: number;
     updateTaskMemoryCount: number;
   };
+};
+
+type JudgeDimension = {
+  evidence: string;
+  improvement: string;
+  name: string;
+  note?: string;
+  rationale: string;
+  score: number;
+};
+
+type JudgeRubric = {
+  claimAudit: Array<{
+    claim: string;
+    issue: string;
+    sourceAlignment: "supported" | "partially_supported" | "unsupported" | "unclear";
+  }>;
+  dimensions: JudgeDimension[];
+  harnessImplications: Array<{
+    likelyHarnessCause: string;
+    suggestedChange: string;
+    userVisibleIssue: string;
+  }>;
+  likelyUserComplaints: string[];
+  objectiveScore: number;
+  overallScore: number;
+  productScore: number;
+  strengths: string[];
+  summary: string;
+  weaknesses: string[];
+};
+
+type PairwiseJudge = {
+  decision: "a" | "b" | "tie";
+  dimensionWinners: Array<{
+    dimension: string;
+    rationale: string;
+    winner: "a" | "b" | "tie";
+  }>;
+  harnessImplications: string[];
+  rationale: string;
+  userPreferenceReason: string;
+};
+
+type StyleJudgeDimension = {
+  antiPattern: string;
+  improvement: string;
+  name: string;
+  note: string;
+  score: number;
+};
+
+type StyleJudge = {
+  aiFlavorRisk: number;
+  dimensions: StyleJudgeDimension[];
+  harnessImplications: Array<{
+    likelyHarnessCause: string;
+    suggestedChange: string;
+    userVisibleIssue: string;
+  }>;
+  readerExperience: string;
+  readerValueScore: number;
+  rewriteAdvice: string[];
+  strengths: string[];
+  styleScore: number;
+  summary: string;
+  weaknesses: string[];
+};
+
+type JudgedRun = {
+  rubric: JudgeRubric;
+  style: StyleJudge;
 };
 
 const CASES: ResearchCase[] = [
@@ -146,6 +227,7 @@ const CASES: ResearchCase[] = [
 
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
+    judge: false,
     label: "run",
     outDir: "research/research-eval",
     repeats: 1,
@@ -185,6 +267,14 @@ function parseArgs(argv: string[]): CliOptions {
     } else if (arg === "--compare" && next && argv[index + 2]) {
       options.compare = [next, argv[index + 2]];
       index += 2;
+    } else if (arg === "--judge") {
+      options.judge = true;
+    } else if (arg === "--judge-run" && next) {
+      options.judgeRun = next;
+      index += 1;
+    } else if (arg === "--judge-pair" && next && argv[index + 2]) {
+      options.judgePair = [next, argv[index + 2]];
+      index += 2;
     } else if (arg === "--reference" && next) {
       options.reference = next;
       index += 1;
@@ -207,6 +297,8 @@ function printHelp() {
   npm run research:eval -- --case agent-eval-landscape --label baseline
   npm run research:eval -- --suite high --label improved-v1 --repeats 3
   npm run research:eval -- --compare <baseline> <candidate> --reference chatgpt-pro
+  npm run research:eval -- --judge-run <run>
+  npm run research:eval -- --judge-pair <baseline> <candidate>
 
 Options:
   --case <id>              Run one research case.
@@ -217,6 +309,9 @@ Options:
   --out-dir <path>         Output directory. Default: research/research-eval.
   --timeout-ms <n>         Wall-clock timeout per run. Default: 1200000.
   --compare <a> <b>        Compare two previous run directories or substrings.
+  --judge                  Run LLM-as-judge after each new research run.
+  --judge-run <run>        Judge one previous run directory or substring.
+  --judge-pair <a> <b>     Blind pairwise judge between two previous runs or files.
   --reanalyze <run>        Recompute metrics/score/analysis for an existing run directory or substring.
   --reference <name>       Optional reference, currently chatgpt-pro.
 `);
@@ -246,13 +341,17 @@ function buildModelConfigFromEnv(): ModelConnectionConfig {
   };
 }
 
-function assertRunnable(modelConfig: ModelConnectionConfig) {
+function assertModelRunnable(modelConfig: ModelConnectionConfig) {
   if (!hasModelApiKey(modelConfig)) {
     const runtime = getModelRuntimeInfo(modelConfig);
     throw new Error(
       `缺少模型 API Key，无法运行 research eval。provider=${runtime.provider}。请配置 DEEPSEEK_API_KEY、QWEN_API_KEY 或 LLM_API_KEY。`,
     );
   }
+}
+
+function assertRunnable(modelConfig: ModelConnectionConfig) {
+  assertModelRunnable(modelConfig);
 
   if (!process.env.TAVILY_API_KEY?.trim()) {
     throw new Error(
@@ -340,6 +439,55 @@ function countCitationLikeLinks(finalText: string) {
   const bareUrls = finalText.match(/https?:\/\/\S+/g)?.length ?? 0;
 
   return markdownLinks + referenceLinks + bareUrls;
+}
+
+function getTextFromAssistantBlocks(blocks: AgentAssistantBlock[]) {
+  return blocks
+    .filter((block) => block.type === "text")
+    .map((block) => block.text.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function extractJsonObject<T>(text: string): T {
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  const direct = tryParseJson<T>(cleaned);
+
+  if (direct.ok) {
+    return direct.value;
+  }
+
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+
+  if (start >= 0 && end > start) {
+    const sliced = cleaned.slice(start, end + 1);
+    const parsed = tryParseJson<T>(sliced);
+
+    if (parsed.ok) {
+      return parsed.value;
+    }
+  }
+
+  throw new Error(`Judge 没有返回可解析 JSON：${text.slice(0, 1200)}`);
+}
+
+function tryParseJson<T>(value: string) {
+  try {
+    return {
+      ok: true as const,
+      value: JSON.parse(value) as T,
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "JSON parse failed",
+      ok: false as const,
+    };
+  }
 }
 
 async function readIfExists(filePath: string) {
@@ -587,8 +735,23 @@ async function analyzeRun({
       headingCount: visibleFinalText.match(/^#{1,4}\s+/gm)?.length ?? 0,
     },
     guard: {
+      chunkedFinalContinueCount: events.filter(
+        (event) =>
+          event.type === "step_completed" &&
+          event.stopReason === "chunked_final_continue",
+      ).length,
       completionGuardCount: events.filter(
         (event) => event.type === "step_completed" && event.stopReason === "completion_guard",
+      ).length,
+      lengthFinalChunkRepairCount: events.filter(
+        (event) =>
+          event.type === "step_completed" &&
+          event.stopReason === "length_final_chunk_repair",
+      ).length,
+      lengthFinalRepairCount: events.filter(
+        (event) =>
+          event.type === "step_completed" &&
+          event.stopReason === "length_final_repair",
       ).length,
       modelFailureRecoveryCount: events.filter(
         (event) =>
@@ -717,6 +880,9 @@ function renderTrajectoryAnalysis(metrics: ResearchMetrics) {
     `- review_research_state: ${metrics.tools.reviewResearchStateCount}`,
     `- research finalization guard: ${metrics.guard.researchFinalizationGuardCount}`,
     `- research answer quality guard: ${metrics.guard.researchAnswerQualityGuardCount}`,
+    `- length final repair: ${metrics.guard.lengthFinalRepairCount ?? 0}`,
+    `- length final chunk repair: ${metrics.guard.lengthFinalChunkRepairCount ?? 0}`,
+    `- chunked final continues: ${metrics.guard.chunkedFinalContinueCount ?? 0}`,
     `- model failure recovery: ${metrics.guard.modelFailureRecoveryCount}`,
     "",
     "## Intermediate Artifacts",
@@ -786,6 +952,613 @@ function renderScore(metrics: ResearchMetrics) {
     ...buildFailureAttribution(metrics).map((item) => `- ${item}`),
     "",
   ].join("\n");
+}
+
+function clampScore(value: unknown, max: number) {
+  const numeric = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(max, roundScore(numeric)));
+}
+
+function compactForJudge(value: string, maxChars = 70_000) {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const head = value.slice(0, Math.floor(maxChars * 0.62));
+  const tail = value.slice(-Math.floor(maxChars * 0.32));
+
+  return [
+    head,
+    "",
+    `[... omitted ${value.length - head.length - tail.length} chars from the middle for judge context budget ...]`,
+    "",
+    tail,
+  ].join("\n");
+}
+
+function buildJudgeSystemPrompt() {
+  return [
+    "You are a strict deep-research quality judge.",
+    "Judge the final deliverable from the user's product perspective and from objective research quality.",
+    "Do not reward hidden trajectory, tool calls, or effort. Evaluate only what the user can read in the final answer.",
+    "Prefer concrete, source-auditable, thesis-driven synthesis over long source lists.",
+    "Return valid JSON only. Do not wrap it in Markdown.",
+  ].join("\n");
+}
+
+function buildRubricJudgePrompt({
+  finalText,
+  researchCase,
+}: {
+  finalText: string;
+  researchCase: ResearchCase;
+}) {
+  return [
+    "Evaluate this deep-research final answer using the quality spec below.",
+    "",
+    "User query:",
+    researchCase.prompt,
+    "",
+    "Quality dimensions, each scored 0-5:",
+    "1. Coverage: key dimensions, boundaries, missing areas.",
+    "2. Freshness: current sources, dates, recency risk.",
+    "3. Source Quality: primary sources, papers, official docs, repos, firsthand industrial writing.",
+    "4. Citation Alignment: important claims trace to appropriate sources.",
+    "5. Evidence Discipline: numbers, rankings, causal claims, benchmark claims are supported.",
+    "6. Conflict Handling: conflicts, weak evidence, bias, limits, unresolved questions.",
+    "7. Synthesis Depth: thesis-first judgment, trends, methodology abstraction, cross-source synthesis.",
+    "8. Product Value: reduces user's work, helps decisions, surfaces non-obvious insight.",
+    "9. Readability: first-screen value, structure, density, low template feel.",
+    "10. Specificity: tailored to this query rather than generic encyclopedia content.",
+    "",
+    "Return compact JSON exactly with this shape:",
+    "Keep every string under 60 Chinese characters. Use exactly the 10 listed dimensions. Use at most 3 claimAudit items and at most 3 harnessImplications.",
+    "{",
+    '  "overallScore": 0-100,',
+    '  "objectiveScore": 0-100,',
+    '  "productScore": 0-100,',
+    '  "summary": "very short",',
+    '  "strengths": ["max 3 short items"],',
+    '  "weaknesses": ["max 3 short items"],',
+    '  "likelyUserComplaints": ["max 3 short items"],',
+    '  "dimensions": [{"name":"Coverage","score":0-5,"note":"short reason"}],',
+    '  "claimAudit": [{"claim":"short","sourceAlignment":"supported|partially_supported|unsupported|unclear","issue":"short"}],',
+    '  "harnessImplications": [{"userVisibleIssue":"short","likelyHarnessCause":"short","suggestedChange":"short"}]',
+    "}",
+    "",
+    "Final answer to judge:",
+    compactForJudge(finalText, 28_000),
+  ].join("\n");
+}
+
+function buildTinyRubricJudgePrompt({
+  finalText,
+  researchCase,
+}: {
+  finalText: string;
+  researchCase: ResearchCase;
+}) {
+  return [
+    "Judge this deep-research answer. Return valid compact JSON only.",
+    "Every string must be under 30 Chinese characters.",
+    "",
+    "User query:",
+    researchCase.prompt,
+    "",
+    "Return exactly:",
+    "{",
+    '"overallScore":0-100,',
+    '"objectiveScore":0-100,',
+    '"productScore":0-100,',
+    '"summary":"short",',
+    '"strengths":["max2"],',
+    '"weaknesses":["max2"],',
+    '"likelyUserComplaints":["max2"],',
+    '"dimensions":[{"name":"Coverage","score":0-5,"note":"short"},{"name":"Freshness","score":0-5,"note":"short"},{"name":"Source Quality","score":0-5,"note":"short"},{"name":"Citation Alignment","score":0-5,"note":"short"},{"name":"Evidence Discipline","score":0-5,"note":"short"},{"name":"Conflict Handling","score":0-5,"note":"short"},{"name":"Synthesis Depth","score":0-5,"note":"short"},{"name":"Product Value","score":0-5,"note":"short"},{"name":"Readability","score":0-5,"note":"short"},{"name":"Specificity","score":0-5,"note":"short"}],',
+    '"claimAudit":[{"claim":"short","sourceAlignment":"supported|partially_supported|unsupported|unclear","issue":"short"}],',
+    '"harnessImplications":[{"userVisibleIssue":"short","likelyHarnessCause":"short","suggestedChange":"short"}]',
+    "}",
+    "",
+    "Answer:",
+    compactForJudge(finalText, 18_000),
+  ].join("\n");
+}
+
+function normalizeRubricJudge(raw: JudgeRubric) {
+  return {
+    claimAudit: Array.isArray(raw.claimAudit) ? raw.claimAudit.slice(0, 3) : [],
+    dimensions: Array.isArray(raw.dimensions)
+      ? raw.dimensions.slice(0, 12).map((dimension) => {
+          const maybeDimension = dimension as JudgeDimension & { note?: unknown };
+          const note = String(
+            maybeDimension.note ?? maybeDimension.rationale ?? "",
+          );
+
+          return {
+            evidence: String(maybeDimension.evidence ?? ""),
+            improvement: String(maybeDimension.improvement ?? ""),
+            name: String(dimension.name ?? "Unknown"),
+            note,
+            rationale: note,
+            score: clampScore(dimension.score, 5),
+          };
+        })
+      : [],
+    harnessImplications: Array.isArray(raw.harnessImplications)
+      ? raw.harnessImplications.slice(0, 3)
+      : [],
+    likelyUserComplaints: Array.isArray(raw.likelyUserComplaints)
+      ? raw.likelyUserComplaints.map(String).slice(0, 3)
+      : [],
+    objectiveScore: clampScore(raw.objectiveScore, 100),
+    overallScore: clampScore(raw.overallScore, 100),
+    productScore: clampScore(raw.productScore, 100),
+    strengths: Array.isArray(raw.strengths) ? raw.strengths.map(String).slice(0, 3) : [],
+    summary: String(raw.summary ?? ""),
+    weaknesses: Array.isArray(raw.weaknesses) ? raw.weaknesses.map(String).slice(0, 3) : [],
+  } satisfies JudgeRubric;
+}
+
+async function judgeRubric({
+  finalText,
+  modelConfig,
+  researchCase,
+}: {
+  finalText: string;
+  modelConfig: ModelConnectionConfig;
+  researchCase: ResearchCase;
+}) {
+  const runJudgeRequest = async (text: string) => {
+    const messages: AgentMessage[] = [
+      {
+        content: [
+          {
+            text,
+            type: "text",
+          },
+        ],
+        role: "user",
+      },
+    ];
+    const result = await createMessage({
+      messages,
+      modelConfig,
+      system: buildJudgeSystemPrompt(),
+      tools: [],
+    });
+
+    return getTextFromAssistantBlocks(result.message.content);
+  };
+  const primaryText = await runJudgeRequest(
+    buildRubricJudgePrompt({
+      finalText,
+      researchCase,
+    }),
+  );
+
+  try {
+    return normalizeRubricJudge(extractJsonObject<JudgeRubric>(primaryText));
+  } catch {
+    const fallbackText = await runJudgeRequest(
+      buildTinyRubricJudgePrompt({
+        finalText,
+        researchCase,
+      }),
+    );
+
+    return normalizeRubricJudge(extractJsonObject<JudgeRubric>(fallbackText));
+  }
+}
+
+function buildStyleJudgePrompt({
+  finalText,
+  researchCase,
+}: {
+  finalText: string;
+  researchCase: ResearchCase;
+}) {
+  return [
+    "Evaluate the user-visible writing style and reading experience of this deep-research answer.",
+    "Do not reward hidden trajectory or effort. Do not re-grade factual coverage except where it affects reader trust.",
+    "The target is a strong research memo: thesis-led, prose-readable, source-auditable, specific to the user's task, and low in template/AI flavor.",
+    "Good formatting is intentional: use headings, bullets, or tables only when they reduce reader work; avoid checklist sprawl.",
+    "",
+    "User query:",
+    researchCase.prompt,
+    "",
+    "Style dimensions, each scored 0-5:",
+    "1. Opening Value: first screen gives judgment and stakes.",
+    "2. Authorial Voice: sounds like a thinking analyst, not a template.",
+    "3. Narrative Flow: sections connect into an argument.",
+    "4. Paragraph Craft: paragraphs have topic, evidence, implication.",
+    "5. Format Taste: bullets/tables/headings are useful, not decorative.",
+    "6. Anti-Template Naturalness: avoids generic AI phrasing and ritual sections.",
+    "7. Cognitive Load: dense but readable; no wall of undifferentiated facts.",
+    "8. Reader Guidance: tells the reader what matters, what changed, what to do next.",
+    "9. Citation Integration: citations support reading without breaking flow.",
+    "10. Domain Register: style fits the user's domain and expertise.",
+    "",
+    "Return compact JSON exactly with this shape:",
+    "Keep every string under 60 Chinese characters. Use exactly the 10 listed dimensions. aiFlavorRisk: 0 means no AI flavor, 100 means severe template feel. Use at most 3 rewriteAdvice and 3 harnessImplications.",
+    "{",
+    '  "styleScore": 0-100,',
+    '  "readerValueScore": 0-100,',
+    '  "aiFlavorRisk": 0-100,',
+    '  "summary": "very short",',
+    '  "readerExperience": "very short",',
+    '  "strengths": ["max 3 short items"],',
+    '  "weaknesses": ["max 3 short items"],',
+    '  "dimensions": [{"name":"Opening Value","score":0-5,"note":"short","antiPattern":"short","improvement":"short"}],',
+    '  "rewriteAdvice": ["max 3 short items"],',
+    '  "harnessImplications": [{"userVisibleIssue":"short","likelyHarnessCause":"short","suggestedChange":"short"}]',
+    "}",
+    "",
+    "Final answer to judge:",
+    compactForJudge(finalText, 26_000),
+  ].join("\n");
+}
+
+function buildTinyStyleJudgePrompt({
+  finalText,
+  researchCase,
+}: {
+  finalText: string;
+  researchCase: ResearchCase;
+}) {
+  return [
+    "Judge only writing style/readability. Return valid compact JSON only.",
+    "Every string must be under 30 Chinese characters.",
+    "",
+    "User query:",
+    researchCase.prompt,
+    "",
+    "Return exactly:",
+    "{",
+    '"styleScore":0-100,',
+    '"readerValueScore":0-100,',
+    '"aiFlavorRisk":0-100,',
+    '"summary":"short",',
+    '"readerExperience":"short",',
+    '"strengths":["max2"],',
+    '"weaknesses":["max2"],',
+    '"dimensions":[{"name":"Opening Value","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Authorial Voice","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Narrative Flow","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Paragraph Craft","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Format Taste","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Anti-Template Naturalness","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Cognitive Load","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Reader Guidance","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Citation Integration","score":0-5,"note":"short","antiPattern":"short","improvement":"short"},{"name":"Domain Register","score":0-5,"note":"short","antiPattern":"short","improvement":"short"}],',
+    '"rewriteAdvice":["max2"],',
+    '"harnessImplications":[{"userVisibleIssue":"short","likelyHarnessCause":"short","suggestedChange":"short"}]',
+    "}",
+    "",
+    "Answer:",
+    compactForJudge(finalText, 16_000),
+  ].join("\n");
+}
+
+function normalizeStyleJudge(raw: StyleJudge) {
+  return {
+    aiFlavorRisk: clampScore(raw.aiFlavorRisk, 100),
+    dimensions: Array.isArray(raw.dimensions)
+      ? raw.dimensions.slice(0, 12).map((dimension) => ({
+          antiPattern: String(dimension.antiPattern ?? ""),
+          improvement: String(dimension.improvement ?? ""),
+          name: String(dimension.name ?? "Unknown"),
+          note: String(dimension.note ?? ""),
+          score: clampScore(dimension.score, 5),
+        }))
+      : [],
+    harnessImplications: Array.isArray(raw.harnessImplications)
+      ? raw.harnessImplications.slice(0, 3).map((item) => ({
+          likelyHarnessCause: String(item.likelyHarnessCause ?? ""),
+          suggestedChange: String(item.suggestedChange ?? ""),
+          userVisibleIssue: String(item.userVisibleIssue ?? ""),
+        }))
+      : [],
+    readerExperience: String(raw.readerExperience ?? ""),
+    readerValueScore: clampScore(raw.readerValueScore, 100),
+    rewriteAdvice: Array.isArray(raw.rewriteAdvice)
+      ? raw.rewriteAdvice.map(String).slice(0, 3)
+      : [],
+    strengths: Array.isArray(raw.strengths)
+      ? raw.strengths.map(String).slice(0, 3)
+      : [],
+    styleScore: clampScore(raw.styleScore, 100),
+    summary: String(raw.summary ?? ""),
+    weaknesses: Array.isArray(raw.weaknesses)
+      ? raw.weaknesses.map(String).slice(0, 3)
+      : [],
+  } satisfies StyleJudge;
+}
+
+async function judgeStyle({
+  finalText,
+  modelConfig,
+  researchCase,
+}: {
+  finalText: string;
+  modelConfig: ModelConnectionConfig;
+  researchCase: ResearchCase;
+}) {
+  const runJudgeRequest = async (text: string) => {
+    const messages: AgentMessage[] = [
+      {
+        content: [
+          {
+            text,
+            type: "text",
+          },
+        ],
+        role: "user",
+      },
+    ];
+    const result = await createMessage({
+      messages,
+      modelConfig,
+      system: buildJudgeSystemPrompt(),
+      tools: [],
+    });
+
+    return getTextFromAssistantBlocks(result.message.content);
+  };
+  const primaryText = await runJudgeRequest(
+    buildStyleJudgePrompt({
+      finalText,
+      researchCase,
+    }),
+  );
+
+  try {
+    return normalizeStyleJudge(extractJsonObject<StyleJudge>(primaryText));
+  } catch {
+    const fallbackText = await runJudgeRequest(
+      buildTinyStyleJudgePrompt({
+        finalText,
+        researchCase,
+      }),
+    );
+
+    return normalizeStyleJudge(extractJsonObject<StyleJudge>(fallbackText));
+  }
+}
+
+function renderJudgeRubric(judge: JudgeRubric, researchCase: ResearchCase) {
+  return [
+    `# Deep Research Judge: ${researchCase.id}`,
+    "",
+    `Overall: ${judge.overallScore} / 100`,
+    `Objective: ${judge.objectiveScore} / 100`,
+    `Product: ${judge.productScore} / 100`,
+    "",
+    "## Summary",
+    judge.summary || "(empty)",
+    "",
+    "## Dimensions",
+    "| Dimension | Score | Rationale | Improvement |",
+    "|---|---:|---|---|",
+    ...judge.dimensions.map(
+      (dimension) =>
+        `| ${dimension.name} | ${dimension.score} / 5 | ${dimension.rationale.replace(/\|/g, "\\|")} | ${dimension.improvement.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+    "## Strengths",
+    ...(judge.strengths.length > 0 ? judge.strengths : ["(none)"]).map(
+      (item) => `- ${item}`,
+    ),
+    "",
+    "## Weaknesses",
+    ...(judge.weaknesses.length > 0 ? judge.weaknesses : ["(none)"]).map(
+      (item) => `- ${item}`,
+    ),
+    "",
+    "## Likely User Complaints",
+    ...(judge.likelyUserComplaints.length > 0
+      ? judge.likelyUserComplaints
+      : ["(none)"]
+    ).map((item) => `- ${item}`),
+    "",
+    "## Claim Audit",
+    "| Claim | Alignment | Issue |",
+    "|---|---|---|",
+    ...judge.claimAudit.map(
+      (item) =>
+        `| ${item.claim.replace(/\|/g, "\\|")} | ${item.sourceAlignment} | ${item.issue.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+    "## Harness Implications",
+    "| User-visible issue | Likely harness cause | Suggested change |",
+    "|---|---|---|",
+    ...judge.harnessImplications.map(
+      (item) =>
+        `| ${item.userVisibleIssue.replace(/\|/g, "\\|")} | ${item.likelyHarnessCause.replace(/\|/g, "\\|")} | ${item.suggestedChange.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+  ].join("\n");
+}
+
+function renderStyleJudge(judge: StyleJudge, researchCase: ResearchCase) {
+  return [
+    `# Deep Research Style Judge: ${researchCase.id}`,
+    "",
+    `Style: ${judge.styleScore} / 100`,
+    `Reader Value: ${judge.readerValueScore} / 100`,
+    `AI Flavor Risk: ${judge.aiFlavorRisk} / 100`,
+    "",
+    "## Summary",
+    judge.summary || "(empty)",
+    "",
+    "## Reader Experience",
+    judge.readerExperience || "(empty)",
+    "",
+    "## Dimensions",
+    "| Dimension | Score | Note | Anti-pattern | Improvement |",
+    "|---|---:|---|---|---|",
+    ...judge.dimensions.map(
+      (dimension) =>
+        `| ${dimension.name.replace(/\|/g, "\\|")} | ${dimension.score} / 5 | ${dimension.note.replace(/\|/g, "\\|")} | ${dimension.antiPattern.replace(/\|/g, "\\|")} | ${dimension.improvement.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+    "## Strengths",
+    ...(judge.strengths.length > 0 ? judge.strengths : ["(none)"]).map(
+      (item) => `- ${item}`,
+    ),
+    "",
+    "## Weaknesses",
+    ...(judge.weaknesses.length > 0 ? judge.weaknesses : ["(none)"]).map(
+      (item) => `- ${item}`,
+    ),
+    "",
+    "## Rewrite Advice",
+    ...(judge.rewriteAdvice.length > 0 ? judge.rewriteAdvice : ["(none)"]).map(
+      (item) => `- ${item}`,
+    ),
+    "",
+    "## Harness Implications",
+    "| User-visible issue | Likely harness cause | Suggested change |",
+    "|---|---|---|",
+    ...judge.harnessImplications.map(
+      (item) =>
+        `| ${item.userVisibleIssue.replace(/\|/g, "\\|")} | ${item.likelyHarnessCause.replace(/\|/g, "\\|")} | ${item.suggestedChange.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+  ].join("\n");
+}
+
+async function judgeRunDirectory({
+  modelConfig,
+  runDirectory,
+}: {
+  modelConfig: ModelConnectionConfig;
+  runDirectory: string;
+}) {
+  const metrics = await readMetrics(runDirectory);
+  const researchCase =
+    CASES.find((item) => item.id === metrics.caseId) ??
+    CASES.find((item) => item.id === "agent-eval-landscape") ??
+    CASES[0];
+  const finalText = await readIfExists(path.join(runDirectory, "final.md"));
+  const judge = await judgeRubric({
+    finalText,
+    modelConfig,
+    researchCase,
+  });
+  const styleJudge = await judgeStyle({
+    finalText,
+    modelConfig,
+    researchCase,
+  });
+
+  await Promise.all([
+    fs.writeFile(
+      path.join(runDirectory, "judge-rubric.json"),
+      `${JSON.stringify(judge, null, 2)}\n`,
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(runDirectory, "judge-rubric.md"),
+      renderJudgeRubric(judge, researchCase),
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(runDirectory, "claim-audit.md"),
+      renderClaimAudit(judge, researchCase),
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(runDirectory, "style-judge.json"),
+      `${JSON.stringify(styleJudge, null, 2)}\n`,
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(runDirectory, "style-judge.md"),
+      renderStyleJudge(styleJudge, researchCase),
+      "utf8",
+    ),
+  ]);
+
+  return {
+    rubric: judge,
+    style: styleJudge,
+  } satisfies JudgedRun;
+}
+
+function renderClaimAudit(judge: JudgeRubric, researchCase: ResearchCase) {
+  return [
+    `# Claim Audit: ${researchCase.id}`,
+    "",
+    "| Claim | Alignment | Issue |",
+    "|---|---|---|",
+    ...judge.claimAudit.map(
+      (item) =>
+        `| ${item.claim.replace(/\|/g, "\\|")} | ${item.sourceAlignment} | ${item.issue.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+  ].join("\n");
+}
+
+function buildPairwiseJudgePrompt({
+  answerA,
+  answerB,
+  prompt,
+}: {
+  answerA: string;
+  answerB: string;
+  prompt: string;
+}) {
+  return [
+    "Blindly compare two deep-research final answers for the same user query.",
+    "Do not assume A or B is the baseline. Judge only user-visible quality.",
+    "",
+    "User query:",
+    prompt,
+    "",
+    "Decision criteria:",
+    "- User preference and first-screen value",
+    "- Trust and citation/source alignment",
+    "- Coverage and freshness",
+    "- Synthesis depth and non-obvious insight",
+    "- Decision/action value",
+    "- Readability, prose flow, and low template/AI flavor",
+    "- Format taste: headings, bullets, tables, and citations should reduce reader work",
+    "- Specificity to the user's source categories, comparison axes, and task context",
+    "- Honest uncertainty and conflict handling",
+    "",
+    "Return JSON exactly with this shape:",
+    "Keep every string under 180 characters. Use at most 8 dimensionWinners and at most 5 harnessImplications.",
+    "{",
+    '  "decision": "a|b|tie",',
+    '  "rationale": "one paragraph",',
+    '  "userPreferenceReason": "one paragraph",',
+    '  "dimensionWinners": [{"dimension":"Trust","winner":"a|b|tie","rationale":"..."}],',
+    '  "harnessImplications": ["..."]',
+    "}",
+    "",
+    "Answer A:",
+    compactForJudge(answerA, 38_000),
+    "",
+    "Answer B:",
+    compactForJudge(answerB, 38_000),
+  ].join("\n");
+}
+
+function normalizePairwiseJudge(raw: PairwiseJudge) {
+  const decision = raw.decision === "a" || raw.decision === "b" ? raw.decision : "tie";
+
+  return {
+    decision,
+    dimensionWinners: Array.isArray(raw.dimensionWinners)
+      ? raw.dimensionWinners.slice(0, 12).map((item) => ({
+          dimension: String(item.dimension ?? ""),
+          rationale: String(item.rationale ?? ""),
+          winner: item.winner === "a" || item.winner === "b" ? item.winner : "tie",
+        }))
+      : [],
+    harnessImplications: Array.isArray(raw.harnessImplications)
+      ? raw.harnessImplications.map(String).slice(0, 12)
+      : [],
+    rationale: String(raw.rationale ?? ""),
+    userPreferenceReason: String(raw.userPreferenceReason ?? ""),
+  } satisfies PairwiseJudge;
 }
 
 function readReferenceStats(workspaceRoot: string, researchCase: ResearchCase) {
@@ -983,6 +1756,21 @@ async function runCase({
     fs.writeFile(path.join(outputDirectory, "metadata.md"), metadata, "utf8"),
   ]);
 
+  if (options.judge) {
+    const judged = await judgeRunDirectory({
+      modelConfig,
+      runDirectory: outputDirectory,
+    });
+    console.log(
+      [
+        `Judge overall=${judged.rubric.overallScore}/100`,
+        `product=${judged.rubric.productScore}/100`,
+        `style=${judged.style.styleScore}/100`,
+        `aiFlavorRisk=${judged.style.aiFlavorRisk}/100`,
+      ].join(" "),
+    );
+  }
+
   console.log(
     `Completed case=${researchCase.id} repeat=${repeatIndex} score=${metrics.score.total}/30`,
   );
@@ -1020,6 +1808,213 @@ async function resolveRunDirectory(outDir: string, needle: string, workspaceRoot
 async function readMetrics(runDirectory: string) {
   const raw = await fs.readFile(path.join(runDirectory, "metrics.json"), "utf8");
   return JSON.parse(raw) as ResearchMetrics;
+}
+
+async function resolveAnswerArtifact({
+  needle,
+  options,
+}: {
+  needle: string;
+  options: CliOptions;
+}) {
+  const absolute = path.isAbsolute(needle)
+    ? needle
+    : path.resolve(options.workspaceRoot, needle);
+
+  try {
+    const stats = await fs.stat(absolute);
+
+    if (stats.isDirectory()) {
+      const metrics = await readMetrics(absolute).catch(() => null);
+      return {
+        caseId: metrics?.caseId,
+        label: path.basename(absolute),
+        sourcePath: path.join(absolute, "final.md"),
+        text: await readIfExists(path.join(absolute, "final.md")),
+      };
+    }
+
+    if (stats.isFile()) {
+      return {
+        caseId: options.caseId,
+        label: path.basename(absolute),
+        sourcePath: absolute,
+        text: await fs.readFile(absolute, "utf8"),
+      };
+    }
+  } catch {
+    // Continue to run directory substring lookup.
+  }
+
+  const runDirectory = await resolveRunDirectory(
+    options.outDir,
+    needle,
+    options.workspaceRoot,
+  );
+  const metrics = await readMetrics(runDirectory).catch(() => null);
+
+  return {
+    caseId: metrics?.caseId,
+    label: path.basename(runDirectory),
+    sourcePath: path.join(runDirectory, "final.md"),
+    text: await readIfExists(path.join(runDirectory, "final.md")),
+  };
+}
+
+async function judgePairwise({
+  answerA,
+  answerB,
+  modelConfig,
+  prompt,
+}: {
+  answerA: string;
+  answerB: string;
+  modelConfig: ModelConnectionConfig;
+  prompt: string;
+}) {
+  const messages: AgentMessage[] = [
+    {
+      content: [
+        {
+          text: buildPairwiseJudgePrompt({
+            answerA,
+            answerB,
+            prompt,
+          }),
+          type: "text",
+        },
+      ],
+      role: "user",
+    },
+  ];
+  const result = await createMessage({
+    messages,
+    modelConfig,
+    system: buildJudgeSystemPrompt(),
+    tools: [],
+  });
+  const text = getTextFromAssistantBlocks(result.message.content);
+
+  return normalizePairwiseJudge(extractJsonObject<PairwiseJudge>(text));
+}
+
+function renderPairwiseJudge({
+  artifactA,
+  artifactB,
+  judge,
+  prompt,
+}: {
+  artifactA: Awaited<ReturnType<typeof resolveAnswerArtifact>>;
+  artifactB: Awaited<ReturnType<typeof resolveAnswerArtifact>>;
+  judge: PairwiseJudge;
+  prompt: string;
+}) {
+  return [
+    "# Deep Research Pairwise Judge",
+    "",
+    `- Decision: ${judge.decision.toUpperCase()}`,
+    `- Answer A: ${artifactA.label}`,
+    `- Answer B: ${artifactB.label}`,
+    "",
+    "## User Query",
+    prompt,
+    "",
+    "## Rationale",
+    judge.rationale || "(empty)",
+    "",
+    "## User Preference",
+    judge.userPreferenceReason || "(empty)",
+    "",
+    "## Dimension Winners",
+    "| Dimension | Winner | Rationale |",
+    "|---|---|---|",
+    ...judge.dimensionWinners.map(
+      (item) =>
+        `| ${item.dimension.replace(/\|/g, "\\|")} | ${item.winner.toUpperCase()} | ${item.rationale.replace(/\|/g, "\\|")} |`,
+    ),
+    "",
+    "## Harness Implications",
+    ...(judge.harnessImplications.length > 0
+      ? judge.harnessImplications
+      : ["(none)"]
+    ).map((item) => `- ${item}`),
+    "",
+  ].join("\n");
+}
+
+async function runJudgeRun(options: CliOptions, modelConfig: ModelConnectionConfig) {
+  if (!options.judgeRun) {
+    throw new Error("缺少 --judge-run 参数。");
+  }
+
+  const runDirectory = await resolveRunDirectory(
+    options.outDir,
+    options.judgeRun,
+    options.workspaceRoot,
+  );
+  const judged = await judgeRunDirectory({
+    modelConfig,
+    runDirectory,
+  });
+
+  console.log(
+    [
+      `Judged ${runDirectory}:`,
+      `overall=${judged.rubric.overallScore}/100`,
+      `style=${judged.style.styleScore}/100`,
+      `aiFlavorRisk=${judged.style.aiFlavorRisk}/100`,
+    ].join(" "),
+  );
+}
+
+async function runJudgePair(options: CliOptions, modelConfig: ModelConnectionConfig) {
+  if (!options.judgePair) {
+    throw new Error("缺少 --judge-pair 参数。");
+  }
+
+  const [first, second] = options.judgePair;
+  const artifactA = await resolveAnswerArtifact({
+    needle: first,
+    options,
+  });
+  const artifactB = await resolveAnswerArtifact({
+    needle: second,
+    options,
+  });
+  const caseId = artifactA.caseId ?? artifactB.caseId ?? options.caseId;
+  const researchCase =
+    CASES.find((item) => item.id === caseId) ??
+    CASES.find((item) => item.id === "agent-eval-landscape") ??
+    CASES[0];
+  const judge = await judgePairwise({
+    answerA: artifactA.text,
+    answerB: artifactB.text,
+    modelConfig,
+    prompt: researchCase.prompt,
+  });
+  const outputBase = path.resolve(
+    options.workspaceRoot,
+    options.outDir,
+    `judge-pair-${timestampSegment()}-${sanitizeSegment(options.label)}`,
+  );
+
+  await Promise.all([
+    fs.writeFile(`${outputBase}.json`, `${JSON.stringify(judge, null, 2)}\n`, "utf8"),
+    fs.writeFile(
+      `${outputBase}.md`,
+      renderPairwiseJudge({
+        artifactA,
+        artifactB,
+        judge,
+        prompt: researchCase.prompt,
+      }),
+      "utf8",
+    ),
+  ]);
+
+  console.log(
+    `Wrote pairwise judge: ${outputBase}.md decision=${judge.decision.toUpperCase()}`,
+  );
 }
 
 async function runComparison(options: CliOptions) {
@@ -1144,6 +2139,19 @@ async function main() {
 
   if (options.compare) {
     await runComparison(options);
+    return;
+  }
+
+  if (options.judgeRun || options.judgePair) {
+    const modelConfig = buildModelConfigFromEnv();
+    assertModelRunnable(modelConfig);
+
+    if (options.judgeRun) {
+      await runJudgeRun(options, modelConfig);
+      return;
+    }
+
+    await runJudgePair(options, modelConfig);
     return;
   }
 

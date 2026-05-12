@@ -47,7 +47,8 @@ type ActivityType =
   | "error"
   | "step"
   | "state"
-  | "research";
+  | "research"
+  | "thinking";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "qwen";
@@ -80,7 +81,6 @@ type ChatMessage = {
   content: string;
   id: string;
   role: MessageRole;
-  traceRunId?: string;
 };
 
 type FeedMessage = ChatMessage & {
@@ -135,6 +135,7 @@ type AppSettings = {
   deepseekApiKey: string;
   provider: ProviderId;
   qwenApiKey: string;
+  showThinkingInFeed: boolean;
   showProcessDetails: boolean;
   tavilyApiKey: string;
   theme: ThemeMode;
@@ -244,6 +245,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   deepseekApiKey: "",
   provider: "deepseek",
   qwenApiKey: "",
+  showThinkingInFeed: true,
   showProcessDetails: false,
   tavilyApiKey: "",
   theme: "dark",
@@ -341,6 +343,12 @@ const STORAGE_PROFILES = [
     textLimit: 2000,
   },
 ] as const;
+const TRACE_RUN_STATUSES = [
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const satisfies readonly TraceRun["status"][];
 
 const EMPTY_RUNTIME_INFO: TraceRuntimeInfo = {
   baseUrl: "",
@@ -451,6 +459,10 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
+    showThinkingInFeed:
+      typeof raw.showThinkingInFeed === "boolean"
+        ? raw.showThinkingInFeed
+        : DEFAULT_SETTINGS.showThinkingInFeed,
     showProcessDetails:
       typeof raw.showProcessDetails === "boolean"
         ? raw.showProcessDetails
@@ -893,6 +905,23 @@ function createStatusDisplay(message: string): ActivityDisplay {
   };
 }
 
+function createThinkingDisplay(message: string): ActivityDisplay {
+  const normalized = message
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ");
+
+  return {
+    detail: compactText(normalized || message, 180),
+    icon: "spark",
+    meta: "thinking",
+    source: "fallback",
+    title: "模型思考",
+  };
+}
+
 function createTaskStateDisplay(taskState: TaskState): ActivityDisplay {
   return {
     detail: compactText(taskState.nextAction || taskState.goal || "任务状态已刷新", 100),
@@ -1000,9 +1029,18 @@ function createFallbackActivityDisplay(
     return createErrorDisplay(detail);
   }
 
+  if (type === "thinking") {
+    return createThinkingDisplay(detail);
+  }
+
   return {
     detail: compactText(detail || label, 110),
-    icon: type === "state" ? "state" : type === "research" ? "research" : "activity",
+    icon:
+      type === "state"
+        ? "state"
+        : type === "research"
+          ? "research"
+          : "activity",
     meta: type,
     source: "fallback",
     title: compactText(label, 28),
@@ -1449,9 +1487,6 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
             content: maybeMessage.content,
             id: maybeMessage.id,
             role: maybeMessage.role,
-            ...(typeof maybeMessage.traceRunId === "string"
-              ? { traceRunId: maybeMessage.traceRunId }
-              : {}),
           } satisfies ChatMessage;
         })
         .filter((message): message is ChatMessage => message !== null);
@@ -1477,9 +1512,6 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
             id: maybeItem.id,
             kind: "message" as const,
             role: maybeItem.role,
-            ...(typeof maybeItem.traceRunId === "string"
-              ? { traceRunId: maybeItem.traceRunId }
-              : {}),
           } satisfies FeedMessage;
         }
 
@@ -1495,7 +1527,8 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
               maybeItem.type === "error" ||
               maybeItem.type === "step" ||
               maybeItem.type === "state" ||
-              maybeItem.type === "research"
+              maybeItem.type === "research" ||
+              maybeItem.type === "thinking"
             )
           ) {
             return null;
@@ -2198,6 +2231,66 @@ function renderCodeBlock(value: unknown) {
   return prettifyPayload(value);
 }
 
+function summarizeRunStatuses(runs: TraceRun[]) {
+  const counts: Record<TraceRun["status"], number> = {
+    cancelled: 0,
+    completed: 0,
+    failed: 0,
+    running: 0,
+  };
+
+  for (const run of runs) {
+    counts[run.status] += 1;
+  }
+
+  return TRACE_RUN_STATUSES.map((status) => `${status}:${counts[status]}`).join(
+    ", ",
+  );
+}
+
+function buildSessionTraceExportText(session: SessionRecord) {
+  const exportedAt = new Date().toISOString();
+  const runningRunIds = session.runs
+    .filter((run) => run.status === "running")
+    .map((run) => run.id);
+  const payload = {
+    exportedAt,
+    session: {
+      createdAt: new Date(session.createdAt).toISOString(),
+      feed: session.feed,
+      id: session.id,
+      messages: session.messages,
+      researchContext: session.researchContext ?? "",
+      runs: session.runs,
+      title: session.title,
+      updatedAt: new Date(session.updatedAt).toISOString(),
+      workspaceRoot: session.workspaceRoot,
+    },
+  };
+
+  return [
+    "# Ranni Session Trace Export",
+    "",
+    "## Export Metadata",
+    `- Exported At: ${exportedAt}`,
+    `- Session ID: ${session.id}`,
+    `- Session Title: ${session.title}`,
+    `- Workspace Root: ${session.workspaceRoot}`,
+    `- Created At: ${new Date(session.createdAt).toISOString()}`,
+    `- Updated At: ${new Date(session.updatedAt).toISOString()}`,
+    `- Message Count: ${session.messages.length}`,
+    `- Feed Item Count: ${session.feed.length}`,
+    `- Trace Run Count: ${session.runs.length}`,
+    `- Run Statuses: ${summarizeRunStatuses(session.runs)}`,
+    `- Running Run IDs: ${runningRunIds.join(", ") || "(none)"}`,
+    "",
+    "## Session Trace JSON",
+    "",
+    JSON.stringify(payload, null, 2),
+    "",
+  ].join("\n");
+}
+
 function buildActivityDebugPayload({
   item,
   step,
@@ -2563,14 +2656,20 @@ export function AgentConsole({
       status: "idle",
     });
   const [messageActionState, setMessageActionState] = useState<{
-    action: "copied" | "exported" | "trace_exported";
+    action: "copied" | "exported";
     id: string;
+  } | null>(null);
+  const [sessionTraceActionState, setSessionTraceActionState] = useState<{
+    sessionId: string;
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionTraceActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const settingsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -2826,6 +2925,10 @@ export function AgentConsole({
         clearTimeout(messageActionTimerRef.current);
       }
 
+      if (sessionTraceActionTimerRef.current) {
+        clearTimeout(sessionTraceActionTimerRef.current);
+      }
+
       if (settingsToastTimerRef.current) {
         clearTimeout(settingsToastTimerRef.current);
       }
@@ -2873,7 +2976,7 @@ export function AgentConsole({
 
   const flashMessageAction = (
     id: string,
-    action: "copied" | "exported" | "trace_exported",
+    action: "copied" | "exported",
   ) => {
     setMessageActionState({ action, id });
 
@@ -2886,6 +2989,21 @@ export function AgentConsole({
         current?.id === id && current.action === action ? null : current,
       );
       messageActionTimerRef.current = null;
+    }, 1800);
+  };
+
+  const flashSessionTraceAction = (sessionId: string) => {
+    setSessionTraceActionState({ sessionId });
+
+    if (sessionTraceActionTimerRef.current) {
+      clearTimeout(sessionTraceActionTimerRef.current);
+    }
+
+    sessionTraceActionTimerRef.current = setTimeout(() => {
+      setSessionTraceActionState((current) =>
+        current?.sessionId === sessionId ? null : current,
+      );
+      sessionTraceActionTimerRef.current = null;
     }, 1800);
   };
 
@@ -3049,6 +3167,15 @@ export function AgentConsole({
     }
   };
 
+  const copyArbitraryText = async (id: string, content: string) => {
+    try {
+      await copyTextToClipboard(content);
+      flashMessageAction(id, "copied");
+    } catch (error) {
+      console.error("Failed to copy text content.", error);
+    }
+  };
+
   const downloadTextFile = ({
     content,
     fileName,
@@ -3082,59 +3209,17 @@ export function AgentConsole({
     flashMessageAction(message.id, "exported");
   };
 
-  const findTraceRunForMessage = (message: ChatMessage) => {
-    if (!activeSession) {
-      return undefined;
-    }
-
-    if (message.traceRunId) {
-      return activeSession.runs.find((run) => run.id === message.traceRunId);
-    }
-
-    return activeSession.runs.length === 1 ? activeSession.runs[0] : undefined;
-  };
-
-  const buildTraceExportText = (message: ChatMessage, run: TraceRun) => {
-    const session = activeSession;
-
-    return [
-      "# Ranni Trace Export",
-      "",
-      "## Export Metadata",
-      `- Exported At: ${new Date().toISOString()}`,
-      `- Session ID: ${session?.id ?? "(unknown)"}`,
-      `- Session Title: ${session?.title ?? "(unknown)"}`,
-      `- Workspace Root: ${session?.workspaceRoot ?? "(unknown)"}`,
-      `- Message ID: ${message.id}`,
-      `- Trace Run ID: ${run.id}`,
-      "",
-      "## Assistant Message",
-      "",
-      message.content,
-      "",
-      "## Trace JSON",
-      "",
-      JSON.stringify(run, null, 2),
-      "",
-    ].join("\n");
-  };
-
-  const exportMessageTrace = (message: ChatMessage) => {
-    const traceRun = findTraceRunForMessage(message);
-
-    if (!traceRun) {
-      console.warn("No trace run found for message.", message.id);
-      return;
-    }
-
-    const fileName = `${createTimestampFileSegment()}-trace.txt`;
-
+  const exportSessionTrace = (session: SessionRecord) => {
+    const sessionSegment = sanitizeFileNameSegment(session.title || "session");
+    const fileName = `${createTimestampFileSegment()}-${
+      sessionSegment || "session"
+    }-trace.txt`;
     downloadTextFile({
-      content: buildTraceExportText(message, traceRun),
+      content: buildSessionTraceExportText(session),
       fileName,
       mimeType: "text/plain;charset=utf-8",
     });
-    flashMessageAction(message.id, "trace_exported");
+    flashSessionTraceAction(session.id);
   };
 
   const updateSession = (
@@ -3205,6 +3290,34 @@ export function AgentConsole({
             }
           : item,
       ),
+    }));
+  };
+
+  const removeDuplicateStatusForThinking = ({
+    message,
+    runId,
+    sessionId,
+    stepId,
+  }: {
+    message: string;
+    runId: string;
+    sessionId: string;
+    stepId: string;
+  }) => {
+    updateSession(sessionId, (session) => ({
+      ...session,
+      feed: session.feed.filter(
+        (item) =>
+          !(
+            item.kind === "activity" &&
+            item.type === "status" &&
+            item.eventType === "status" &&
+            item.runId === runId &&
+            item.stepId === stepId &&
+            item.detail === message
+          ),
+      ),
+      updatedAt: Date.now(),
     }));
   };
 
@@ -3700,6 +3813,32 @@ export function AgentConsole({
             continue;
           }
 
+          if (event.type === "thinking") {
+            removeDuplicateStatusForThinking({
+              message: event.message,
+              runId: event.runId,
+              sessionId,
+              stepId: event.stepId,
+            });
+
+            if (settings.showThinkingInFeed) {
+              appendActivity(
+                sessionId,
+                "thinking",
+                `Step ${event.stepIndex} thinking`,
+                event.message,
+                {
+                  display: createThinkingDisplay(event.message),
+                  eventType: event.type,
+                  runId: event.runId,
+                  stepId: event.stepId,
+                  stepIndex: event.stepIndex,
+                },
+              );
+            }
+            continue;
+          }
+
           if (event.type === "tool_call") {
             const fallbackDisplay = createToolCallDisplay(
               event.name,
@@ -3791,7 +3930,6 @@ export function AgentConsole({
                 id: nextId,
                 role: "assistant",
                 content: event.message,
-                traceRunId: event.runId,
               };
               const messageExists = session.messages.some(
                 (message) => message.id === nextId,
@@ -4300,6 +4438,15 @@ export function AgentConsole({
                 <span>{workspaceLabel}</span>
               </div>
               <button
+                className={styles.headerTraceButton}
+                type="button"
+                onClick={() => exportSessionTrace(activeSession)}
+              >
+                {sessionTraceActionState?.sessionId === activeSession.id
+                  ? "已导出 trace"
+                  : "导出 trace"}
+              </button>
+              <button
                 className={styles.iconButton}
                 type="button"
                 aria-label={
@@ -4352,18 +4499,6 @@ export function AgentConsole({
                                   ? "已导出"
                                   : "导出 .md"}
                               </button>
-                              {findTraceRunForMessage(item) ? (
-                                <button
-                                  className={styles.messageActionButton}
-                                  type="button"
-                                  onClick={() => exportMessageTrace(item)}
-                                >
-                                  {messageActionState?.id === item.id &&
-                                  messageActionState.action === "trace_exported"
-                                    ? "已导出"
-                                    : "导出 trace"}
-                                </button>
-                              ) : null}
                             </div>
                           </div>
                         </>
@@ -4383,6 +4518,64 @@ export function AgentConsole({
                     const ActivityIcon = getProcessIconComponent(display.icon);
                     const isLatestActive =
                       isRunning && latestProcessActivityId === item.id;
+
+                    if (item.type === "thinking") {
+                      return (
+                        <article
+                          key={item.id}
+                          className={`${styles.activity} ${styles.thinking} ${
+                            isLatestActive ? styles.activityActive : ""
+                          }`}
+                        >
+                          <div className={styles.activityIcon} aria-hidden="true">
+                            <ActivityIcon size={16} strokeWidth={2} />
+                          </div>
+                          <div className={styles.activityContent}>
+                            <details className={styles.thinkingDisclosure}>
+                              <summary className={styles.thinkingSummary}>
+                                <span className={styles.thinkingTitleLine}>
+                                  <strong>{display.title}</strong>
+                                  {display.meta ? <span>{display.meta}</span> : null}
+                                </span>
+                                <p>{display.detail}</p>
+                                <span className={styles.thinkingSummaryHint}>
+                                  展开完整思考
+                                </span>
+                              </summary>
+                              <pre className={styles.thinkingBody}>{item.detail}</pre>
+                              <div className={styles.thinkingActions}>
+                                <button
+                                  className={styles.messageActionButton}
+                                  type="button"
+                                  onClick={() => {
+                                    void copyArbitraryText(item.id, item.detail);
+                                  }}
+                                >
+                                  {messageActionState?.id === item.id &&
+                                  messageActionState.action === "copied"
+                                    ? "已复制"
+                                    : "复制 thinking"}
+                                </button>
+                                {settings.showProcessDetails ? (
+                                  <button
+                                    className={styles.messageActionButton}
+                                    type="button"
+                                    onClick={() =>
+                                      setActivityDebugTarget({
+                                        activityId: item.id,
+                                        sessionId: activeSession.id,
+                                      })
+                                    }
+                                  >
+                                    查看 Trace
+                                  </button>
+                                ) : null}
+                              </div>
+                            </details>
+                          </div>
+                        </article>
+                      );
+                    }
 
                     return (
                       <article
@@ -4467,18 +4660,6 @@ export function AgentConsole({
                           ? "已导出"
                           : "导出 .md"}
                       </button>
-                      {findTraceRunForMessage(reportCandidate) ? (
-                        <button
-                          className={styles.messageActionButton}
-                          type="button"
-                          onClick={() => exportMessageTrace(reportCandidate)}
-                        >
-                          {messageActionState?.id === reportCandidate.id &&
-                          messageActionState.action === "trace_exported"
-                            ? "已导出"
-                            : "导出 trace"}
-                        </button>
-                      ) : null}
                     </div>
                   </header>
                   <MarkdownContent content={reportCandidate.content} />
@@ -4709,16 +4890,52 @@ export function AgentConsole({
                           <pre>{renderCodeBlock(selectedStep.response ?? {})}</pre>
                         </article>
 
-                        <article className={styles.traceBlock}>
+                        <article className={`${styles.traceBlock} ${styles.thinkingTraceBlock}`}>
                           <div className={styles.traceBlockHeader}>
-                            <h3>Thinking</h3>
-                            <span>
-                              {selectedStep.thinking
-                                ? `${selectedStep.thinking.length} chars`
-                                : "无"}
-                            </span>
+                            <div>
+                              <h3>Thinking</h3>
+                              <span>
+                                {selectedStep.thinking
+                                  ? `${selectedStep.thinking.length} chars`
+                                  : "无"}
+                              </span>
+                            </div>
+                            {selectedStep.thinking ? (
+                              <button
+                                className={styles.messageActionButton}
+                                type="button"
+                                onClick={() => {
+                                  void copyArbitraryText(
+                                    `thinking-${selectedStep.id}`,
+                                    selectedStep.thinking,
+                                  );
+                                }}
+                              >
+                                {messageActionState?.id ===
+                                  `thinking-${selectedStep.id}` &&
+                                messageActionState.action === "copied"
+                                  ? "已复制"
+                                  : "复制 thinking"}
+                              </button>
+                            ) : null}
                           </div>
-                          <pre>{selectedStep.thinking || "(no thinking blocks)"}</pre>
+                          {selectedStep.thinking ? (
+                            <div className={styles.thinkingTraceMeta}>
+                              <div>
+                                <span>Step</span>
+                                <strong>{selectedStep.stepIndex}</strong>
+                              </div>
+                              <div>
+                                <span>Stop</span>
+                                <strong>{selectedStep.stopReason ?? "未知"}</strong>
+                              </div>
+                              <div>
+                                <span>Tools</span>
+                                <strong>{selectedStep.toolCalls.length}</strong>
+                              </div>
+                            </div>
+                          ) : null}
+                          <pre className={styles.thinkingTracePre}>{selectedStep.thinking || "(no thinking blocks)"}</pre>
                         </article>
 
                         <article className={styles.traceBlock}>
@@ -5563,9 +5780,27 @@ export function AgentConsole({
                     <div className={styles.settingsSectionHeader}>
                       <h4>会话过程</h4>
                       <span>
-                        {settings.showProcessDetails ? "detail on" : "brief"}
+                        {settings.showThinkingInFeed ? "thinking on" : "thinking off"}
                       </span>
                     </div>
+                    <label className={styles.settingsToggleRow}>
+                      <span>
+                        <strong>在会话流显示模型思考</strong>
+                        <small>
+                          开启后，模型返回的 thinking 会以独立卡片显示，完整内容仍保留在运行详情中。
+                        </small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={settings.showThinkingInFeed}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            showThinkingInFeed: event.target.checked,
+                          }))
+                        }
+                      />
+                    </label>
                     <label className={styles.settingsToggleRow}>
                       <span>
                         <strong>会话过程展示具体内容</strong>

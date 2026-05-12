@@ -40,10 +40,11 @@
 - settings modal。
 - chat / report / trace 三个页面。
 - `/api/chat` NDJSON 流读取。
-- run、step、tool、task state trace 的前端合并。
-- 会话过程项的本地摘要、模型改写回填、图标展示和 debug info 浮窗。
+- run、step、tool、task state、thinking trace 的前端合并。
+- 会话过程项的本地摘要、模型改写回填、thinking 卡片、图标展示和 debug info 浮窗。
 - 手动终止运行。
-- assistant 消息复制、导出 markdown、导出 trace。
+- assistant 消息复制、导出 markdown。
+- session 级 trace 导出，包含未完成 run。
 - 首条消息异步 session 命名。
 
 ### `components/agent-console.module.css`
@@ -202,6 +203,8 @@ Research notebook 运行期记录。
 - 输出 `trace.ndjson`、`final.md`、`metrics.json`、`score.md`、`trajectory-analysis.md`、`comparison.md`。
 - 读取 `.ranni/runs/<runId>/` 中间文件，分析文件记忆是否被写入和读回。
 - 支持 run 对比：`--compare <baseline> <candidate>`。
+- 支持最终产物 judge：`--judge-run <run>`、`--judge-pair <a> <b>`、`--judge`。
+- 输出 `judge-rubric.json`、`judge-rubric.md`、`claim-audit.md`、`style-judge.json`、`style-judge.md` 和 pairwise judge 文件。
 
 ### `lib/trace.ts`
 

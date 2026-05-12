@@ -112,3 +112,158 @@ ChatGPT Pro 的参考 trace 显示出几个强行为：
 - 尚未完整运行 `--suite high --repeats 3`，当前覆盖了核心 query、context engineering、enterprise RAG 三类样本。
 - 长程 run 仍容易接近输出长度边界；后续可优化为更早压缩 evidence、限制单轮 finding 数量，避免最终阶段被 token budget 挤压。
 - memory readback 现在能识别系统 prompt 注入，但还可以进一步分析 agent 是否真的在最终结构中使用了 ledger 内容，而不只是被动带入上下文。
+
+## 下一阶段：最终产物质量 judge
+
+今天前几轮主要解决 harness 可观察性和 trajectory 纪律。下一阶段的主目标转为：让最终 deep research 产物在 objective spec 和用户产品感知上变好。
+
+新增原则：
+
+- Judge 默认只看 final answer，不奖励 tool calls 或 trajectory 努力。
+- Trajectory analyzer 只在 judge 扣分后用于归因。
+- 主指标从单次 trajectory score 转为 rubric score + pairwise win-rate。
+- Claim audit 用来检查关键 claim 是否能被来源支撑。
+
+新增产物：
+
+- `deep-research-quality-spec.md`：定义 objective spec 和 product/user spec。
+- `judge-rubric.json` / `judge-rubric.md`：单份 final 的质量评审。
+- `claim-audit.md`：关键 claim 支撑情况。
+- `judge-pair-*.md` / `.json`：两份 final 的盲评偏好。
+
+后续每次 harness 改动应先看 judge 扣分，再看 trace 归因，而不是直接根据 trace 美观度加规则。
+
+### Judge 校准观察
+
+`v5-model-recovery-rag` 的 trajectory score 是 28.1/30，rubric judge 给 85/100。Judge 没有被高引用数量完全说服，指出：
+
+- 出现 GPT-5 类未发布模型 benchmark 声明，证据薄弱。
+- 成本维度偏重博客，缺少企业级核算框架。
+- Citation quality 有概念但缺少可操作检验。
+
+`v3-abort-fix-agent-eval` 的 trajectory score 是 30/30，rubric judge 给 85/100。Judge 指出：
+
+- 冲突观点处理不足。
+- 部分数据出处不够清楚。
+- 缺少中国公司或中文语境下的工业实践。
+
+`v3-generalization-context` vs `v4-citation-guard-context` 的 pairwise judge 选择了旧版 `v3`。原因不是 citation guard 无效，而是旧版更好地区分了“学术论文 / 产品文档 / 工程博客”，更贴合用户明示要求。新版 `v4` 在 trust 和 uncertainty 上更好，但 source-type framing 变弱。
+
+这说明下一轮 harness 不能只强化引用数量，还要保留用户 query 的显式结构要求。`plan_research` 和 final synthesis guard 需要把用户要求的分类维度当作 first-class deliverable，而不是在最终引用修复时被冲掉。
+
+## v6: 用 judge 信号反推 agent harness
+
+本轮不是继续追求更漂亮的 trajectory，而是根据 judge 暴露的用户可见缺口改 agent 行为。
+
+改动方向：
+
+- 用户明示的分类轴、比较轴、地区、时间窗口、来源类型和输出格式被视为 deliverable contract。
+- `plan_research` 描述要求把这些用户轴写进 coverage dimensions、source strategy 和 stop rules。
+- `record_research_finding` 描述要求 finding 绑定用户要求的 category label，尤其是来源类型和 benchmark/numeric claim 的 measurement context。
+- Research answer quality guard 不只检查引用，还检查显式分类结构是否在最终回答中可见。
+- 对 benchmark 数字、排名、vendor claim、预印本、未来模型或未发布模型声明加入更强怀疑：证据弱则降置信度、说明限制或省略。
+- 方法论 / eval 主题最终回答要尽量输出可操作检验：测什么、怎么测、失败模式、权衡和适用边界。
+
+这直接对应 judge 校准结果：
+
+- `v4-citation-guard-context` 引用更强，但丢失“学术论文 / 产品文档 / 工程博客”结构，所以 pairwise 输给旧版。
+- `v5-model-recovery-rag` 被扣在 GPT-5 类未证实 benchmark claim、成本维度不够可操作。
+- `v3-abort-fix-agent-eval` 被扣在冲突观点和中文/中国公司语境不足。
+
+下一步 eval 应重点看：answer quality guard 是否能在保留 source audit 的同时保留用户明示结构，以及 benchmark/numeric claim 是否更少出现未限定的强断言。
+
+## v7: 用户阅读风格与长答案分段
+
+本轮把第二组“人是否觉得好读”的指标落成独立 style judge，避免只用 coverage / citation 指标优化出更长、更表格化、更像模板的报告。
+
+两轮指标汇总：
+
+- Objective / Product judge：覆盖、最新性、来源质量、引用对齐、证据纪律、冲突处理、综合深度、产品价值、可读性和 specificity。
+- Style / Reader judge：opening value、authorial voice、narrative flow、paragraph craft、format taste、anti-template naturalness、cognitive load、reader guidance、citation integration 和 domain register。
+
+校准结果：
+
+- `v3-abort-fix-agent-eval`：rubric overall 90/100，style 78/100，AI Flavor Risk 85/100。说明研究质量强，但仍有明显模板味和过程元信息暴露。
+- `v5-model-recovery-rag`：rubric overall 78/100，style 62/100，AI Flavor Risk 45/100。主要问题是开篇过程统计、表格/清单过载、缺少论证骨架。
+
+对应 harness 改动：
+
+- `--judge` / `--judge-run` 增加 `style-judge.json` 和 `style-judge.md`。
+- Research prompt 要求最终答案像紧凑研究备忘录，用 prose 连接证据与含义。
+- Answer quality guard 增加开篇过程计数、第一屏缺判断、列表/表格过载等 reader-experience 检查。
+- `plan_research` / `record_research_finding` 强化成本、安全、数字 claim 的来源策略与评估条件记录。
+
+新发现的瓶颈：
+
+- `v7-style-memo-rag` 在 11 次 search、19 次 fetch、8 条 evidence、2 次 coverage review 后进入 final synthesis，但连续触发 `length_final_repair` / `model_failure_recovery`，说明长程 research 不应继续依赖单次最终输出。
+
+新增改动：
+
+- Agent loop 支持 `RANNI_FINAL_PART n/N` 分段最终回答协议。
+- 遇到长 final 截断且已有足够 research evidence 时，harness 会切到 chunked final mode。
+- 每段输出后，harness 聚合已完成内容为当前可见 assistant message，并请求下一段。
+- 最后一段完成后，再对聚合全文跑 answer quality guard、metrics 和 judge。
+
+下一轮 eval 要重点确认：
+
+- 长程 RAG case 是否不再因为 final synthesis 截断失败。
+- Chunked final 是否降低 style judge 对“清单化/表格化”的扣分，而不是只变成长篇堆料。
+- 分段协议是否会引入重复段落、引用漂移或结构断裂。
+
+### v8 Chunked Final Eval
+
+`v8-chunked-style-rag` 重新运行 enterprise RAG case：
+
+- search_web: 13
+- fetch_url: 10
+- record_task_evidence: 8
+- length_final_chunk_repair: 1
+- chunked_final_continue: 3
+- trajectory score: 30/30
+- rubric judge: overall 91/100, product 93/100
+- style judge: 80/100, AI Flavor Risk 30/100
+
+对比 `v5-model-recovery-rag`：
+
+- rubric overall 从 78 提升到 91。
+- style 从 62 提升到 80。
+- AI Flavor Risk 从 45 降到 30。
+- final synthesis 不再因单次输出长度失败，而是聚合了 4 段完整回答。
+
+新观察：
+
+- 分段协议有效，但完成第 4/4 段后，旧的 chunk state 没有立即清理，后续 finalization guard 补记忆时误触发了 `chunked_final_protocol_repair`。
+- 已修复：最终段完成后清空 chunk state；`record_task_evidence` 也被视为外部 evidence memory，不再要求 agent 额外写一份重复 ledger 才算有外部记忆。
+
+下一步泛化验证：
+
+- 需要在非 RAG case（例如 context engineering 或 browser/computer-use eval）上跑一次带 judge 的长程 eval，确认分段协议不会诱导所有 research 都变成长篇报告。
+
+### v9 Generalization Eval
+
+`v9-chunked-style-context` 运行 agent context engineering case：
+
+- search_web: 13
+- fetch_url: 17
+- record_research_finding: 5
+- review_research_state: 1
+- length_final_chunk_repair: 2
+- chunked_final_continue: 7
+- trajectory score: 30/30
+- rubric judge: overall 92/100, product 93/100
+- style judge: 88/100, AI Flavor Risk 12/100
+
+正向信号：
+
+- 保留了用户要求的“学术论文 / 产品文档 / 工程博客”来源结构。
+- 输出不只是来源堆砌，有 context engineering 的核心 thesis 和可落地方法论。
+- Style judge 明显高于旧 context 样本，说明 memo-style synthesis 没有牺牲可读性。
+
+负向信号：
+
+- 因 guard 没把 `record_research_finding` 视为外部 research memory，完整分段 final 后仍触发一次 finalization guard。
+- 这导致模型又补了 `record_task_evidence` / task memory，并重新生成了一轮分段 final，预算浪费明显。
+
+修复：
+
+- `record_research_finding` 和 `record_task_evidence` 都计入 external memory，避免 agent 已有结构化 evidence 时被迫再写重复 ledger。
