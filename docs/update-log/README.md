@@ -20,3 +20,4 @@
 14. [Update 014: 最终回答与 Tool Call Guard](update-014-final-answer-and-tool-call-guards.md)
 15. [Update 015: Trace 导出与异步 Session 命名](update-015-trace-export-and-async-session-title.md)
 16. [Update 016: 会话过程展示与 Debug 详情](update-016-process-feed-and-debug-view.md)
+17. [Update 017: Deep Research 质量闭环](update-017-research-quality-loop.md)

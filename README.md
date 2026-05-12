@@ -17,7 +17,8 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、Tavily 搜索、URL 抓取、research notebook、task memory 等工具。
-- 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、errors、sources、checkpoints。
+- 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
+- `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score 和 trajectory analysis，用于优化 research agent 行为。
 
 ## 技术结构
 
@@ -33,7 +34,7 @@ lib/workspace.ts   session workspace 路径边界
 src/renderer/      Vite 前端入口
 src/server/        Express 后端入口和 API
 public/            favicon、logo 和静态资源
-scripts/           本地维护脚本
+scripts/           本地维护脚本和 research eval CLI
 ```
 
 ## 快速启动
@@ -105,9 +106,14 @@ npm run lint
 npm run build
 npm run start
 npm run assets:logo
+npm run research:eval -- --case agent-eval-landscape --label baseline
+npm run research:eval -- --suite high --label improved-v1 --repeats 3
+npm run research:eval -- --reanalyze v4-citation-guard-context
 ```
 
 生产模式下，`npm run build` 会生成前端 `dist/client` 和后端构建产物，`npm run start` 由 Express 托管网页并提供 API。
+
+`research:eval` 读取 `.env` / `.env.local` 中的模型和 Tavily 配置，运行产物写入已忽略的 `research/research-eval/`。每次 run 会增量写入 `trace.ndjson` 和 `partial-status.md`，`--timeout-ms` 可控制单次墙钟预算，`--reanalyze` 可在 analyzer 或 scoring 变更后重算历史 run。缺少模型 key 或 `TAVILY_API_KEY` 时会直接失败，不生成伪结果。
 
 ## 后端 API
 
@@ -125,6 +131,7 @@ npm run assets:logo
 ## 运行产物
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
+- `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis 和 comparison，已忽略。
 - `.ranni/`：每个 workspace 下的 agent durable task memory，已忽略。
 - `dist/`：构建产物，已忽略。
 

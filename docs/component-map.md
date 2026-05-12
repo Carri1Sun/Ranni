@@ -12,7 +12,7 @@
 | `lib/` | Agent loop、工具、模型适配、trace、workspace、task memory |
 | `docs/` | 产品、架构、核心概念、update log |
 | `public/` | 浏览器可访问静态资源 |
-| `scripts/` | 维护脚本，例如 logo 资产生成 |
+| `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
 
 ## 根目录文件
 
@@ -169,6 +169,10 @@ Agent 主循环。
   decisions.md
   assumptions.md
   evidence.md
+  source-ledger.md
+  claim-ledger.md
+  coverage-matrix.md
+  synthesis-brief.md
   negative_results.md
   sources/
   checkpoints/
@@ -179,6 +183,25 @@ Agent 主循环。
 Research notebook 运行期记录。
 
 用于规划调研问题、记录 finding、审查 research state、保存 research checkpoint。
+
+当前支持 deep research 质量字段：
+
+- coverage dimensions。
+- source strategy。
+- stop rules。
+- evidence source type / date / claim span。
+- source mix、coverage gaps、low-confidence findings、open questions 审查。
+
+### `scripts/research-eval.ts`
+
+本地 deep research 评测 CLI。
+
+主要职责：
+
+- 直接调用 `runAgentTurn` 跑 research case。
+- 输出 `trace.ndjson`、`final.md`、`metrics.json`、`score.md`、`trajectory-analysis.md`、`comparison.md`。
+- 读取 `.ranni/runs/<runId>/` 中间文件，分析文件记忆是否被写入和读回。
+- 支持 run 对比：`--compare <baseline> <candidate>`。
 
 ### `lib/trace.ts`
 

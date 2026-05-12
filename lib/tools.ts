@@ -119,6 +119,10 @@ const TASK_MEMORY_APPEND_SECTIONS = [
   "decisions",
   "assumptions",
   "evidence",
+  "source_ledger",
+  "claim_ledger",
+  "coverage_matrix",
+  "synthesis_brief",
   "verification",
   "errors",
   "negative_results",
@@ -164,9 +168,12 @@ const saveTaskCheckpointSchema = z.object({
 const planResearchSchema = z.object({
   angles: z.array(z.string().min(1)).max(12).default([]),
   assumptions: z.array(z.string().min(1)).max(12).default([]),
+  coverage_dimensions: z.array(z.string().min(1)).max(16).default([]),
   deliverable: z.string().min(1).default("向用户输出结构化调研结论"),
   goal: z.string().min(1),
   questions: z.array(z.string().min(1)).min(1).max(12),
+  source_strategy: z.array(z.string().min(1)).max(12).default([]),
+  stop_rules: z.array(z.string().min(1)).max(8).default([]),
   topic: z.string().min(1),
 });
 
@@ -176,6 +183,9 @@ const recordResearchFindingSchema = z.object({
     .array(
       z.object({
         note: z.string().min(1),
+        published_at: z.string().min(1).optional(),
+        quote_or_claim_span: z.string().min(1).optional(),
+        source_type: z.string().min(1).optional(),
         title: z.string().min(1),
         url: z.string().url().optional(),
       }),
@@ -1042,9 +1052,12 @@ async function planResearch(
   return requireResearchNotebook(context).setPlan({
     angles: args.angles,
     assumptions: args.assumptions,
+    coverageDimensions: args.coverage_dimensions,
     deliverable: args.deliverable,
     goal: args.goal,
     questions: args.questions,
+    sourceStrategy: args.source_strategy,
+    stopRules: args.stop_rules,
     topic: args.topic,
   });
 }
@@ -1055,7 +1068,14 @@ async function recordResearchFinding(
 ) {
   return requireResearchNotebook(context).recordFinding({
     confidence: args.confidence,
-    evidence: args.evidence,
+    evidence: args.evidence.map((item) => ({
+      note: item.note,
+      publishedAt: item.published_at,
+      quoteOrClaimSpan: item.quote_or_claim_span,
+      sourceType: item.source_type,
+      title: item.title,
+      url: item.url,
+    })),
     openQuestions: args.open_questions,
     subquestion: args.subquestion,
     summary: args.summary,
@@ -1228,7 +1248,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
             section: {
               type: "string",
               enum: [...TASK_MEMORY_APPEND_SECTIONS],
-              description: "Task memory file section to update.",
+              description:
+                "Task memory file section to update. Research-heavy runs can use source_ledger, claim_ledger, coverage_matrix, synthesis_brief, and negative_results for structured intermediate artifacts.",
             },
             title: {
               type: "string",
@@ -1547,7 +1568,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "plan_research",
         description:
-          "Create or update an explicit research plan before broad investigation. Use this for non-trivial research tasks that require multiple sources, comparisons, or current information. Capture the topic, goal, subquestions, and analysis angles.",
+          "Create or update an explicit research plan before and during broad investigation. Use this for non-trivial research tasks that require multiple sources, comparisons, or current information. Capture the topic, goal, subquestions, coverage dimensions, source strategy, stop rules, and analysis angles. Revise the plan when new evidence changes the research map.",
         input_schema: {
           type: "object",
           properties: {
@@ -1577,6 +1598,27 @@ const toolRegistry = new Map<string, ToolDefinition>([
               items: { type: "string" },
               default: [],
             },
+            coverage_dimensions: {
+              type: "array",
+              description:
+                "Optional research coverage dimensions to audit before synthesis, such as academic work, industry practice, safety, infrastructure, counterarguments, or unresolved gaps.",
+              items: { type: "string" },
+              default: [],
+            },
+            source_strategy: {
+              type: "array",
+              description:
+                "Optional source strategy, including primary source priority, freshness window, source diversity, and when to fetch full pages instead of relying on snippets.",
+              items: { type: "string" },
+              default: [],
+            },
+            stop_rules: {
+              type: "array",
+              description:
+                "Optional stop rules that define enough coverage, such as source mix, evidence confidence, conflict review, or diminishing returns.",
+              items: { type: "string" },
+              default: [],
+            },
             deliverable: {
               type: "string",
               description: "Expected final deliverable format.",
@@ -1597,7 +1639,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "record_research_finding",
         description:
-          "Persist a verified interim finding during research. Use this at key milestones to store source-backed conclusions, confidence, and unresolved questions instead of keeping them only in scratch reasoning.",
+          "Persist a verified interim finding during research. Use this at key milestones to store source-backed conclusions, source type/date, confidence, conflicts, and unresolved questions instead of keeping them only in scratch reasoning.",
         input_schema: {
           type: "object",
           properties: {
@@ -1623,6 +1665,21 @@ const toolRegistry = new Map<string, ToolDefinition>([
                   title: { type: "string" },
                   url: { type: "string" },
                   note: { type: "string" },
+                  source_type: {
+                    type: "string",
+                    description:
+                      "Optional source category such as paper, official, docs, repo, benchmark, report, blog, news, or other.",
+                  },
+                  published_at: {
+                    type: "string",
+                    description:
+                      "Optional publication or access date when freshness matters.",
+                  },
+                  quote_or_claim_span: {
+                    type: "string",
+                    description:
+                      "Optional short claim span, phrase, or location that supports the finding. Keep it concise.",
+                  },
                 },
                 required: ["title", "note"],
               },
@@ -1654,7 +1711,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "review_research_state",
         description:
-          "Inspect the current structured research notebook. Use this before finalizing to check coverage, source count, open questions, and already-recorded findings.",
+          "Inspect the current structured research notebook. Use this before finalizing to check coverage, source mix, source count, low-confidence findings, conflicts, open questions, and already-recorded findings.",
         input_schema: {
           type: "object",
           properties: {

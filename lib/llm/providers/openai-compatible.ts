@@ -21,6 +21,7 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\btimeout\b/i,
   /\btemporarily unavailable\b/i,
   /\bfetch failed\b/i,
+  /\bterminated\b/i,
   /\baborted\b/i,
   /\bconnection\b/i,
 ];

@@ -125,6 +125,14 @@ Ranni 应该积极使用工具，但不是制造噪音。
 
 当模型返回空正文或因为 token limit 截断而没有可用最终回答时，loop 会追加内部 repair message，要求模型基于已有证据生成简洁中文最终回答。
 
+### Research Answer Quality Guard
+
+当 deep research 已经收集了较多正文和证据，但最终答案缺少可见引用、来源索引或来源小节时，loop 会追加一次内部 repair message。这个 guard 不允许继续调用工具，而是要求模型基于已有 evidence 修复最终交付质量，补足 citation alignment、来源列表和不确定性说明。
+
+### Model Failure Recovery
+
+当 deep research 已经有足够 evidence，但最终综合阶段的模型请求因 `terminated`、timeout、连接中断等可恢复错误失败时，loop 会压缩上下文，只保留原始用户问题和 recovery instruction，并依赖 `.ranni` task memory 中的 evidence、source notes、coverage matrix 生成降级最终回答。这类恢复只尝试一次，避免把 transient error 变成长循环。
+
 ### Unsafe Tool-Call Guard
 
 当工具参数不是有效 JSON，或模型响应因 token limit 停止导致参数可能截断时，工具不会执行。Loop 会把失败作为 tool result 返回给模型，要求使用更小、更安全的参数或直接在聊天中回答。
@@ -141,6 +149,18 @@ Ranni 应该积极使用工具，但不是制造噪音。
 4. 来源较多或内容复杂时写入 `.ranni` source notes、evidence、decisions。
 5. 最终回答区分事实、推论、建议、不确定性。
 
+Deep research 的目标不是固定 trajectory，而是唤起模型自身的研究能力。对于宽问题，Ranni 会鼓励模型先建立研究地图，包括时间窗口、覆盖维度、来源策略和停止规则；中途根据新证据修订研究地图；最终前做 coverage audit。
+
+中间文件也遵循启发式，而不是强制仪式：
+
+- `source_ledger`：来源多、需要比较可信度/日期/用途。
+- `claim_ledger`：claim 多、需要跟来源和冲突绑定。
+- `coverage_matrix`：研究维度多、需要驱动下一步补洞。
+- `synthesis_brief`：最终综合需要重组论点和结构。
+- `negative_results`：失败搜索、抓取失败或被排除来源会影响判断。
+
+如果创建了这些中间文件，最终综合前应读回相关 ledger/matrix/brief，让文件记忆真正参与推理。
+
 优先来源：
 
 - 官方文档。
@@ -148,6 +168,21 @@ Ranni 应该积极使用工具，但不是制造噪音。
 - 标准、规范、论文。
 - 源代码仓库。
 - 一手技术文章。
+
+## Research Eval Loop
+
+`npm run research:eval` 提供本地 research 评测闭环。它直接调用 `runAgentTurn`，把每次实验保存到 ignored `research/research-eval/<run>/`：
+
+- `trace.ndjson`
+- `final.md`
+- `metrics.json`
+- `score.md`
+- `trajectory-analysis.md`
+- `comparison.md`
+
+Trajectory analyzer 只看可见信号：tool calls、tool results、最终回答和 `.ranni` 中间文件。它用于判断差距来自模型能力未被唤起、prompt 不清、工具 schema 不够表达、工具结果信息密度不足、文件记忆使用不当，还是 guard 过早放行。
+
+Analyzer 支持 `--reanalyze`，用于在 scoring 或归因逻辑调整后重算历史 run。每次 run 也会增量写入 `trace.ndjson` 和 `partial-status.md`，便于长程实验中途观察。
 
 ## One-Shot 成功率目标
 
@@ -164,4 +199,3 @@ Ranni 应尽量在一次用户请求中完成：
 - 输出可审查的最终答复。
 
 失败时，也应留下清楚的 trace、errors、verification 和 next action。
-
