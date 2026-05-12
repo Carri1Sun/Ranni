@@ -27,6 +27,10 @@ Rules:
 - The selected session workspace is the agent execution boundary. File tools, terminal tools, research output, and `.ranni` task memory must use that workspace.
 - Runtime outputs such as `research/`, `.ranni/`, and `dist/` are ignored. Promote only curated, durable content into `docs/`.
 - Settings keys stored in the browser are localStorage data and should be treated as local-only convenience, not production secret storage.
+- `npm run research:eval` is the local deep-research harness. It can run cases, reanalyze traces, compare runs, and produce rubric/style judge artifacts under ignored `research/research-eval/`.
+- Deep research quality work should optimize user-visible final results first. Use trace, task memory, source ledgers, claim ledgers, coverage matrices, and judge outputs for diagnosis, not as fixed trajectories to overfit.
+- Long research finals may use Ranni's chunked final protocol and should be judged after the aggregated final answer, not by any single partial chunk.
+- Model `thinking` is part of the observable trace/display surface when the provider returns it. The UI can show it as a separate readable process item, while full raw context remains in trace/debug views.
 
 ## Documentation Rules
 
@@ -42,5 +46,5 @@ Rules:
 ## Verification
 
 - For code changes, prefer `npm run typecheck`, `npm run lint`, and `npm run build` unless the change is clearly docs-only.
+- For research harness behavior changes, prefer at least one targeted `npm run research:eval -- --case ... --judge` run when model and Tavily keys are available.
 - For docs-only changes, `git diff --check` is enough to catch formatting whitespace issues.
-
