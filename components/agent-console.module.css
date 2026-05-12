@@ -134,6 +134,7 @@
 .submitButton,
 .runButton,
 .stepButton,
+.headerTraceButton,
 .messageActionButton,
 .scrollToBottomButton,
 .activityInfoButton,
@@ -424,15 +425,20 @@
 }
 
 .headerControls {
-  flex: none;
+  min-width: 0;
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
 .chatMeta {
+  min-width: 0;
   display: flex;
-  flex-wrap: nowrap;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
@@ -457,6 +463,22 @@
   flex: none;
   border-radius: 50%;
   background: var(--ranni-text-3);
+}
+
+.headerTraceButton {
+  min-height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-elevated-surface);
+  color: var(--ranni-text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .runStateBadgeActive {
@@ -743,6 +765,15 @@
   background: rgba(104, 214, 163, 0.07);
 }
 
+.thinking {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  border-color: rgba(134, 199, 255, 0.28);
+  background:
+    linear-gradient(135deg, rgba(134, 199, 255, 0.1), transparent 58%),
+    var(--ranni-subtle-surface);
+}
+
 .error {
   border-color: rgba(164, 59, 69, 0.28);
   background: var(--ranni-danger-soft);
@@ -755,6 +786,90 @@
 .tool_result .activityIcon,
 .research .activityIcon {
   color: var(--ranni-success);
+}
+
+.thinking .activityIcon {
+  color: var(--ranni-accent-2);
+}
+
+.thinkingDisclosure {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.thinkingSummary {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.thinkingSummary::-webkit-details-marker {
+  display: none;
+}
+
+.thinkingTitleLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.thinkingTitleLine strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinkingTitleLine span {
+  flex: none;
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.thinkingSummary p {
+  margin: 0;
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.thinkingSummaryHint {
+  color: var(--ranni-accent-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.thinkingDisclosure[open] .thinkingSummaryHint {
+  color: var(--ranni-text-3);
+}
+
+.thinking .thinkingBody {
+  max-height: 360px;
+  overflow: auto;
+  padding: 13px 14px;
+  border: 1px solid rgba(134, 199, 255, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(9, 16, 28, 0.42);
+  color: var(--ranni-text-1);
+  font-size: 13px;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thinkingActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .error .activityIcon {
@@ -1072,6 +1187,59 @@
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.thinkingTraceBlock {
+  border-color: rgba(134, 199, 255, 0.24);
+  background:
+    linear-gradient(135deg, rgba(134, 199, 255, 0.08), transparent 56%),
+    var(--ranni-soft-surface);
+}
+
+.thinkingTraceBlock .traceBlockHeader > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.thinkingTraceMeta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.thinkingTraceMeta div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: var(--space-3);
+  border: 1px solid rgba(134, 199, 255, 0.16);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-subtle-surface);
+}
+
+.thinkingTraceMeta span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.thinkingTraceMeta strong {
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinkingTraceBlock .thinkingTracePre {
+  max-height: min(62vh, 760px);
+  background: rgba(9, 16, 28, 0.54);
+  color: var(--ranni-text-1);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.78;
 }
 
 .kvGrid {
@@ -1403,6 +1571,8 @@
 .runCard:focus-within,
 .stepButton:hover,
 .stepButton:focus-visible,
+.headerTraceButton:hover,
+.headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
 .scrollToBottomButton:hover,
@@ -1438,6 +1608,8 @@
 .sidebarUtilityButton:focus-visible,
 .infoPromptButton:hover,
 .infoPromptButton:focus-visible,
+.headerTraceButton:hover,
+.headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
 .activityInfoButton:hover,
@@ -1457,6 +1629,7 @@
 .infoPromptButton:active,
 .submitButton:active,
 .floatingInfoButton:active,
+.headerTraceButton:active,
 .messageActionButton:active,
 .scrollToBottomButton:active,
 .activityInfoButton:active,
@@ -2429,6 +2602,11 @@
   .chatMeta {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .headerTraceButton {
+    width: 100%;
+    justify-content: center;
   }
 
   .message,

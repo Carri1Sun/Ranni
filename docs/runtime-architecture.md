@@ -110,7 +110,7 @@ sequenceDiagram
 - `error`
 - `done`
 
-前端通过 `applyTraceEventToSession` 把事件合并到当前 session 的 runs、steps、feed 和 messages。
+前端通过 `applyTraceEventToSession` 把事件合并到当前 session 的 runs、steps、feed 和 messages。`thinking` 事件既进入 step trace，也可以按 Debug 设置在会话流中显示为独立可展开卡片。
 
 ## Abort 传播
 
@@ -149,14 +149,16 @@ DeepSeek thinking mode 的特殊点：
 
 ## Trace Export
 
-Assistant 消息带有 `traceRunId`。点击 `导出 trace` 时，前端查找对应 run，生成文本文件并触发浏览器下载。
+Trace 导出是 session 级能力。点击顶部 `导出 trace` 时，前端直接导出当前 session 快照，不依赖某条 assistant 消息或最终回答是否已经产生。
 
 导出文件包含：
 
 - Export 时间。
 - Session ID、title、workspace。
-- Assistant message。
-- 完整 trace run JSON。
+- Session messages。
+- Process feed。
+- Research context。
+- 完整 trace runs JSON，包括 running / failed / cancelled / completed run。
 
 文件名使用时间戳，例如：
 

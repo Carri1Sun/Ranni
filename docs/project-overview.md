@@ -106,7 +106,8 @@ Deep research 任务会额外强调动态研究地图、正文核验、证据记
 
 - `step`：run 开始/结束，以及失败或终止的 step；成功的 step 开始/完成不进入默认会话流。
 - `state`：`task_state` 中 current mode、next action、verification 的变化。
-- `status`：模型重试、thinking 摘要、运行提示等短状态。
+- `thinking`：模型返回的 thinking 会以独立会话过程卡片展示，可展开阅读、复制，并继续关联到对应 run / step trace。
+- `status`：模型重试、运行提示等短状态。
 - `tool_call`：工具调用意图，显示图标、短标题、目标和补充 meta。
 - `tool_result`：工具执行结果，显示成功/失败、耗时和结果摘要。
 - `research`：research notebook 状态更新。
@@ -125,9 +126,9 @@ Deep research 任务会额外强调动态研究地图、正文核验、证据记
 - task state。
 - status message。
 
-Assistant 回复会绑定对应 `traceRunId`。点击 `导出 trace` 会下载完整 `trace.txt`，文件名使用时间戳，便于后续分析失败原因。
+Trace 导出挂在 session 上，不再依赖某条 assistant 回复。点击顶部 `导出 trace` 会下载当前 session 的完整 `trace.txt`，包含 messages、process feed、research context 和全部 run JSON；即使任务尚未完成、还没有最终 assistant 回复，也能导出当前 running run 的轨迹，便于后续分析失败原因。
 
-本地 `npm run research:eval` 可对 deep research case 进行脚本化回放和分析，产物写入已忽略的 `research/research-eval/`，用于比较不同 prompt / harness 改动下的 trajectory 和最终质量。
+本地 `npm run research:eval` 可对 deep research case 进行脚本化回放和分析，产物写入已忽略的 `research/research-eval/`，用于比较不同 prompt / harness 改动下的 trajectory 和最终质量。`--judge-run` / `--judge-pair` 会对最终回答做 rubric、style 和 blind pairwise 质量评审，让 harness 迭代围绕用户可见结果、阅读体验和工具轨迹共同展开。
 
 ## 当前边界
 

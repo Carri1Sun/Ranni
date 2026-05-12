@@ -1568,7 +1568,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "plan_research",
         description:
-          "Create or update an explicit research plan before and during broad investigation. Use this for non-trivial research tasks that require multiple sources, comparisons, or current information. Capture the topic, goal, subquestions, coverage dimensions, source strategy, stop rules, and analysis angles. Revise the plan when new evidence changes the research map.",
+          "Create or update an explicit research plan before and during broad investigation. Use this for non-trivial research tasks that require multiple sources, comparisons, or current information. Capture the topic, goal, subquestions, user-requested deliverable axes, coverage dimensions, source strategy, stop rules, and analysis angles. Revise the plan when new evidence changes the research map.",
         input_schema: {
           type: "object",
           properties: {
@@ -1601,21 +1601,21 @@ const toolRegistry = new Map<string, ToolDefinition>([
             coverage_dimensions: {
               type: "array",
               description:
-                "Optional research coverage dimensions to audit before synthesis, such as academic work, industry practice, safety, infrastructure, counterarguments, or unresolved gaps.",
+                "Optional research coverage dimensions to audit before synthesis, including user-requested output axes such as source-type splits, regions, stakeholder views, time windows, academic work, industry practice, safety, infrastructure, counterarguments, or unresolved gaps.",
               items: { type: "string" },
               default: [],
             },
             source_strategy: {
               type: "array",
               description:
-                "Optional source strategy, including primary source priority, freshness window, source diversity, and when to fetch full pages instead of relying on snippets.",
+                "Optional source strategy, including primary source priority, freshness window, source diversity, user-requested source categories, risk/compliance standards for safety topics, cost/pricing/operations sources for economics topics, and when to fetch full pages instead of relying on snippets.",
               items: { type: "string" },
               default: [],
             },
             stop_rules: {
               type: "array",
               description:
-                "Optional stop rules that define enough coverage, such as source mix, evidence confidence, conflict review, or diminishing returns.",
+                "Optional stop rules that define enough coverage, such as source mix, evidence confidence, conflict review, user-requested axes covered, or diminishing returns.",
               items: { type: "string" },
               default: [],
             },
@@ -1639,17 +1639,19 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "record_research_finding",
         description:
-          "Persist a verified interim finding during research. Use this at key milestones to store source-backed conclusions, source type/date, confidence, conflicts, and unresolved questions instead of keeping them only in scratch reasoning.",
+          "Persist a verified interim finding during research. Use this at key milestones to store source-backed conclusions, source type/date, confidence, conflicts, user-requested category labels, and unresolved questions instead of keeping them only in scratch reasoning.",
         input_schema: {
           type: "object",
           properties: {
             subquestion: {
               type: "string",
-              description: "Which research subquestion this finding addresses.",
+              description:
+                "Which research subquestion or user-requested deliverable axis this finding addresses.",
             },
             summary: {
               type: "string",
-              description: "Condensed conclusion stated in your own words.",
+              description:
+                "Condensed conclusion stated in your own words. For benchmark, cost, safety, or numeric claims, include the evaluation condition or evidence caveat when available.",
             },
             confidence: {
               type: "string",
@@ -1678,7 +1680,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
                   quote_or_claim_span: {
                     type: "string",
                     description:
-                      "Optional short claim span, phrase, or location that supports the finding. Keep it concise.",
+                      "Optional short claim span, phrase, measurement context, or location that supports the finding. Keep it concise, especially for benchmark and numeric claims.",
                   },
                 },
                 required: ["title", "note"],
@@ -1692,7 +1694,8 @@ const toolRegistry = new Map<string, ToolDefinition>([
             },
             tags: {
               type: "array",
-              description: "Optional labels such as market, pricing, risk, timeline.",
+              description:
+                "Optional labels such as source type, user-requested category, market, pricing, risk, timeline, benchmark, or weak-evidence.",
               items: { type: "string" },
               default: [],
             },
