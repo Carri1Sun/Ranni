@@ -6,6 +6,7 @@ import type {
 } from "./types";
 import { customOpenAIProvider } from "./providers/custom-openai";
 import { deepseekOpenAIProvider } from "./providers/deepseek-openai";
+import { openAIProvider } from "./providers/openai";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
 
 const DEFAULT_PROVIDER = "deepseek";
@@ -17,6 +18,9 @@ const providers = {
   deepseek: deepseekOpenAIProvider,
   "deepseek-openai": deepseekOpenAIProvider,
   "deepseek-openai-compatible": deepseekOpenAIProvider,
+  openai: openAIProvider,
+  "openai-api": openAIProvider,
+  "openai-chat-completions": openAIProvider,
   qwen: qwenOpenAIProvider,
   "qwen-openai": qwenOpenAIProvider,
   "qwen-openai-compatible": qwenOpenAIProvider,

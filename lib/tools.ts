@@ -7,6 +7,14 @@ import { load } from "cheerio";
 import { JSDOM } from "jsdom";
 import { z } from "zod";
 
+import {
+  formatComputerUseFailure,
+  getComputerUseApiKey,
+  getComputerUseBaseUrl,
+  getComputerUseModel,
+  runOpenAIComputerUse,
+  testComputerUseAvailability,
+} from "./computer-use/openai-computer-use";
 import type { AgentToolDefinition } from "./llm";
 import type { ResearchNotebook } from "./research";
 import type { TaskMemory } from "./task-memory";
@@ -25,6 +33,8 @@ import {
 } from "./workspace";
 
 export type ToolSettings = {
+  computerUseApiKey?: string;
+  computerUseModel?: string;
   tavilyApiKey?: string;
 };
 
@@ -94,6 +104,11 @@ const webSearchSchema = z
 
 const fetchUrlSchema = z.object({
   url: z.string().url(),
+});
+
+const operateComputerSchema = z.object({
+  max_steps: z.number().int().min(1).max(20).default(8),
+  task: z.string().min(1),
 });
 
 const updateTaskStateSchema = z.object({
@@ -947,6 +962,57 @@ export async function testTavilyConnection(toolSettings: ToolSettings = {}) {
   };
 }
 
+export async function testComputerUseConnection(
+  toolSettings: ToolSettings = {},
+) {
+  return testComputerUseAvailability(toolSettings);
+}
+
+async function operateComputer(
+  args: z.infer<typeof operateComputerSchema>,
+  context: ToolExecutionContext,
+) {
+  const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
+  const status = context.taskMemory?.getStatus();
+  const workingDirectory = status?.runDirectory
+    ? path.join(status.runDirectory, "computer-use")
+    : resolveWorkspacePath(
+        path.join(".ranni", "computer-use", String(Date.now())),
+        workspaceRoot,
+      );
+
+  try {
+    const result = await runOpenAIComputerUse({
+      apiKey: getComputerUseApiKey(context.toolSettings),
+      baseUrl: getComputerUseBaseUrl(),
+      maxSteps: args.max_steps,
+      model: getComputerUseModel(context.toolSettings),
+      signal: context.signal,
+      task: args.task,
+      workingDirectory,
+      workspaceRoot,
+    });
+
+    return [
+      "Computer use run finished.",
+      `Status: ${result.stoppedReason}`,
+      `Model: ${result.model}`,
+      result.requestId ? `Response ID: ${result.requestId}` : "",
+      "",
+      "Actions:",
+      result.steps.length > 0 ? result.steps.join("\n") : "- No desktop actions executed.",
+      "",
+      "Screenshots:",
+      ...result.screenshots.map((screenshot) => `- ${screenshot}`),
+      result.finalText ? ["", "Final message:", result.finalText].join("\n") : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  } catch (error) {
+    throw new Error(`operate_computer 失败：${formatComputerUseFailure(error)}`);
+  }
+}
+
 async function fetchUrl(
   args: z.infer<typeof fetchUrlSchema>,
   signal?: AbortSignal,
@@ -1559,6 +1625,38 @@ const toolRegistry = new Map<string, ToolDefinition>([
       },
       execute: async (rawArgs, context) =>
         runTerminal(terminalSchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "operate_computer",
+    {
+      schema: operateComputerSchema,
+      tool: {
+        name: "operate_computer",
+        description:
+          "Operate the local macOS desktop through OpenAI computer-use. Use only when the user explicitly asks to control the computer, click, type, scroll, or inspect GUI state outside ordinary text/file/terminal tools. This tool can move the mouse and type on the user's actual desktop, so keep tasks narrow, avoid destructive or privacy-sensitive actions, and stop when user confirmation is needed.",
+        input_schema: {
+          type: "object",
+          properties: {
+            task: {
+              type: "string",
+              description:
+                "Concrete desktop task to attempt, including target app/window and stopping condition. Keep it narrow and avoid irreversible actions.",
+            },
+            max_steps: {
+              type: "integer",
+              description:
+                "Maximum computer-use action steps. Use a small value first and inspect the result before continuing.",
+              default: 8,
+              minimum: 1,
+              maximum: 20,
+            },
+          },
+          required: ["task"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        operateComputer(operateComputerSchema.parse(rawArgs), context),
     },
   ],
   [

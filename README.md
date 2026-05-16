@@ -13,10 +13,10 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace，并支持收起。
 - Agent 运行中可手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
-- 模型 provider 支持 DeepSeek、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
+- 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；前端可把模型 thinking 作为独立可展开过程卡片展示，并在运行详情中保留完整阅读面板。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
-- Agent 有文件读写/移动/删除、工作区搜索、终端命令、Tavily 搜索、URL 抓取、research notebook、task memory 等工具。
+- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory 等工具。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
 - 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
@@ -28,7 +28,8 @@ components/        React UI 组件，核心是 agent-console
 docs/              产品、架构、核心概念和 update log 文档
 lib/agent.ts       Agent 主循环、状态同步、guard、chunked final、trace 事件
 lib/llm/           模型 provider 适配层
-lib/tools.ts       本地工具、网页工具、task memory 工具
+lib/tools.ts       本地工具、网页工具、computer-use 工具、task memory 工具
+lib/computer-use/  OpenAI computer tool loop 和 macOS 桌面适配器
 lib/task-state.ts  结构化任务状态
 lib/task-memory.ts .ranni 持久化任务记忆
 lib/workspace.ts   session workspace 路径边界
@@ -59,6 +60,12 @@ npm run dev
 
 ```dotenv
 TAVILY_API_KEY=
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5.5
+OPENAI_COMPUTER_API_KEY=
+OPENAI_COMPUTER_BASE_URL=https://api.openai.com/v1
+OPENAI_COMPUTER_MODEL=gpt-5.5
 AGENT_WORKSPACE_ROOT=.
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=
@@ -81,8 +88,14 @@ VITE_API_BASE_URL=
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key |
 | `QWEN_API_KEY` | Qwen / DashScope API Key |
+| `OPENAI_API_KEY` | OpenAI provider API Key，也可作为 Computer use 的后备 key |
+| `OPENAI_BASE_URL` | OpenAI provider 服务地址，默认 `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | OpenAI provider 模型，默认 `gpt-5.5` |
+| `OPENAI_COMPUTER_API_KEY` | Computer use 模块专用 OpenAI API Key |
+| `OPENAI_COMPUTER_BASE_URL` | Computer use 模块服务地址，默认回退到 `OPENAI_BASE_URL` |
+| `OPENAI_COMPUTER_MODEL` | Computer use 模块连接测试和后续操作模型，默认 `gpt-5.5` |
 | `LLM_API_KEY` | 自定义 OpenAI-compatible provider API Key |
-| `LLM_PROVIDER` | `deepseek`、`qwen`、`custom` 等 provider |
+| `LLM_PROVIDER` | `deepseek`、`openai`、`qwen`、`custom` 等 provider |
 | `LLM_BASE_URL` | 自定义模型服务地址 |
 | `LLM_MODEL` | 模型名称 |
 | `LLM_CONTEXT_WINDOW` | 上下文窗口估计值 |
@@ -96,7 +109,9 @@ VITE_API_BASE_URL=
 | `BACKEND_PORT` | 后端端口，默认 `3001` |
 | `VITE_API_BASE_URL` | 前端 API 地址；为空时使用同源 `/api` |
 
-也可以在左侧导航栏底部进入设置页配置 provider key 和 Tavily key。浏览器内配置保存在 localStorage，适合本地个人使用。
+也可以在左侧导航栏底部进入设置页配置 provider key、Tavily key 和 Computer use OpenAI key。浏览器内配置保存在 localStorage，适合本地个人使用。
+
+Computer use 走 OpenAI Responses API 的 `computer` tool，并由本机 Node 后端通过 macOS Screen Recording 和 Accessibility 权限截图、点击、滚动和输入。首次使用前需要在系统设置中允许运行 Ranni 的终端或 Node 进程进行屏幕录制和辅助功能控制。
 
 ## 常用脚本
 
@@ -136,6 +151,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `POST /api/chat`：启动一轮 agent 对话，返回 NDJSON 流式事件。
 - `POST /api/model/test`：测试当前模型 provider 配置。
 - `POST /api/tavily/test`：测试 Tavily 搜索 key。
+- `POST /api/computer-use/test`：测试 Computer use 模块的 OpenAI key 和 `computer` tool 可用性。
 
 ## 运行产物
 

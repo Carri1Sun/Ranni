@@ -144,10 +144,22 @@ Agent 主循环。
 
 - 定义工具 schema。
 - 执行文件、搜索、终端、网页、research、task memory 工具。
+- 注册 `operate_computer`，把 OpenAI computer tool loop 接入 agent 工具调用。
 - 限制 workspace 越界。
 - 限制危险命令。
 - 支持 abort signal。
-- 将 Tavily key 从 settings 或 env 传入搜索工具。
+- 将 Tavily key 和 Computer use OpenAI key 从 settings 或 env 传入工具层。
+
+### `lib/computer-use/`
+
+OpenAI computer-use 运行层。
+
+主要职责：
+
+- `openai-computer-use.ts` 调用 OpenAI Responses API 的 `computer` tool，处理 `computer_call` / `computer_call_output` 循环。
+- `macos-adapter.ts` 负责 macOS 屏幕截图、坐标换算、点击、移动、滚动、输入、按键和拖拽。
+- 截图和动作日志写入当前 run 的 `.ranni/runs/<runId>/computer-use/`，没有 task memory 时写入 workspace 下 `.ranni/computer-use/`。
+- 依赖 macOS Screen Recording 和 Accessibility 权限。
 
 ### `lib/task-state.ts`
 
@@ -247,6 +259,16 @@ DeepSeek 配置：
 - 默认开启 thinking。
 - 默认 `reasoning_effort=high`。
 - thinking mode 下回传 assistant `reasoning_content`。
+
+### `lib/llm/providers/openai.ts`
+
+OpenAI 官方 API 配置：
+
+- 默认模型 `gpt-5.5`。
+- 默认 base URL `https://api.openai.com/v1`。
+- 使用 Chat Completions endpoint 接入现有 agent tool-calling loop。
+- 使用 `max_completion_tokens` 控制输出上限。
+- 环境变量覆盖项为 `OPENAI_MODEL` 和 `OPENAI_BASE_URL`。
 
 ### `lib/llm/providers/qwen-openai.ts`
 
