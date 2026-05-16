@@ -26,3 +26,5 @@
 20. [Update 020: Judge Driven Research Harness](update-020-judge-driven-research-harness.md)
 21. [Update 021: Reader Style Research Judge](update-021-reader-style-research-judge.md)
 22. [Update 022: Thinking Feed Display](update-022-thinking-feed-display.md)
+23. [Update 023: OpenAI Provider 与 Computer Use Key](update-023-openai-provider-computer-use-key.md)
+24. [Update 024: OpenAI Computer Tool](update-024-openai-computer-tool.md)

@@ -51,7 +51,7 @@ type ActivityType =
   | "thinking";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
-type ProviderId = "custom" | "deepseek" | "qwen";
+type ProviderId = "custom" | "deepseek" | "openai" | "qwen";
 type SettingsTab = "about" | "account" | "api" | "appearance" | "debug";
 type WorkspacePickerMode = "initial" | "newSession";
 
@@ -132,7 +132,11 @@ type AppSettings = {
   customApiKey: string;
   customBaseUrl: string;
   customModel: string;
+  computerUseApiKey: string;
+  computerUseModel: string;
   deepseekApiKey: string;
+  openaiApiKey: string;
+  openaiModel: string;
   provider: ProviderId;
   qwenApiKey: string;
   showThinkingInFeed: boolean;
@@ -242,7 +246,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   customApiKey: "",
   customBaseUrl: "",
   customModel: "",
+  computerUseApiKey: "",
+  computerUseModel: "",
   deepseekApiKey: "",
+  openaiApiKey: "",
+  openaiModel: "",
   provider: "deepseek",
   qwenApiKey: "",
   showThinkingInFeed: true,
@@ -273,6 +281,15 @@ const PROVIDER_OPTIONS = [
     label: "DeepSeek",
     model: "deepseek-v4-pro",
     provider: "deepseek-openai-compatible",
+  },
+  {
+    baseUrl: "https://api.openai.com/v1",
+    description: "OpenAI 官方 API，默认使用 gpt-5.5。",
+    envKey: "OPENAI_API_KEY",
+    id: "openai",
+    label: "OpenAI",
+    model: "gpt-5.5",
+    provider: "openai",
   },
   {
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -421,7 +438,12 @@ function isThemeMode(value: unknown): value is ThemeMode {
 }
 
 function isProviderId(value: unknown): value is ProviderId {
-  return value === "custom" || value === "deepseek" || value === "qwen";
+  return (
+    value === "custom" ||
+    value === "deepseek" ||
+    value === "openai" ||
+    value === "qwen"
+  );
 }
 
 function sanitizeSettings(raw: unknown): AppSettings {
@@ -446,12 +468,26 @@ function sanitizeSettings(raw: unknown): AppSettings {
       typeof raw.customBaseUrl === "string" ? raw.customBaseUrl.trim() : "",
     customModel:
       typeof raw.customModel === "string" ? raw.customModel.trim() : "",
+    computerUseApiKey:
+      typeof raw.computerUseApiKey === "string"
+        ? raw.computerUseApiKey.trim()
+        : "",
+    computerUseModel:
+      typeof raw.computerUseModel === "string" ? raw.computerUseModel.trim() : "",
     deepseekApiKey:
       typeof raw.deepseekApiKey === "string"
         ? raw.deepseekApiKey.trim()
         : provider === "deepseek"
           ? legacyApiKey
           : "",
+    openaiApiKey:
+      typeof raw.openaiApiKey === "string"
+        ? raw.openaiApiKey.trim()
+        : provider === "openai"
+          ? legacyApiKey
+          : "",
+    openaiModel:
+      typeof raw.openaiModel === "string" ? raw.openaiModel.trim() : "",
     provider,
     qwenApiKey:
       typeof raw.qwenApiKey === "string"
@@ -2046,6 +2082,10 @@ function getProviderApiKey(
     return settings.qwenApiKey.trim();
   }
 
+  if (providerId === "openai") {
+    return settings.openaiApiKey.trim();
+  }
+
   return settings.deepseekApiKey.trim();
 }
 
@@ -2072,6 +2112,10 @@ function getProviderModel(
     return settings.customModel.trim();
   }
 
+  if (providerId === "openai") {
+    return settings.openaiModel.trim() || provider.model;
+  }
+
   return provider.model;
 }
 
@@ -2091,6 +2135,13 @@ function setProviderApiKey(
     return {
       ...settings,
       qwenApiKey: apiKey,
+    };
+  }
+
+  if (providerId === "openai") {
+    return {
+      ...settings,
+      openaiApiKey: apiKey,
     };
   }
 
@@ -2116,6 +2167,9 @@ function buildModelSettings(
 
 function buildToolSettings(settings: AppSettings) {
   return {
+    computerUseApiKey:
+      settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
+    computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
     tavilyApiKey: settings.tavilyApiKey.trim(),
   };
 }
@@ -2645,6 +2699,8 @@ export function AgentConsole({
   const [expandedProviderId, setExpandedProviderId] = useState<ProviderId | "">(
     DEFAULT_SETTINGS.provider,
   );
+  const [isComputerUseKeyEditorOpen, setIsComputerUseKeyEditorOpen] =
+    useState(false);
   const [isTavilyKeyEditorOpen, setIsTavilyKeyEditorOpen] = useState(false);
   const [settingsToast, setSettingsToast] = useState("");
   const [testConnectionState, setTestConnectionState] =
@@ -2652,6 +2708,10 @@ export function AgentConsole({
       status: "idle",
     });
   const [tavilyConnectionState, setTavilyConnectionState] =
+    useState<TestConnectionState>({
+      status: "idle",
+    });
+  const [computerUseConnectionState, setComputerUseConnectionState] =
     useState<TestConnectionState>({
       status: "idle",
     });
@@ -3527,6 +3587,55 @@ export function AgentConsole({
     }
   };
 
+  const testComputerUseSettings = async () => {
+    setComputerUseConnectionState({ status: "testing" });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/computer-use/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          toolSettings: buildToolSettings(settings),
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          model?: string;
+          requestId?: string | null;
+        };
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "Computer use OpenAI 连接测试失败。");
+      }
+
+      setComputerUseConnectionState({
+        status: "success",
+        message: [
+          "连接成功",
+          payload.result?.model ? `模型：${payload.result.model}` : "",
+          payload.result?.requestId
+            ? `response_id：${payload.result.requestId}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    } catch (error) {
+      setComputerUseConnectionState({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Computer use OpenAI 连接测试失败。",
+      });
+    }
+  };
+
   const requestActivityRewrite = async ({
     event,
     fallback,
@@ -4247,6 +4356,12 @@ export function AgentConsole({
   const tavilyApiKey = settings.tavilyApiKey.trim();
   const tavilyStatusLabel = tavilyApiKey
     ? `Configured · ${maskSecret(tavilyApiKey)}`
+    : "Missing key";
+  const computerUseApiKey = settings.computerUseApiKey.trim();
+  const effectiveComputerUseApiKey =
+    computerUseApiKey || settings.openaiApiKey.trim();
+  const computerUseStatusLabel = effectiveComputerUseApiKey
+    ? `Configured · ${maskSecret(effectiveComputerUseApiKey)}`
     : "Missing key";
   const settingsRuntimeInfo = {
     ...runtimeInfo,
@@ -5538,6 +5653,111 @@ export function AgentConsole({
 
                     <section className={styles.settingsSection}>
                       <div className={styles.settingsSectionHeader}>
+                        <h4>Computer use OpenAI API Key</h4>
+                        <span>{computerUseStatusLabel}</span>
+                      </div>
+
+                      {isComputerUseKeyEditorOpen ? (
+                        <>
+                          <label className={styles.settingsField}>
+                            <span>API Key</span>
+                            <input
+                              type="password"
+                              autoComplete="off"
+                              placeholder="sk-..."
+                              value={settings.computerUseApiKey}
+                              onChange={(event) => {
+                                setSettings((current) => ({
+                                  ...current,
+                                  computerUseApiKey: event.target.value,
+                                }));
+                                setComputerUseConnectionState({ status: "idle" });
+                              }}
+                            />
+                          </label>
+
+                          <label className={styles.settingsField}>
+                            <span>Model</span>
+                            <input
+                              type="text"
+                              placeholder="gpt-5.5"
+                              value={settings.computerUseModel}
+                              onChange={(event) => {
+                                setSettings((current) => ({
+                                  ...current,
+                                  computerUseModel: event.target.value,
+                                }));
+                                setComputerUseConnectionState({ status: "idle" });
+                              }}
+                            />
+                          </label>
+                        </>
+                      ) : null}
+
+                      <p className={styles.settingsHint}>
+                        Computer use 将通过 OpenAI Responses API 独立运行；未单独填写时会复用 OpenAI provider 的 API Key。
+                      </p>
+
+                      <div className={styles.settingsActions}>
+                        <button
+                          className={styles.primarySettingsButton}
+                          type="button"
+                          onClick={() => {
+                            void testComputerUseSettings();
+                          }}
+                          disabled={
+                            computerUseConnectionState.status === "testing"
+                          }
+                        >
+                          {computerUseConnectionState.status === "testing"
+                            ? "测试中..."
+                            : "测试连接"}
+                        </button>
+                        <button
+                          className={styles.secondarySettingsButton}
+                          type="button"
+                          onClick={() =>
+                            setIsComputerUseKeyEditorOpen((current) => !current)
+                          }
+                        >
+                          {isComputerUseKeyEditorOpen ? "收起配置" : "配置 Key"}
+                        </button>
+                        {isComputerUseKeyEditorOpen && computerUseApiKey ? (
+                          <button
+                            className={styles.secondarySettingsButton}
+                            type="button"
+                            onClick={() => {
+                              setSettings((current) => ({
+                                ...current,
+                                computerUseApiKey: "",
+                              }));
+                              setComputerUseConnectionState({ status: "idle" });
+                            }}
+                          >
+                            清空 Key
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {computerUseConnectionState.status !== "idle" ? (
+                        <p
+                          className={`${styles.connectionNotice} ${
+                            computerUseConnectionState.status === "success"
+                              ? styles.connectionNoticeSuccess
+                              : computerUseConnectionState.status === "error"
+                                ? styles.connectionNoticeError
+                                : ""
+                          }`}
+                        >
+                          {computerUseConnectionState.status === "testing"
+                            ? "正在请求 OpenAI Responses API..."
+                            : computerUseConnectionState.message}
+                        </p>
+                      ) : null}
+                    </section>
+
+                    <section className={styles.settingsSection}>
+                      <div className={styles.settingsSectionHeader}>
                         <h4>模型 Provider</h4>
                         <span>{selectedProvider.label}</span>
                       </div>
@@ -5644,6 +5864,33 @@ export function AgentConsole({
                                             setSettings((current) => ({
                                               ...current,
                                               customModel: event.target.value,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        />
+                                      </label>
+                                    </>
+                                  ) : provider.id === "openai" ? (
+                                    <>
+                                      <div className={styles.settingsInfoGrid}>
+                                        <div>
+                                          <span>Provider URL</span>
+                                          <strong>{providerBaseUrl}</strong>
+                                        </div>
+                                      </div>
+
+                                      <label className={styles.settingsField}>
+                                        <span>Model</span>
+                                        <input
+                                          type="text"
+                                          placeholder={provider.model}
+                                          value={settings.openaiModel}
+                                          onChange={(event) => {
+                                            setSettings((current) => ({
+                                              ...current,
+                                              openaiModel: event.target.value,
                                             }));
                                             setTestConnectionState({
                                               status: "idle",

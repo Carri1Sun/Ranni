@@ -63,7 +63,8 @@ Ranni 的当前产品模型可以概括为四件事：
 - 外观：支持 dark、light、system。
 - API 设置：
   - Tavily 搜索 API Key，支持配置、清除、测试。
-  - 模型 provider 列表，支持 DeepSeek、Qwen、自定义 OpenAI-compatible URL。
+  - Computer use OpenAI API Key，支持配置、清除、测试，用于 OpenAI Responses API `computer` tool loop。
+  - 模型 provider 列表，支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。
 - Debug：支持「会话过程展示具体内容」开关。关闭时只显示优化后的过程文案；开启后每条过程项出现 info 按钮，可查看该项绑定的 run、step、tool call、tool result 和当前 agent loop trace。
 - 关于：展示当前 workspace、provider、model 和本地运行说明。
 
@@ -80,6 +81,7 @@ Ranni 的当前产品模型可以概括为四件事：
 
 同时支持：
 
+- OpenAI 官方 API，默认模型 `gpt-5.5`。
 - Qwen / DashScope OpenAI-compatible API。
 - 自定义 OpenAI-compatible Base URL。
 
@@ -87,16 +89,17 @@ Provider 适配层在 `lib/llm/`，由 `lib/llm/index.ts` 根据配置选择 pro
 
 ## 工具能力
 
-Agent 可用工具主要分为六类：
+Agent 可用工具主要分为七类：
 
 - 工作区文件工具：`list_files`、`read_file`、`write_file`、`move_path`、`delete_path`、`search_in_files`。
 - 终端工具：`run_terminal`。
+- 桌面操作工具：`operate_computer`，通过 OpenAI `computer` tool 规划动作，本机 macOS 适配器执行截图、点击、滚动、输入、按键和拖拽。
 - Web 工具：`search_web`、`fetch_url`。
 - Research notebook 工具：`plan_research`、`record_research_finding`、`review_research_state`、`save_research_checkpoint`。
 - Task state 工具：`update_task_state`。
 - Durable memory 工具：`init_task_memory`、`read_task_memory`、`update_task_memory`、`record_task_evidence`、`save_task_checkpoint`。
 
-所有文件和终端工具都受 session workspace 边界限制。
+文件、终端和运行产物受 session workspace 边界限制。`operate_computer` 会控制用户实际 macOS 桌面，只应在用户明确要求桌面操作时使用，并在支付、登录、敏感信息或破坏性确认前停止。
 
 Deep research 任务会额外强调动态研究地图、正文核验、证据记录、coverage audit 和 thesis-driven synthesis。来源或 claim 较多时，agent 可把 `source_ledger`、`claim_ledger`、`coverage_matrix`、`synthesis_brief`、`negative_results` 写入 `.ranni/runs/<runId>/`，并在最终综合前读回。
 

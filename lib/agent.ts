@@ -832,6 +832,14 @@ function createToolTaskStatePatch({
     };
   }
 
+  if (toolName === "operate_computer") {
+    return {
+      currentMode: "shell",
+      nextAction: "审查桌面操作结果，判断是否完成目标或需要用户确认。",
+      verificationStatus: "pending",
+    };
+  }
+
   if (toolName === "list_files" || toolName === "read_file" || toolName === "search_in_files") {
     return {
       currentMode: "recon",

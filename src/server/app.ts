@@ -13,7 +13,10 @@ import {
   hasModelApiKey,
   testModelConnection,
 } from "../../lib/llm";
-import { testTavilyConnection } from "../../lib/tools";
+import {
+  testComputerUseConnection,
+  testTavilyConnection,
+} from "../../lib/tools";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -51,9 +54,15 @@ const modelSettingsSchema = z
   }));
 
 const toolSettingsSchema = z.object({
+  computerUseApiKey: optionalSecretSchema,
+  computerUseModel: optionalSecretSchema,
   tavilyApiKey: optionalSecretSchema,
 });
-const defaultToolSettings = { tavilyApiKey: undefined };
+const defaultToolSettings = {
+  computerUseApiKey: undefined,
+  computerUseModel: undefined,
+  tavilyApiKey: undefined,
+};
 
 const requestSchema = z.object({
   messages: z
@@ -84,6 +93,10 @@ const activityDescribeSchema = z.object({
 });
 
 const testTavilySchema = z.object({
+  toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
+});
+
+const testComputerUseSchema = z.object({
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
 });
 
@@ -936,6 +949,41 @@ export function createServerApp() {
           : typeof error === "object" && error !== null && "message" in error
             ? String((error as { message?: unknown }).message)
             : "Tavily 连接测试失败。";
+
+      response.status(502).json({
+        error: message,
+        ok: false,
+      });
+    }
+  });
+
+  app.post("/api/computer-use/test", async (request, response) => {
+    let payload: z.infer<typeof testComputerUseSchema>;
+
+    try {
+      payload = testComputerUseSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message });
+      return;
+    }
+
+    try {
+      const result = await testComputerUseConnection(payload.toolSettings);
+
+      response.json({
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+            ? String((error as { message?: unknown }).message)
+            : "Computer use OpenAI 连接测试失败。";
 
       response.status(502).json({
         error: message,

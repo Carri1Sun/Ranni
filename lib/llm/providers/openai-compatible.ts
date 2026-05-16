@@ -53,7 +53,8 @@ type OpenAIToolCall = {
 };
 
 type OpenAIChatRequest = {
-  max_tokens: number;
+  max_completion_tokens?: number;
+  max_tokens?: number;
   messages: OpenAIChatMessage[];
   model: string;
   tools?: Array<{
@@ -118,6 +119,7 @@ type ProviderRuntimeOptions = {
 
 type OpenAICompatibleProviderOptions = {
   apiKeyEnvNames?: string[];
+  baseUrlEnvNames?: string[];
   defaultBaseUrl: string;
   defaultContextWindow: number | null;
   defaultEnableThinking?: boolean;
@@ -126,6 +128,8 @@ type OpenAICompatibleProviderOptions = {
   defaultPreserveThinking?: boolean;
   defaultReasoningEffort?: "high" | "max";
   missingApiKeyMessage: string;
+  maxTokensRequestKey?: "max_completion_tokens" | "max_tokens";
+  modelEnvNames?: string[];
   providerName: string;
   replayAssistantThinking?: (runtime: RuntimeConfig) => boolean;
   requestFailedPrefix: string;
@@ -198,6 +202,8 @@ function createRuntimeConfig(
   options: OpenAICompatibleProviderOptions,
   modelConfig?: ModelConnectionConfig,
 ): RuntimeConfig {
+  const baseUrlFromEnv = readEnvValue(options.baseUrlEnvNames ?? ["LLM_BASE_URL"]);
+
   return {
     apiKey: resolveModelApiKey(modelConfig, [
       ...(options.apiKeyEnvNames ?? []),
@@ -205,7 +211,7 @@ function createRuntimeConfig(
     ]),
     baseUrl:
       modelConfig?.baseUrl?.trim().replace(/\/+$/, "") ||
-      process.env.LLM_BASE_URL?.trim().replace(/\/+$/, "") ||
+      baseUrlFromEnv.replace(/\/+$/, "") ||
       options.defaultBaseUrl,
     contextWindow: readNullablePositiveInteger(
       process.env.LLM_CONTEXT_WINDOW,
@@ -219,7 +225,10 @@ function createRuntimeConfig(
       process.env.LLM_MAX_TOKENS,
       options.defaultMaxTokens,
     ),
-    model: modelConfig?.model?.trim() || process.env.LLM_MODEL?.trim() || options.defaultModel,
+    model:
+      modelConfig?.model?.trim() ||
+      readEnvValue(options.modelEnvNames ?? ["LLM_MODEL"]) ||
+      options.defaultModel,
     preserveThinking: readBoolean(
       process.env.LLM_PRESERVE_THINKING,
       options.defaultPreserveThinking ?? true,
@@ -604,9 +613,10 @@ function buildRequestPayload({
   tools: AgentToolDefinition[];
 }) {
   const openAITools = toOpenAITools(tools);
+  const maxTokensRequestKey = options.maxTokensRequestKey ?? "max_tokens";
 
   return {
-    max_tokens: runtime.maxTokens,
+    [maxTokensRequestKey]: runtime.maxTokens,
     messages: toOpenAIChatMessages({
       includeReasoningContent: options.replayAssistantThinking?.(runtime) ?? false,
       messages,
@@ -786,8 +796,9 @@ export function createOpenAICompatibleProvider(
     modelConfig?: ModelConnectionConfig,
   ): Promise<ModelConnectionTestResult> {
     const runtime = getConfig(options, modelConfig);
+    const maxTokensRequestKey = options.maxTokensRequestKey ?? "max_tokens";
     const requestBody = {
-      max_tokens: 8,
+      [maxTokensRequestKey]: 8,
       messages: [
         {
           role: "user",
