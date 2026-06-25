@@ -1645,7 +1645,8 @@
 }
 
 .modalBackdrop,
-.infoBackdrop {
+.infoBackdrop,
+.inspectorBackdrop {
   position: fixed;
   inset: 0;
   z-index: 29;
@@ -2570,15 +2571,16 @@
   }
 
   .inspector {
-    grid-column: 1 / -1;
-    max-height: 300px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    bottom: 14px;
+    z-index: 30;
+    width: min(420px, calc(100vw - 28px));
+    height: auto;
+    display: flex;
+    max-height: none;
     overflow: auto;
-  }
-
-  .inspectorTopBar {
-    grid-column: 1 / -1;
   }
 }
 

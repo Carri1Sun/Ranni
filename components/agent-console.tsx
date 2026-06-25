@@ -190,6 +190,7 @@ const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
 const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
+const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -2727,6 +2728,7 @@ export function AgentConsole({
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
+  const [isInspectorOverlayMode, setIsInspectorOverlayMode] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2786,6 +2788,9 @@ export function AgentConsole({
         localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
       const storedInspectorCollapsed =
         localStorage.getItem(INSPECTOR_STORAGE_KEY) === "true";
+      const shouldUseInspectorOverlay = window.matchMedia(
+        INSPECTOR_OVERLAY_MEDIA_QUERY,
+      ).matches;
       const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
 
       setSessions(initialSessions);
@@ -2793,7 +2798,8 @@ export function AgentConsole({
         activeSessionExists ? storedActiveSessionId : initialSessions[0]?.id ?? "",
       );
       setIsSidebarCollapsed(storedSidebarCollapsed);
-      setIsInspectorCollapsed(storedInspectorCollapsed);
+      setIsInspectorCollapsed(storedInspectorCollapsed || shouldUseInspectorOverlay);
+      setIsInspectorOverlayMode(shouldUseInspectorOverlay);
       setWorkspacePickerDirectories(initialWorkspaceDirectories);
       setWorkspacePickerSelectedPath(
         initialSessions[0]?.workspaceRoot ??
@@ -2825,6 +2831,26 @@ export function AgentConsole({
       setIsHydrated(true);
     }
   }, [workspaceRoot]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(INSPECTOR_OVERLAY_MEDIA_QUERY);
+    const syncInspectorLayout = () => {
+      const shouldUseOverlay = mediaQuery.matches;
+
+      setIsInspectorOverlayMode(shouldUseOverlay);
+
+      if (shouldUseOverlay) {
+        setIsInspectorCollapsed(true);
+      }
+    };
+
+    syncInspectorLayout();
+    mediaQuery.addEventListener("change", syncInspectorLayout);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncInspectorLayout);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -5253,6 +5279,15 @@ export function AgentConsole({
             </div>
           </form>
         </section>
+
+        {!isInspectorCollapsed && isInspectorOverlayMode ? (
+          <button
+            aria-label="关闭运行状态栏"
+            className={styles.inspectorBackdrop}
+            type="button"
+            onClick={() => setIsInspectorCollapsed(true)}
+          />
+        ) : null}
 
         {!isInspectorCollapsed ? (
           <aside className={styles.inspector} aria-label="运行状态栏">
