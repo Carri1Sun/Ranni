@@ -32,6 +32,12 @@ Rules:
 - Long research finals may use Ranni's chunked final protocol and should be judged after the aggregated final answer, not by any single partial chunk.
 - Model `thinking` is part of the observable trace/display surface when the provider returns it. The UI can show it as a separate readable process item, while full raw context remains in trace/debug views.
 
+## Product UI Naming
+
+- Use `UI-NAMING.md` as the canonical vocabulary for Ranni page regions, modules, and visible UI elements.
+- When discussing product changes, bug reports, docs, or code review comments, prefer the Chinese UI names from `UI-NAMING.md`.
+- When adding or renaming visible UI modules, update `UI-NAMING.md` in the same change.
+
 ## Documentation Rules
 
 - Keep README aligned with current user-facing functionality and startup instructions.
