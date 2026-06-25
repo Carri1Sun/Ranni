@@ -53,7 +53,7 @@ type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "openai" | "qwen";
 type SettingsTab = "about" | "account" | "api" | "appearance" | "debug";
-type WorkspacePickerMode = "initial" | "newSession";
+type WorkspacePickerMode = "draftSession" | "initial";
 
 type ProcessIconId =
   | "activity"
@@ -409,14 +409,18 @@ function createAssistantMessage(): ChatMessage {
 
 function createSession({
   id,
+  includeInitialAssistantMessage = true,
   title = DEFAULT_SESSION_TITLE,
   workspaceRoot,
 }: {
   id?: string;
+  includeInitialAssistantMessage?: boolean;
   title?: string;
   workspaceRoot: string;
 }): SessionRecord {
-  const initialAssistantMessage = createAssistantMessage();
+  const initialAssistantMessage = includeInitialAssistantMessage
+    ? createAssistantMessage()
+    : undefined;
   const now = Date.now();
 
   return {
@@ -426,14 +430,16 @@ function createSession({
     updatedAt: now,
     workspaceRoot,
     researchContext: "",
-    messages: [initialAssistantMessage],
+    messages: initialAssistantMessage ? [initialAssistantMessage] : [],
     runs: [],
-    feed: [
-      {
-        kind: "message",
-        ...initialAssistantMessage,
-      },
-    ],
+    feed: initialAssistantMessage
+      ? [
+          {
+            kind: "message",
+            ...initialAssistantMessage,
+          },
+        ]
+      : [],
   };
 }
 
@@ -2681,13 +2687,16 @@ export function AgentConsole({
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWorkspacePickerOpen, setIsWorkspacePickerOpen] = useState(false);
+  const [isDraftSessionActive, setIsDraftSessionActive] = useState(false);
+  const [draftWorkspaceRoot, setDraftWorkspaceRoot] = useState("");
+  const [draftSessionError, setDraftSessionError] = useState("");
   const [activityDebugTarget, setActivityDebugTarget] =
     useState<ActivityDebugTarget | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
   const [workspacePickerMode, setWorkspacePickerMode] =
-    useState<WorkspacePickerMode>("newSession");
+    useState<WorkspacePickerMode>("initial");
   const [workspacePickerDirectories, setWorkspacePickerDirectories] = useState<
     WorkspaceDirectoryEntry[]
   >([]);
@@ -3139,7 +3148,10 @@ export function AgentConsole({
   };
 
   const openWorkspacePicker = (mode: WorkspacePickerMode) => {
-    const initialPath = activeSession?.workspaceRoot || workspaceRoot;
+    const initialPath =
+      mode === "draftSession"
+        ? draftWorkspaceRoot || activeSession?.workspaceRoot || workspaceRoot
+        : activeSession?.workspaceRoot || workspaceRoot;
 
     setWorkspacePickerMode(mode);
     setWorkspacePickerSelectedPath(initialPath);
@@ -3227,6 +3239,16 @@ export function AgentConsole({
         throw new Error(payload.error || "目标目录不可用。");
       }
 
+      if (workspacePickerMode === "draftSession") {
+        addWorkspaceDirectory(payload.result.path);
+        setDraftWorkspaceRoot(payload.result.path);
+        setDraftSessionError("");
+        setWorkspacePickerSelectedPath(payload.result.path);
+        setWorkspacePickerStatus("idle");
+        setIsWorkspacePickerOpen(false);
+        return;
+      }
+
       startSessionWithWorkspace(payload.result.path);
     } catch (error) {
       setWorkspacePickerStatus("error");
@@ -3273,6 +3295,105 @@ export function AgentConsole({
       setWorkspacePickerError(
         error instanceof Error ? error.message : "无法创建默认工作目录。",
       );
+    }
+  };
+
+  const useDefaultWorkspaceForDraft = () => {
+    setDraftWorkspaceRoot("");
+    setDraftSessionError("");
+    setWorkspacePickerSelectedPath("");
+    setWorkspacePickerStatus("idle");
+    setIsWorkspacePickerOpen(false);
+  };
+
+  const createDraftSessionForSend = async () => {
+    const sessionId = createId();
+    const selectedWorkspace = draftWorkspaceRoot.trim();
+
+    setDraftSessionError("");
+    setWorkspacePickerStatus("loading");
+    setWorkspacePickerError("");
+
+    try {
+      let nextWorkspaceRoot = selectedWorkspace;
+
+      if (nextWorkspaceRoot) {
+        const response = await fetch(`${apiBaseUrl}/api/workspaces/validate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            path: nextWorkspaceRoot,
+          }),
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            path?: string;
+          };
+        };
+
+        if (!response.ok || payload.ok === false || !payload.result?.path) {
+          throw new Error(payload.error || "目标目录不可用。");
+        }
+
+        nextWorkspaceRoot = payload.result.path;
+      } else {
+        const response = await fetch(`${apiBaseUrl}/api/workspaces/auto-create`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ sessionId }),
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            base?: string;
+            path?: string;
+          };
+        };
+
+        if (!response.ok || payload.ok === false || !payload.result?.path) {
+          throw new Error(payload.error || "无法创建默认工作目录。");
+        }
+
+        if (payload.result.base) {
+          setDefaultWorkspaceBase(payload.result.base);
+        }
+
+        nextWorkspaceRoot = payload.result.path;
+      }
+
+      const nextSession = createSession({
+        id: sessionId,
+        includeInitialAssistantMessage: false,
+        workspaceRoot: nextWorkspaceRoot,
+      });
+
+      addWorkspaceDirectory(nextWorkspaceRoot);
+      setSessions((current) => [nextSession, ...current]);
+      setActiveSessionId(nextSession.id);
+      setSelectedRunId("");
+      setSelectedStepId("");
+      setActiveView("chat");
+      setIsDraftSessionActive(false);
+      setDraftWorkspaceRoot("");
+      setWorkspacePickerSelectedPath(nextWorkspaceRoot);
+      setWorkspacePickerStatus("idle");
+
+      return nextSession;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "无法创建新会话。";
+
+      setDraftSessionError(message);
+      setWorkspacePickerStatus("error");
+      setWorkspacePickerError(message);
+      return null;
     }
   };
 
@@ -3562,7 +3683,17 @@ export function AgentConsole({
   };
 
   const createNewSession = () => {
-    openWorkspacePicker("newSession");
+    setIsDraftSessionActive(true);
+    setDraftWorkspaceRoot("");
+    setDraftSessionError("");
+    setInput("");
+    setSelectedRunId("");
+    setSelectedStepId("");
+    setActiveView("chat");
+
+    if (isSidebarOverlayMode) {
+      setIsSidebarCollapsed(true);
+    }
   };
 
   const testModelSettings = async (providerId: ProviderId = settings.provider) => {
@@ -3841,7 +3972,7 @@ export function AgentConsole({
   };
 
   const sendMessage = async (messageText: string) => {
-    if (!activeSession) {
+    if (!activeSession && !isDraftSessionActive) {
       return;
     }
 
@@ -3864,15 +3995,23 @@ export function AgentConsole({
       return;
     }
 
-    const sessionId = activeSession.id;
+    const sessionForRun = isDraftSessionActive
+      ? await createDraftSessionForSend()
+      : activeSession;
+
+    if (!sessionForRun) {
+      return;
+    }
+
+    const sessionId = sessionForRun.id;
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
       content: trimmed,
     };
     const shouldGenerateSessionTitle =
-      activeSession.title === DEFAULT_SESSION_TITLE &&
-      !activeSession.messages.some((message) => message.role === "user");
+      sessionForRun.title === DEFAULT_SESSION_TITLE &&
+      !sessionForRun.messages.some((message) => message.role === "user");
     const abortController = new AbortController();
 
     activeAgentRequestRef.current = {
@@ -3885,14 +4024,14 @@ export function AgentConsole({
 
     try {
       const history = [
-        ...activeSession.messages,
-        ...(activeSession.researchContext
+        ...sessionForRun.messages,
+        ...(sessionForRun.researchContext
           ? [
               {
                 role: "assistant" as const,
                 content: [
                   "以下是当前 session 持续维护的 research notebook 摘要，请把它视为先前已经验证过的研究上下文，在新的请求里继续复用：",
-                  activeSession.researchContext,
+                  sessionForRun.researchContext,
                 ].join("\n\n"),
               },
             ]
@@ -3930,7 +4069,7 @@ export function AgentConsole({
           messages: history,
           modelSettings: buildModelSettings(settings),
           toolSettings: buildToolSettings(settings),
-          workspaceRoot: activeSession.workspaceRoot,
+          workspaceRoot: sessionForRun.workspaceRoot,
         }),
       });
 
@@ -4250,6 +4389,7 @@ export function AgentConsole({
     }
   };
 
+  const isDraftWorkspacePicker = workspacePickerMode === "draftSession";
   const workspacePickerModal = isWorkspacePickerOpen ? (
     <>
       <button
@@ -4287,9 +4427,15 @@ export function AgentConsole({
           <section className={`${styles.workspacePickerSection} ${styles.workspaceAutoSection}`}>
             <div className={styles.workspaceAutoCard}>
               <div className={styles.workspaceAutoText}>
-                <strong>不想选目录？直接开始</strong>
+                <strong>
+                  {isDraftWorkspacePicker
+                    ? "使用默认执行目录"
+                    : "不想选目录？直接开始"}
+                </strong>
                 <small>
-                  {defaultWorkspaceBase
+                  {isDraftWorkspacePicker
+                    ? "发送消息后会自动创建默认工作目录"
+                    : defaultWorkspaceBase
                     ? `将在 ${defaultWorkspaceBase}/ranni-session-<session> 下自动创建`
                     : "将在默认位置自动创建 ranni-session-<session> 工作目录"}
                 </small>
@@ -4299,10 +4445,15 @@ export function AgentConsole({
                 disabled={workspacePickerStatus === "loading"}
                 type="button"
                 onClick={() => {
+                  if (isDraftWorkspacePicker) {
+                    useDefaultWorkspaceForDraft();
+                    return;
+                  }
+
                   void createAutoWorkspaceSession();
                 }}
               >
-                自动开始
+                {isDraftWorkspacePicker ? "使用默认" : "自动开始"}
               </button>
             </div>
           </section>
@@ -4390,7 +4541,11 @@ export function AgentConsole({
 
         <footer className={styles.workspacePickerFooter}>
           <div>
-            <span>将作为新 session 的执行目录</span>
+            <span>
+              {isDraftWorkspacePicker
+                ? "将作为发送后的执行目录"
+                : "将作为新 session 的执行目录"}
+            </span>
             <strong>{workspacePickerSelectedPath || "未选择"}</strong>
           </div>
           <button
@@ -4448,19 +4603,33 @@ export function AgentConsole({
     );
   }
 
-  const selectedRun =
-    activeSession.runs.find((run) => run.id === selectedRunId) ??
-    activeSession.runs[0];
+  const selectedRun = isDraftSessionActive
+    ? undefined
+    : activeSession.runs.find((run) => run.id === selectedRunId) ??
+      activeSession.runs[0];
   const selectedStep =
     selectedRun?.steps.find((step) => step.id === selectedStepId) ??
     selectedRun?.steps[selectedRun.steps.length - 1];
   const currentTaskState = selectedStep?.taskState ?? selectedRun?.taskState;
-  const reportCandidate = getReportCandidate(activeSession.messages);
+  const reportCandidate = isDraftSessionActive
+    ? undefined
+    : getReportCandidate(activeSession.messages);
   const completedStepCount = getCompletedStepCount(selectedRun);
   const latestStatusMessage =
     selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
-  const activeWorkspaceRoot = activeSession.workspaceRoot;
-  const workspaceLabel = createWorkspaceLabel(activeWorkspaceRoot);
+  const activeWorkspaceRoot = isDraftSessionActive
+    ? draftWorkspaceRoot || "发送后自动创建默认执行目录"
+    : activeSession.workspaceRoot;
+  const workspaceLabel = isDraftSessionActive
+    ? draftWorkspaceRoot
+      ? createWorkspaceLabel(draftWorkspaceRoot)
+      : "默认目录"
+    : createWorkspaceLabel(activeWorkspaceRoot);
+  const draftWorkspaceDetail = draftWorkspaceRoot
+    ? draftWorkspaceRoot
+    : defaultWorkspaceBase
+      ? `${defaultWorkspaceBase}/ranni-session-<session>`
+      : "发送后自动创建默认执行目录";
   const selectedProvider = getProviderOption(settings.provider);
   const selectedProviderApiKey = getProviderApiKey(settings);
   const selectedProviderBaseUrl = getProviderBaseUrl(settings);
@@ -4503,7 +4672,7 @@ export function AgentConsole({
     ? activeAgentRequestRef.current?.sessionId
     : undefined;
   const latestProcessActivityId =
-    runningSessionId === activeSession.id
+    !isDraftSessionActive && runningSessionId === activeSession.id
       ? [...activeSession.feed]
           .reverse()
           .find((item) => item.kind === "activity")?.id
@@ -4600,6 +4769,11 @@ export function AgentConsole({
                     onClick={() => {
                       setActiveView(item.id);
 
+                      if (item.id !== "chat") {
+                        setIsDraftSessionActive(false);
+                        setDraftSessionError("");
+                      }
+
                       if (isSidebarOverlayMode) {
                         setIsSidebarCollapsed(true);
                       }
@@ -4618,7 +4792,8 @@ export function AgentConsole({
 
             <div className={styles.sessionList}>
               {orderedSessions.map((session, index) => {
-                const isActive = session.id === activeSession.id;
+                const isActive =
+                  !isDraftSessionActive && session.id === activeSession.id;
                 const sessionIsRunning =
                   runningSessionId === session.id ||
                   session.runs.some((run) => run.status === "running");
@@ -4632,6 +4807,8 @@ export function AgentConsole({
                     type="button"
                     onClick={() => {
                       setActiveSessionId(session.id);
+                      setIsDraftSessionActive(false);
+                      setDraftSessionError("");
 
                       if (isSidebarOverlayMode) {
                         setIsSidebarCollapsed(true);
@@ -4688,11 +4865,15 @@ export function AgentConsole({
               >
                 {isSidebarCollapsed ? ">" : "<"}
               </button>
-              <h2>{activeSession.title}</h2>
+              <h2>{isDraftSessionActive ? DEFAULT_SESSION_TITLE : activeSession.title}</h2>
             </div>
             <div className={styles.headerControls}>
               <div className={styles.chatMeta}>
-                <span>{formatSessionTime(activeSession.updatedAt)}</span>
+                <span>
+                  {isDraftSessionActive
+                    ? "草稿"
+                    : formatSessionTime(activeSession.updatedAt)}
+                </span>
                 <span
                   className={`${styles.runStateBadge} ${
                     isRunning ? styles.runStateBadgeActive : ""
@@ -4706,15 +4887,17 @@ export function AgentConsole({
                 </span>
                 <span>{workspaceLabel}</span>
               </div>
-              <button
-                className={styles.headerTraceButton}
-                type="button"
-                onClick={() => exportSessionTrace(activeSession)}
-              >
-                {sessionTraceActionState?.sessionId === activeSession.id
-                  ? "已导出 trace"
-                  : "导出 trace"}
-              </button>
+              {!isDraftSessionActive ? (
+                <button
+                  className={styles.headerTraceButton}
+                  type="button"
+                  onClick={() => exportSessionTrace(activeSession)}
+                >
+                  {sessionTraceActionState?.sessionId === activeSession.id
+                    ? "已导出 trace"
+                    : "导出 trace"}
+                </button>
+              ) : null}
               <button
                 className={styles.iconButton}
                 type="button"
@@ -4728,7 +4911,74 @@ export function AgentConsole({
             </div>
           </div>
 
-          {activeView === "chat" ? (
+          {isDraftSessionActive ? (
+            <form
+              className={styles.draftSession}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendMessage(input);
+              }}
+            >
+              <div className={styles.draftSessionInner}>
+                <div className={styles.draftComposerInputWrap}>
+                  <textarea
+                    className={styles.draftTextarea}
+                    name="prompt"
+                    placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
+                    rows={4}
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) {
+                        return;
+                      }
+
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+
+                        if (
+                          !isRunning &&
+                          workspacePickerStatus !== "loading" &&
+                          input.trim()
+                        ) {
+                          void sendMessage(input);
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    className={styles.submitButton}
+                    disabled={
+                      !input.trim() ||
+                      !effectiveHasApiKey ||
+                      workspacePickerStatus === "loading"
+                    }
+                    type="submit"
+                  >
+                    {effectiveHasApiKey ? "发送" : "先设置 Key"}
+                  </button>
+                </div>
+
+                <button
+                  className={styles.draftWorkspaceButton}
+                  type="button"
+                  disabled={workspacePickerStatus === "loading"}
+                  onClick={() => openWorkspacePicker("draftSession")}
+                >
+                  <span>执行目录</span>
+                  <strong>{draftWorkspaceDetail}</strong>
+                </button>
+
+                {draftSessionError ? (
+                  <p
+                    className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+                  >
+                    {draftSessionError}
+                  </p>
+                ) : null}
+              </div>
+            </form>
+          ) : activeView === "chat" ? (
             <div className={styles.feedWrap}>
               <div className={styles.feed} ref={feedRef}>
                 {activeSession.feed.map((item) =>
@@ -5270,54 +5520,56 @@ export function AgentConsole({
             </div>
           )}
 
-          <form
-            className={styles.composer}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendMessage(input);
-            }}
-          >
-            <div className={styles.composerInputWrap}>
-              <textarea
-                className={styles.textarea}
-                name="prompt"
-                placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
-                rows={3}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) {
-                    return;
-                  }
-
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-
-                    if (!isRunning && input.trim()) {
-                      void sendMessage(input);
+          {!isDraftSessionActive ? (
+            <form
+              className={styles.composer}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendMessage(input);
+              }}
+            >
+              <div className={styles.composerInputWrap}>
+                <textarea
+                  className={styles.textarea}
+                  name="prompt"
+                  placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
+                  rows={3}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing) {
+                      return;
                     }
-                  }
-                }}
-              />
-              {isRunning ? (
-                <button
-                  className={`${styles.submitButton} ${styles.stopButton}`}
-                  type="button"
-                  onClick={stopAgentRun}
-                >
-                  停止
-                </button>
-              ) : (
-                <button
-                  className={styles.submitButton}
-                  disabled={!input.trim() || !effectiveHasApiKey}
-                  type="submit"
-                >
-                  {effectiveHasApiKey ? "发送" : "先设置 Key"}
-                </button>
-              )}
-            </div>
-          </form>
+
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+
+                      if (!isRunning && input.trim()) {
+                        void sendMessage(input);
+                      }
+                    }
+                  }}
+                />
+                {isRunning ? (
+                  <button
+                    className={`${styles.submitButton} ${styles.stopButton}`}
+                    type="button"
+                    onClick={stopAgentRun}
+                  >
+                    停止
+                  </button>
+                ) : (
+                  <button
+                    className={styles.submitButton}
+                    disabled={!input.trim() || !effectiveHasApiKey}
+                    type="submit"
+                  >
+                    {effectiveHasApiKey ? "发送" : "先设置 Key"}
+                  </button>
+                )}
+              </div>
+            </form>
+          ) : null}
         </section>
 
         {!isInspectorCollapsed && isInspectorOverlayMode ? (

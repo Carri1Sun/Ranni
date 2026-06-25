@@ -536,6 +536,75 @@
   padding: var(--space-4) 2px var(--space-2);
 }
 
+.draftSession {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.draftSessionInner {
+  width: min(760px, 100%);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.draftComposerInputWrap {
+  position: relative;
+}
+
+.draftTextarea {
+  width: 100%;
+  min-height: 150px;
+  max-height: 320px;
+  padding: 18px 176px 58px 18px;
+  border: 1px solid var(--ranni-input-border);
+  border-radius: var(--radius-lg);
+  outline: none;
+  resize: vertical;
+  background: var(--ranni-input-bg);
+  color: var(--ranni-text-0);
+  font-size: 15px;
+  line-height: 1.65;
+  box-shadow: var(--shadow-inset);
+}
+
+.draftTextarea:focus-visible {
+  box-shadow: 0 0 0 4px var(--ranni-input-focus-ring);
+}
+
+.draftWorkspaceButton {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-soft-surface);
+  color: var(--ranni-text-2);
+  text-align: left;
+}
+
+.draftWorkspaceButton span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.draftWorkspaceButton strong {
+  overflow: hidden;
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message {
   flex: none;
   display: grid;
@@ -1582,6 +1651,8 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
+.draftWorkspaceButton:hover,
+.draftWorkspaceButton:focus-visible,
 .scrollToBottomButton:hover,
 .scrollToBottomButton:focus-visible,
 .activityInfoButton:hover,
@@ -1619,6 +1690,8 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
+.draftWorkspaceButton:hover,
+.draftWorkspaceButton:focus-visible,
 .activityInfoButton:hover,
 .activityInfoButton:focus-visible {
   border-color: rgba(143, 167, 255, 0.32);
@@ -1638,6 +1711,7 @@
 .floatingInfoButton:active,
 .headerTraceButton:active,
 .messageActionButton:active,
+.draftWorkspaceButton:active,
 .scrollToBottomButton:active,
 .activityInfoButton:active,
 .inspectorStep:active {
@@ -2655,7 +2729,8 @@
     grid-template-columns: 1fr;
   }
 
-  .textarea {
+  .textarea,
+  .draftTextarea {
     padding-right: 14px;
     padding-bottom: 58px;
   }
