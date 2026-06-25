@@ -190,7 +190,8 @@ const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
 const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
-const PANEL_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
+const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
+const SIDEBAR_OVERLAY_MEDIA_QUERY = "(max-width: 720px)";
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -2789,8 +2790,11 @@ export function AgentConsole({
         localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
       const storedInspectorCollapsed =
         localStorage.getItem(INSPECTOR_STORAGE_KEY) === "true";
-      const shouldUsePanelOverlay = window.matchMedia(
-        PANEL_OVERLAY_MEDIA_QUERY,
+      const shouldUseInspectorOverlay = window.matchMedia(
+        INSPECTOR_OVERLAY_MEDIA_QUERY,
+      ).matches;
+      const shouldUseSidebarOverlay = window.matchMedia(
+        SIDEBAR_OVERLAY_MEDIA_QUERY,
       ).matches;
       const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
 
@@ -2798,10 +2802,10 @@ export function AgentConsole({
       setActiveSessionId(
         activeSessionExists ? storedActiveSessionId : initialSessions[0]?.id ?? "",
       );
-      setIsSidebarCollapsed(storedSidebarCollapsed || shouldUsePanelOverlay);
-      setIsInspectorCollapsed(storedInspectorCollapsed || shouldUsePanelOverlay);
-      setIsSidebarOverlayMode(shouldUsePanelOverlay);
-      setIsInspectorOverlayMode(shouldUsePanelOverlay);
+      setIsSidebarCollapsed(storedSidebarCollapsed || shouldUseSidebarOverlay);
+      setIsInspectorCollapsed(storedInspectorCollapsed || shouldUseInspectorOverlay);
+      setIsSidebarOverlayMode(shouldUseSidebarOverlay);
+      setIsInspectorOverlayMode(shouldUseInspectorOverlay);
       setWorkspacePickerDirectories(initialWorkspaceDirectories);
       setWorkspacePickerSelectedPath(
         initialSessions[0]?.workspaceRoot ??
@@ -2835,24 +2839,31 @@ export function AgentConsole({
   }, [workspaceRoot]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(PANEL_OVERLAY_MEDIA_QUERY);
+    const inspectorQuery = window.matchMedia(INSPECTOR_OVERLAY_MEDIA_QUERY);
+    const sidebarQuery = window.matchMedia(SIDEBAR_OVERLAY_MEDIA_QUERY);
     const syncPanelLayout = () => {
-      const shouldUseOverlay = mediaQuery.matches;
+      const shouldUseInspectorOverlay = inspectorQuery.matches;
+      const shouldUseSidebarOverlay = sidebarQuery.matches;
 
-      setIsSidebarOverlayMode(shouldUseOverlay);
-      setIsInspectorOverlayMode(shouldUseOverlay);
+      setIsSidebarOverlayMode(shouldUseSidebarOverlay);
+      setIsInspectorOverlayMode(shouldUseInspectorOverlay);
 
-      if (shouldUseOverlay) {
+      if (shouldUseSidebarOverlay) {
         setIsSidebarCollapsed(true);
+      }
+
+      if (shouldUseInspectorOverlay) {
         setIsInspectorCollapsed(true);
       }
     };
 
     syncPanelLayout();
-    mediaQuery.addEventListener("change", syncPanelLayout);
+    inspectorQuery.addEventListener("change", syncPanelLayout);
+    sidebarQuery.addEventListener("change", syncPanelLayout);
 
     return () => {
-      mediaQuery.removeEventListener("change", syncPanelLayout);
+      inspectorQuery.removeEventListener("change", syncPanelLayout);
+      sidebarQuery.removeEventListener("change", syncPanelLayout);
     };
   }, []);
 
