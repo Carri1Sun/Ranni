@@ -191,7 +191,7 @@ const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
 const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
 const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
-const SIDEBAR_OVERLAY_MEDIA_QUERY = "(max-width: 720px)";
+const SIDEBAR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -4597,7 +4597,13 @@ export function AgentConsole({
                       activeView === item.id ? styles.sidebarNavButtonActive : ""
                     }`}
                     type="button"
-                    onClick={() => setActiveView(item.id)}
+                    onClick={() => {
+                      setActiveView(item.id);
+
+                      if (isSidebarOverlayMode) {
+                        setIsSidebarCollapsed(true);
+                      }
+                    }}
                   >
                     <span>{item.label}</span>
                     <small>{item.description}</small>
@@ -4624,7 +4630,13 @@ export function AgentConsole({
                       isActive ? styles.sessionItemActive : ""
                     } ${sessionIsRunning ? styles.sessionItemRunning : ""}`}
                     type="button"
-                    onClick={() => setActiveSessionId(session.id)}
+                    onClick={() => {
+                      setActiveSessionId(session.id);
+
+                      if (isSidebarOverlayMode) {
+                        setIsSidebarCollapsed(true);
+                      }
+                    }}
                     title={session.title}
                   >
                     <div className={styles.sessionIndex}>{index + 1}</div>
@@ -4652,6 +4664,10 @@ export function AgentConsole({
                   setIsInfoOpen(false);
                   setSettingsTab("api");
                   setIsSettingsOpen(true);
+
+                  if (isSidebarOverlayMode) {
+                    setIsSidebarCollapsed(true);
+                  }
                 }}
               >
                 <span>设置</span>

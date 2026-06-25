@@ -2561,13 +2561,21 @@
 
 @media (max-width: 1279px) {
   .workspace,
-  .workspaceInspectorCollapsed {
-    grid-template-columns: 264px minmax(0, 1fr);
-  }
-
   .workspaceCollapsed,
+  .workspaceInspectorCollapsed,
   .workspaceCollapsed.workspaceInspectorCollapsed {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    bottom: 14px;
+    z-index: 30;
+    width: min(300px, calc(100vw - 28px));
+    height: auto;
+    max-height: none;
   }
 
   .inspector {
@@ -2609,17 +2617,6 @@
   .workspaceCollapsed,
   .workspaceCollapsed.workspaceInspectorCollapsed {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sidebar {
-    position: fixed;
-    top: 14px;
-    left: 14px;
-    bottom: 14px;
-    z-index: 30;
-    width: min(300px, calc(100vw - 28px));
-    height: auto;
-    max-height: none;
   }
 
   .chatHeader,
