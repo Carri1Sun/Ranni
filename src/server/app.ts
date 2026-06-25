@@ -125,6 +125,10 @@ const workspaceDirectorySchema = z.object({
   path: z.string().trim().min(1),
 });
 
+const autoWorkspaceSchema = z.object({
+  sessionId: z.string().trim().min(1),
+});
+
 class DirectoryPickerCancelledError extends Error {
   constructor() {
     super("用户取消了目录选择。");
@@ -144,6 +148,54 @@ async function assertDirectory(inputPath?: string) {
   }
 
   return directoryPath;
+}
+
+function resolveDefaultWorkspaceBase() {
+  const configuredBase = process.env.RANNI_DEFAULT_WORKSPACE?.trim();
+
+  if (configuredBase) {
+    return path.resolve(configuredBase);
+  }
+
+  const homeDirectory = os.homedir() || process.cwd();
+  const documentsDirectory = path.join(homeDirectory, "Documents");
+
+  // macOS / Windows 以及部分 Linux 桌面环境会有 Documents 目录；没有则退回用户根目录，
+  // 避免在没有文档目录的服务器上凭空创建一个 Documents 文件夹。
+  return path.join(
+    fs.existsSync(documentsDirectory) ? documentsDirectory : homeDirectory,
+    "Ranni-Workspace",
+  );
+}
+
+function sanitizeDirectoryName(value: string) {
+  // sessionId 来自 crypto.randomUUID()（仅含十六进制与连字符），这里做防御性清洗，
+  // 去掉路径分隔符等不安全字符，保证自动创建的目录名跨平台可用。
+  const normalized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+
+  return (
+    normalized
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64) || "session"
+  );
+}
+
+async function createAutoSessionWorkspace(sessionId: string) {
+  const directoryName = `ranni-session-${sanitizeDirectoryName(sessionId)}`;
+  const targetPath = path.join(resolveDefaultWorkspaceBase(), directoryName);
+
+  await fs.promises.mkdir(targetPath, { recursive: true });
+
+  const stats = await fs.promises.stat(targetPath);
+
+  if (!stats.isDirectory()) {
+    throw new Error("无法创建默认工作目录。");
+  }
+
+  return targetPath;
 }
 
 function getQueryPath(value: unknown) {
@@ -589,6 +641,7 @@ export function createServerApp() {
       response.json({
         ok: true,
         result: {
+          defaultWorkspaceBase: resolveDefaultWorkspaceBase(),
           roots,
         },
       });
@@ -627,6 +680,38 @@ export function createServerApp() {
       response.status(400).json({
         error:
           error instanceof Error ? error.message : "目标路径不是可用目录。",
+        ok: false,
+      });
+    }
+  });
+
+  app.post("/api/workspaces/auto-create", async (request, response) => {
+    let payload: z.infer<typeof autoWorkspaceSchema>;
+
+    try {
+      payload = autoWorkspaceSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message, ok: false });
+      return;
+    }
+
+    try {
+      const workspacePath = await createAutoSessionWorkspace(payload.sessionId);
+
+      response.json({
+        ok: true,
+        result: {
+          base: resolveDefaultWorkspaceBase(),
+          path: workspacePath,
+        },
+      });
+    } catch (error) {
+      response.status(500).json({
+        error:
+          error instanceof Error ? error.message : "无法创建默认工作目录。",
         ok: false,
       });
     }

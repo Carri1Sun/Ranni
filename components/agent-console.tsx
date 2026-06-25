@@ -406,9 +406,11 @@ function createAssistantMessage(): ChatMessage {
 }
 
 function createSession({
+  id,
   title = DEFAULT_SESSION_TITLE,
   workspaceRoot,
 }: {
+  id?: string;
   title?: string;
   workspaceRoot: string;
 }): SessionRecord {
@@ -416,7 +418,7 @@ function createSession({
   const now = Date.now();
 
   return {
-    id: createId(),
+    id: id ?? createId(),
     title,
     createdAt: now,
     updatedAt: now,
@@ -2696,6 +2698,7 @@ export function AgentConsole({
     "error" | "idle" | "loading"
   >("idle");
   const [workspacePickerError, setWorkspacePickerError] = useState("");
+  const [defaultWorkspaceBase, setDefaultWorkspaceBase] = useState("");
   const [expandedProviderId, setExpandedProviderId] = useState<ProviderId | "">(
     DEFAULT_SETTINGS.provider,
   );
@@ -2860,6 +2863,7 @@ export function AgentConsole({
           error?: string;
           ok?: boolean;
           result?: {
+            defaultWorkspaceBase?: string;
             roots?: WorkspaceDirectoryEntry[];
           };
         };
@@ -2869,6 +2873,7 @@ export function AgentConsole({
         }
 
         setWorkspacePickerRoots(payload.result?.roots ?? []);
+        setDefaultWorkspaceBase(payload.result?.defaultWorkspaceBase ?? "");
         setWorkspacePickerStatus("idle");
       })
       .catch((error) => {
@@ -3122,6 +3127,31 @@ export function AgentConsole({
     setWorkspacePickerSelectedPath(trimmed);
   };
 
+  const startSessionWithWorkspace = (
+    workspacePath: string,
+    sessionId?: string,
+  ) => {
+    const nextSession = createSession({
+      id: sessionId,
+      workspaceRoot: workspacePath,
+    });
+
+    addWorkspaceDirectory(workspacePath);
+    setSessions((current) =>
+      workspacePickerMode === "initial" && current.length === 0
+        ? [nextSession]
+        : [nextSession, ...current],
+    );
+    setActiveSessionId(nextSession.id);
+    setSelectedRunId("");
+    setSelectedStepId("");
+    setInput("");
+    setActiveView("chat");
+    setWorkspacePickerSelectedPath(workspacePath);
+    setWorkspacePickerStatus("idle");
+    setIsWorkspacePickerOpen(false);
+  };
+
   const confirmWorkspaceSelection = async () => {
     const nextPath = workspacePickerSelectedPath.trim();
 
@@ -3156,28 +3186,51 @@ export function AgentConsole({
         throw new Error(payload.error || "目标目录不可用。");
       }
 
-      const nextSession = createSession({
-        workspaceRoot: payload.result.path,
-      });
-
-      addWorkspaceDirectory(payload.result.path);
-      setSessions((current) =>
-        workspacePickerMode === "initial" && current.length === 0
-          ? [nextSession]
-          : [nextSession, ...current],
-      );
-      setActiveSessionId(nextSession.id);
-      setSelectedRunId("");
-      setSelectedStepId("");
-      setInput("");
-      setActiveView("chat");
-      setWorkspacePickerSelectedPath(payload.result.path);
-      setWorkspacePickerStatus("idle");
-      setIsWorkspacePickerOpen(false);
+      startSessionWithWorkspace(payload.result.path);
     } catch (error) {
       setWorkspacePickerStatus("error");
       setWorkspacePickerError(
         error instanceof Error ? error.message : "目标目录不可用。",
+      );
+    }
+  };
+
+  const createAutoWorkspaceSession = async () => {
+    setWorkspacePickerStatus("loading");
+    setWorkspacePickerError("");
+
+    const sessionId = createId();
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workspaces/auto-create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          base?: string;
+          path?: string;
+        };
+      };
+
+      if (!response.ok || payload.ok === false || !payload.result?.path) {
+        throw new Error(payload.error || "无法创建默认工作目录。");
+      }
+
+      if (payload.result.base) {
+        setDefaultWorkspaceBase(payload.result.base);
+      }
+
+      startSessionWithWorkspace(payload.result.path, sessionId);
+    } catch (error) {
+      setWorkspacePickerStatus("error");
+      setWorkspacePickerError(
+        error instanceof Error ? error.message : "无法创建默认工作目录。",
       );
     }
   };
@@ -4190,6 +4243,29 @@ export function AgentConsole({
             Agent 会以所选目录作为环境运行任务，可能会编辑该目录下的文件，并在该目录中执行命令。
           </p>
 
+          <section className={`${styles.workspacePickerSection} ${styles.workspaceAutoSection}`}>
+            <div className={styles.workspaceAutoCard}>
+              <div className={styles.workspaceAutoText}>
+                <strong>不想选目录？直接开始</strong>
+                <small>
+                  {defaultWorkspaceBase
+                    ? `将在 ${defaultWorkspaceBase}/ranni-session-<session> 下自动创建`
+                    : "将在默认位置自动创建 ranni-session-<session> 工作目录"}
+                </small>
+              </div>
+              <button
+                className={styles.primarySettingsButton}
+                disabled={workspacePickerStatus === "loading"}
+                type="button"
+                onClick={() => {
+                  void createAutoWorkspaceSession();
+                }}
+              >
+                自动开始
+              </button>
+            </div>
+          </section>
+
           <section className={styles.workspacePickerSection}>
             <div className={styles.settingsSectionHeader}>
               <h4>已添加的目录</h4>
@@ -4301,14 +4377,26 @@ export function AgentConsole({
           {isHydrated ? (
             <div className={styles.workspaceEmptyState}>
               <strong>还没有 session</strong>
-              <span>创建 session 前需要先选择执行目录。</span>
-              <button
-                className={styles.primarySettingsButton}
-                type="button"
-                onClick={() => openWorkspacePicker("initial")}
-              >
-                选择执行目录
-              </button>
+              <span>选择一个执行目录，或让 Ranni 自动创建一个工作目录后直接开始。</span>
+              <div className={styles.workspaceEmptyActions}>
+                <button
+                  className={styles.primarySettingsButton}
+                  type="button"
+                  disabled={workspacePickerStatus === "loading"}
+                  onClick={() => {
+                    void createAutoWorkspaceSession();
+                  }}
+                >
+                  自动创建并开始
+                </button>
+                <button
+                  className={styles.secondarySettingsButton}
+                  type="button"
+                  onClick={() => openWorkspacePicker("initial")}
+                >
+                  选择执行目录
+                </button>
+              </div>
             </div>
           ) : (
             "正在加载本地会话..."

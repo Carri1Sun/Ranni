@@ -8,6 +8,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 
 - 多 session 对话，历史 session 保存在本机浏览器 localStorage。
 - 创建 session 前选择执行目录，agent 的文件、终端、research、`.ranni` 记忆都运行在所选目录内。
+- 也可以不选择目录直接开始：Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-<sessionId>` 下自动创建一个独立工作目录作为执行边界。
 - 左侧导航栏包含新建 session、历史 session、会话 / 报告 / 运行详情入口，以及底部设置入口。
 - 中间会话栏支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace，并支持收起。
@@ -67,6 +68,7 @@ OPENAI_COMPUTER_API_KEY=
 OPENAI_COMPUTER_BASE_URL=https://api.openai.com/v1
 OPENAI_COMPUTER_MODEL=gpt-5.5
 AGENT_WORKSPACE_ROOT=.
+RANNI_DEFAULT_WORKSPACE=
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=
 LLM_API_KEY=
@@ -105,6 +107,7 @@ VITE_API_BASE_URL=
 | `LLM_PRESERVE_THINKING` | provider 是否保留 thinking |
 | `TAVILY_API_KEY` | 网页搜索能力所需 key |
 | `AGENT_WORKSPACE_ROOT` | 未传 session workspace 时的后备工作区 |
+| `RANNI_DEFAULT_WORKSPACE` | 不选择目录时自动创建 session 目录的根目录，默认 `~/Documents/Ranni-Workspace` |
 | `BACKEND_HOST` | 后端监听地址，默认 `127.0.0.1` |
 | `BACKEND_PORT` | 后端端口，默认 `3001` |
 | `VITE_API_BASE_URL` | 前端 API 地址；为空时使用同源 `/api` |
