@@ -190,7 +190,7 @@ const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
 const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
-const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
+const PANEL_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -2729,6 +2729,7 @@ export function AgentConsole({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [isInspectorOverlayMode, setIsInspectorOverlayMode] = useState(false);
+  const [isSidebarOverlayMode, setIsSidebarOverlayMode] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2788,8 +2789,8 @@ export function AgentConsole({
         localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
       const storedInspectorCollapsed =
         localStorage.getItem(INSPECTOR_STORAGE_KEY) === "true";
-      const shouldUseInspectorOverlay = window.matchMedia(
-        INSPECTOR_OVERLAY_MEDIA_QUERY,
+      const shouldUsePanelOverlay = window.matchMedia(
+        PANEL_OVERLAY_MEDIA_QUERY,
       ).matches;
       const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
 
@@ -2797,9 +2798,10 @@ export function AgentConsole({
       setActiveSessionId(
         activeSessionExists ? storedActiveSessionId : initialSessions[0]?.id ?? "",
       );
-      setIsSidebarCollapsed(storedSidebarCollapsed);
-      setIsInspectorCollapsed(storedInspectorCollapsed || shouldUseInspectorOverlay);
-      setIsInspectorOverlayMode(shouldUseInspectorOverlay);
+      setIsSidebarCollapsed(storedSidebarCollapsed || shouldUsePanelOverlay);
+      setIsInspectorCollapsed(storedInspectorCollapsed || shouldUsePanelOverlay);
+      setIsSidebarOverlayMode(shouldUsePanelOverlay);
+      setIsInspectorOverlayMode(shouldUsePanelOverlay);
       setWorkspacePickerDirectories(initialWorkspaceDirectories);
       setWorkspacePickerSelectedPath(
         initialSessions[0]?.workspaceRoot ??
@@ -2833,22 +2835,24 @@ export function AgentConsole({
   }, [workspaceRoot]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(INSPECTOR_OVERLAY_MEDIA_QUERY);
-    const syncInspectorLayout = () => {
+    const mediaQuery = window.matchMedia(PANEL_OVERLAY_MEDIA_QUERY);
+    const syncPanelLayout = () => {
       const shouldUseOverlay = mediaQuery.matches;
 
+      setIsSidebarOverlayMode(shouldUseOverlay);
       setIsInspectorOverlayMode(shouldUseOverlay);
 
       if (shouldUseOverlay) {
+        setIsSidebarCollapsed(true);
         setIsInspectorCollapsed(true);
       }
     };
 
-    syncInspectorLayout();
-    mediaQuery.addEventListener("change", syncInspectorLayout);
+    syncPanelLayout();
+    mediaQuery.addEventListener("change", syncPanelLayout);
 
     return () => {
-      mediaQuery.removeEventListener("change", syncInspectorLayout);
+      mediaQuery.removeEventListener("change", syncPanelLayout);
     };
   }, []);
 
@@ -4538,6 +4542,15 @@ export function AgentConsole({
   return (
     <main className={styles.shell}>
       <div className={workspaceClassName}>
+        {!isSidebarCollapsed && isSidebarOverlayMode ? (
+          <button
+            aria-label="关闭导航栏"
+            className={styles.sidebarBackdrop}
+            type="button"
+            onClick={() => setIsSidebarCollapsed(true)}
+          />
+        ) : null}
+
         {!isSidebarCollapsed ? (
           <aside className={styles.sidebar} aria-label="导航栏">
             <div className={styles.brandBlock}>

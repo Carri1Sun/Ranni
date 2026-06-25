@@ -1646,6 +1646,7 @@
 
 .modalBackdrop,
 .infoBackdrop,
+.sidebarBackdrop,
 .inspectorBackdrop {
   position: fixed;
   inset: 0;
@@ -2561,13 +2562,20 @@
 @media (max-width: 1279px) {
   .workspace,
   .workspaceInspectorCollapsed,
-  .workspaceCollapsed {
-    grid-template-columns: 264px minmax(0, 1fr);
-  }
-
   .workspaceCollapsed,
   .workspaceCollapsed.workspaceInspectorCollapsed {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    bottom: 14px;
+    z-index: 30;
+    width: min(300px, calc(100vw - 28px));
+    height: auto;
+    max-height: none;
   }
 
   .inspector {
@@ -2589,27 +2597,6 @@
     padding: 8px;
   }
 
-  .workspace,
-  .workspaceInspectorCollapsed,
-  .workspaceCollapsed {
-    grid-template-columns: 1fr;
-    gap: var(--space-3);
-    overflow: auto;
-  }
-
-  .sidebar {
-    height: auto;
-    max-height: 360px;
-  }
-
-  .sessionList {
-    max-height: 140px;
-  }
-
-  .chatShell {
-    min-height: 640px;
-  }
-
   .traceShell {
     grid-template-columns: 1fr;
   }
@@ -2621,11 +2608,6 @@
   .traceSummaryGrid,
   .kvGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .inspector {
-    grid-template-columns: 1fr;
-    max-height: none;
   }
 }
 
