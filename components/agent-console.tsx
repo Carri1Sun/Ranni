@@ -192,6 +192,7 @@ const SETTINGS_STORAGE_KEY = "ranni:settings";
 const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
 const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const SIDEBAR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
+const PANEL_TRANSITION_MS = 220;
 const PAGE_NAV_ITEMS = [
   {
     description: "当前对话和消息流",
@@ -2738,12 +2739,20 @@ export function AgentConsole({
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
+  const [isSidebarClosing, setIsSidebarClosing] = useState(false);
+  const [isInspectorClosing, setIsInspectorClosing] = useState(false);
   const [isInspectorOverlayMode, setIsInspectorOverlayMode] = useState(false);
   const [isSidebarOverlayMode, setIsSidebarOverlayMode] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTraceActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const sidebarTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const inspectorTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const settingsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -2858,10 +2867,22 @@ export function AgentConsole({
       setIsInspectorOverlayMode(shouldUseInspectorOverlay);
 
       if (shouldUseSidebarOverlay) {
+        if (sidebarTransitionTimerRef.current) {
+          clearTimeout(sidebarTransitionTimerRef.current);
+          sidebarTransitionTimerRef.current = null;
+        }
+
+        setIsSidebarClosing(false);
         setIsSidebarCollapsed(true);
       }
 
       if (shouldUseInspectorOverlay) {
+        if (inspectorTransitionTimerRef.current) {
+          clearTimeout(inspectorTransitionTimerRef.current);
+          inspectorTransitionTimerRef.current = null;
+        }
+
+        setIsInspectorClosing(false);
         setIsInspectorCollapsed(true);
       }
     };
@@ -3046,6 +3067,14 @@ export function AgentConsole({
 
       if (settingsToastTimerRef.current) {
         clearTimeout(settingsToastTimerRef.current);
+      }
+
+      if (sidebarTransitionTimerRef.current) {
+        clearTimeout(sidebarTransitionTimerRef.current);
+      }
+
+      if (inspectorTransitionTimerRef.current) {
+        clearTimeout(inspectorTransitionTimerRef.current);
       }
 
       activeAgentRequestRef.current?.controller.abort();
@@ -3682,6 +3711,82 @@ export function AgentConsole({
     setIsRunning(false);
   };
 
+  const expandSidebar = () => {
+    if (sidebarTransitionTimerRef.current) {
+      clearTimeout(sidebarTransitionTimerRef.current);
+      sidebarTransitionTimerRef.current = null;
+    }
+
+    setIsSidebarClosing(false);
+    setIsSidebarCollapsed(false);
+  };
+
+  const collapseSidebar = () => {
+    if (sidebarTransitionTimerRef.current) {
+      clearTimeout(sidebarTransitionTimerRef.current);
+      sidebarTransitionTimerRef.current = null;
+    }
+
+    if (isSidebarCollapsed) {
+      setIsSidebarClosing(false);
+      return;
+    }
+
+    setIsSidebarClosing(true);
+    sidebarTransitionTimerRef.current = setTimeout(() => {
+      setIsSidebarCollapsed(true);
+      setIsSidebarClosing(false);
+      sidebarTransitionTimerRef.current = null;
+    }, PANEL_TRANSITION_MS);
+  };
+
+  const toggleSidebar = () => {
+    if (isSidebarCollapsed) {
+      expandSidebar();
+      return;
+    }
+
+    collapseSidebar();
+  };
+
+  const expandInspector = () => {
+    if (inspectorTransitionTimerRef.current) {
+      clearTimeout(inspectorTransitionTimerRef.current);
+      inspectorTransitionTimerRef.current = null;
+    }
+
+    setIsInspectorClosing(false);
+    setIsInspectorCollapsed(false);
+  };
+
+  const collapseInspector = () => {
+    if (inspectorTransitionTimerRef.current) {
+      clearTimeout(inspectorTransitionTimerRef.current);
+      inspectorTransitionTimerRef.current = null;
+    }
+
+    if (isInspectorCollapsed) {
+      setIsInspectorClosing(false);
+      return;
+    }
+
+    setIsInspectorClosing(true);
+    inspectorTransitionTimerRef.current = setTimeout(() => {
+      setIsInspectorCollapsed(true);
+      setIsInspectorClosing(false);
+      inspectorTransitionTimerRef.current = null;
+    }, PANEL_TRANSITION_MS);
+  };
+
+  const toggleInspector = () => {
+    if (isInspectorCollapsed) {
+      expandInspector();
+      return;
+    }
+
+    collapseInspector();
+  };
+
   const createNewSession = () => {
     setIsDraftSessionActive(true);
     setDraftWorkspaceRoot("");
@@ -3692,7 +3797,7 @@ export function AgentConsole({
     setActiveView("chat");
 
     if (isSidebarOverlayMode) {
-      setIsSidebarCollapsed(true);
+      collapseSidebar();
     }
   };
 
@@ -4713,8 +4818,10 @@ export function AgentConsole({
     : undefined;
   const workspaceClassName = [
     styles.workspace,
-    isSidebarCollapsed ? styles.workspaceCollapsed : "",
-    isInspectorCollapsed ? styles.workspaceInspectorCollapsed : "",
+    isSidebarCollapsed || isSidebarClosing ? styles.workspaceCollapsed : "",
+    isInspectorCollapsed || isInspectorClosing
+      ? styles.workspaceInspectorCollapsed
+      : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -4725,14 +4832,21 @@ export function AgentConsole({
         {!isSidebarCollapsed && isSidebarOverlayMode ? (
           <button
             aria-label="关闭导航栏"
-            className={styles.sidebarBackdrop}
+            className={`${styles.sidebarBackdrop} ${
+              isSidebarClosing ? styles.panelBackdropClosing : ""
+            }`}
             type="button"
-            onClick={() => setIsSidebarCollapsed(true)}
+            onClick={collapseSidebar}
           />
         ) : null}
 
         {!isSidebarCollapsed ? (
-          <aside className={styles.sidebar} aria-label="导航栏">
+          <aside
+            className={`${styles.sidebar} ${
+              isSidebarClosing ? styles.sidebarClosing : ""
+            }`}
+            aria-label="导航栏"
+          >
             <div className={styles.brandBlock}>
               <img
                 className={styles.brandMark}
@@ -4775,7 +4889,7 @@ export function AgentConsole({
                       }
 
                       if (isSidebarOverlayMode) {
-                        setIsSidebarCollapsed(true);
+                        collapseSidebar();
                       }
                     }}
                   >
@@ -4811,7 +4925,7 @@ export function AgentConsole({
                       setDraftSessionError("");
 
                       if (isSidebarOverlayMode) {
-                        setIsSidebarCollapsed(true);
+                        collapseSidebar();
                       }
                     }}
                     title={session.title}
@@ -4843,7 +4957,7 @@ export function AgentConsole({
                   setIsSettingsOpen(true);
 
                   if (isSidebarOverlayMode) {
-                    setIsSidebarCollapsed(true);
+                    collapseSidebar();
                   }
                 }}
               >
@@ -4861,7 +4975,7 @@ export function AgentConsole({
                 className={styles.iconButton}
                 type="button"
                 aria-label={isSidebarCollapsed ? "展开会话列表" : "隐藏会话列表"}
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
+                onClick={toggleSidebar}
               >
                 {isSidebarCollapsed ? ">" : "<"}
               </button>
@@ -4904,7 +5018,7 @@ export function AgentConsole({
                 aria-label={
                   isInspectorCollapsed ? "展开运行状态栏" : "隐藏运行状态栏"
                 }
-                onClick={() => setIsInspectorCollapsed((current) => !current)}
+                onClick={toggleInspector}
               >
                 {isInspectorCollapsed ? "<" : ">"}
               </button>
@@ -5575,14 +5689,21 @@ export function AgentConsole({
         {!isInspectorCollapsed && isInspectorOverlayMode ? (
           <button
             aria-label="关闭运行状态栏"
-            className={styles.inspectorBackdrop}
+            className={`${styles.inspectorBackdrop} ${
+              isInspectorClosing ? styles.panelBackdropClosing : ""
+            }`}
             type="button"
-            onClick={() => setIsInspectorCollapsed(true)}
+            onClick={collapseInspector}
           />
         ) : null}
 
         {!isInspectorCollapsed ? (
-          <aside className={styles.inspector} aria-label="运行状态栏">
+          <aside
+            className={`${styles.inspector} ${
+              isInspectorClosing ? styles.inspectorClosing : ""
+            }`}
+            aria-label="运行状态栏"
+          >
             <div className={styles.inspectorTopBar}>
               <div>
                 <span>Run Monitor</span>
@@ -5592,7 +5713,7 @@ export function AgentConsole({
                 className={styles.iconButton}
                 type="button"
                 aria-label="隐藏运行状态栏"
-                onClick={() => setIsInspectorCollapsed(true)}
+                onClick={collapseInspector}
               >
                 &gt;
               </button>
