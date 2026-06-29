@@ -21,6 +21,10 @@ Rules:
 - one change per bullet, start with a verb, keep each line short
 - include a Tests line when relevant, for example `Tests: not run (not requested)`
 
+## Branch Rules
+
+This project is currently in the debugging phase and does not need to adhere to strict branching rules, only commit conventions. All current work is being executed on the main branch.
+
 ## Project Notes
 
 - Ranni is a local-first web agent workbench, not an Electron app.
