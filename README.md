@@ -48,6 +48,14 @@ cp .env.example .env.local
 npm run dev
 ```
 
+也可以用封装好的启动脚本，会自动检查依赖、补建 `.env.local` 并按模式启动：
+
+```bash
+./scripts/start.sh            # dev（默认）
+./scripts/start.sh build      # 生产构建
+./scripts/start.sh start      # 生产模式启动（需先 build）
+```
+
 默认地址：
 
 - 前端：`http://127.0.0.1:5173`
