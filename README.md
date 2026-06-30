@@ -9,8 +9,8 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 多 session 对话，历史 session 保存在本机浏览器 localStorage。
 - 点击新建 session 会先进入空白草稿页，发送首条消息时才创建 session。
 - 草稿页可选择执行目录；不选择时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-<sessionId>` 下自动创建一个独立工作目录作为执行边界。
-- 左侧导航栏包含新建 session、历史 session、会话 / 报告 / 运行详情入口，以及底部设置入口。
-- 中间会话栏支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
+- 左侧导航栏包含新建 session、历史 session 和底部设置入口。
+- 中间会话栏包含页面顶部栏、会话 / 报告 / 运行详情、输入区和草稿页状态，支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace、并行任务数量，并支持收起。
 - 最多支持 3 个 agent run 并行；达到上限时会提示同时进行的任务数量已达上限。
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。

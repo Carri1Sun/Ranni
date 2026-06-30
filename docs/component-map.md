@@ -48,6 +48,13 @@
 - session 级 trace 导出，包含未完成 run。
 - 首条消息异步 session 命名。
 
+页面结构映射：
+
+- `main.shell` / `workspace`：工作台。
+- `aside.sidebar`：导航栏。
+- `section.chatShell`：会话栏，包含 `chatHeader`、`draftSession`、会话 / 报告 / 运行详情内容和 `composer`。
+- `aside.inspector`：运行状态栏。
+
 ### `components/agent-console.module.css`
 
 工作台主要样式文件。
