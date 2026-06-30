@@ -14,10 +14,10 @@
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
 | 工作台 | Workspace / Shell | 整个 Ranni 主界面。 |
-| 导航栏 | Sidebar | 左侧栏，包含新会话、历史 session、页面入口、设置入口。 |
+| 导航栏 | Sidebar | 左侧栏，包含新会话、历史 session、设置入口。 |
 | 会话栏 | Chat Panel | 中间主区域，承载当前会话、草稿页、报告页、运行详情页。 |
-| 运行状态栏 | Run Inspector | 右侧栏，展示 run、step、tool、task state、runtime。 |
-| 页面顶部栏 | Chat Header | 会话栏顶部，包含折叠按钮、标题、状态、trace 导出等。 |
+| 运行状态栏 | Run Inspector | 右侧栏，展示会话信息、run、step、tool、task state、runtime。 |
+| 页面顶部栏 | Chat Header | 会话栏顶部，包含折叠按钮、标题、页面导航等。 |
 | 输入区 | Composer | 普通 session 底部输入框。 |
 | 草稿页 | New Session Draft | 点击新会话后出现的空白输入页。 |
 
@@ -26,12 +26,20 @@
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
 | 新会话按钮 | New Session Button | 点击后进入草稿页。 |
-| 页面导航 | Page Nav | 会话、报告、运行详情入口。 |
 | 历史 Session 列表 | Session List | 左侧历史会话列表。 |
 | Session 条目 | Session Item | 历史列表中的单个 session。 |
 | 设置入口 | Settings Entry | 导航栏底部设置按钮。 |
 | 导航栏浮层 | Sidebar Overlay | 窄屏下展开导航栏时的浮层形式。 |
 | 导航栏遮罩 | Sidebar Backdrop | 点击后关闭导航栏浮层。 |
+
+## 页面顶部栏
+
+| 中文名 | 英文名 | 说明 |
+| --- | --- | --- |
+| 侧边栏折叠按钮 | Sidebar Toggle | 折叠 / 展开导航栏。 |
+| 会话标题 | Session Title | 当前 session 标题，草稿态显示默认标题。 |
+| 页面导航 | Page Nav | session 内页面切换下拉：会话、报告、运行详情；切换 session 默认回到会话视图，草稿态隐藏。 |
+| 运行状态栏折叠按钮 | Inspector Toggle | 折叠 / 展开运行状态栏。 |
 
 ## 会话栏
 
@@ -70,6 +78,12 @@
 | 使用默认按钮 | Use Default Button | 草稿模式下清空手动目录，发送后自动创建默认目录。 |
 | 确定按钮 | Confirm Workspace Button | 确认当前选择；草稿模式下只设置目录。 |
 
+## 任务上限弹窗
+
+| 中文名 | 英文名 | 说明 |
+| --- | --- | --- |
+| 任务上限弹窗 | Agent Limit Modal | 并行 agent run 达到上限时的提醒弹窗。 |
+
 ## 报告页
 
 | 中文名 | 英文名 | 说明 |
@@ -93,6 +107,7 @@
 
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
+| 会话信息 | Session Info | 顶部集中区：更新时间、并行任务数量、工作目录、导出 trace；草稿态隐藏导出。 |
 | 当前 Run | Current Run | 当前选中或最近 run 的摘要。 |
 | Task State 面板 | Task State Panel | goal、next action、verification 等。 |
 | Step 进度 | Step Progress | 当前 run 的 step 列表。 |
@@ -118,5 +133,6 @@
 - 导航栏 / 历史 Session 列表 / Session 条目高亮有问题。
 - 草稿页 / 草稿目录提示 / 点击后复用目录选择弹窗。
 - 运行状态栏 / 窄屏浮层 / 关闭后拉宽保持收起。
-- 会话栏 / 页面顶部栏 / 导出 trace 按钮在草稿态隐藏。
+- 运行状态栏 / 会话信息 / 导出 trace 按钮在草稿态隐藏。
+- 页面顶部栏 / 页面导航 / 切换 session 默认回到会话视图。
 - 运行详情页 / Trace 详情面板 / Model Request 区块太高。

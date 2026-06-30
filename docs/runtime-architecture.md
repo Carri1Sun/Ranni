@@ -47,6 +47,7 @@ sequenceDiagram
 
   UI->>API: POST /api/chat
   API->>API: validate body and workspaceRoot
+  API->>API: acquire agent run slot, max 3
   API-->>UI: NDJSON stream starts
   API->>Agent: runAgentTurn(messages, settings, workspaceRoot, signal)
   Agent->>FS: init/sync .ranni task memory
@@ -70,6 +71,23 @@ sequenceDiagram
     end
   end
 ```
+
+## Agent Run 并发限制
+
+前端按 session 维护正在运行的 agent 请求，最多允许 3 个 run 同时进行。当前 session 正在运行时，输入区显示终止按钮；切换到其他 session 后仍可发起新的 run，直到达到并发上限。
+
+服务端在 `/api/chat` 中维护进程内 active run 计数，请求通过 workspace 校验后先尝试获取 run slot。active run 数量达到 3 时，接口返回 `429` JSON：
+
+```json
+{
+  "errorCode": "AGENT_CONCURRENCY_LIMIT",
+  "error": "同时进行的任务数量已达上限，请等待已有任务完成后再试。",
+  "activeCount": 3,
+  "limit": 3
+}
+```
+
+前端识别 `AGENT_CONCURRENCY_LIMIT` 后打开任务上限弹窗。run 完成、失败或取消后，服务端都会释放 slot。
 
 ## Workspace 边界
 
@@ -116,7 +134,7 @@ sequenceDiagram
 
 用户点击终止后：
 
-1. 前端 `AbortController` abort 当前 fetch。
+1. 前端找到当前 session 的 `AbortController`，abort 对应 fetch。
 2. Express 监听 request abort / response close。
 3. `runAgentTurn` 收到 signal。
 4. 模型请求、retry sleep、工具调用、终端子进程检查 signal。

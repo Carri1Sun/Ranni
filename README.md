@@ -11,8 +11,9 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 草稿页可选择执行目录；不选择时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-<sessionId>` 下自动创建一个独立工作目录作为执行边界。
 - 左侧导航栏包含新建 session、历史 session、会话 / 报告 / 运行详情入口，以及底部设置入口。
 - 中间会话栏支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
-- 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace，并支持收起。
-- Agent 运行中可手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
+- 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace、并行任务数量，并支持收起。
+- 最多支持 3 个 agent run 并行；达到上限时会提示同时进行的任务数量已达上限。
+- Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
 - 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；前端可把模型 thinking 作为独立可展开过程卡片展示，并在运行详情中保留完整阅读面板。
@@ -159,7 +160,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
 - `POST /api/workspaces/pick`：调用系统文件夹选择器。
 - `POST /api/session/title`：根据首条消息异步生成 session 标题。
-- `POST /api/chat`：启动一轮 agent 对话，返回 NDJSON 流式事件。
+- `POST /api/chat`：启动一轮 agent 对话，返回 NDJSON 流式事件；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
 - `POST /api/model/test`：测试当前模型 provider 配置。
 - `POST /api/tavily/test`：测试 Tavily 搜索 key。
 - `POST /api/computer-use/test`：测试 Computer use 模块的 OpenAI key 和 `computer` tool 可用性。

@@ -201,16 +201,6 @@
   font-weight: 650;
 }
 
-.sidebarNavSection {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.sidebarNavList {
-  display: grid;
-  gap: var(--space-2);
-}
-
 .sidebarNavButton,
 .sidebarUtilityButton {
   width: 100%;
@@ -243,12 +233,6 @@
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebarNavButtonActive {
-  border-color: rgba(143, 167, 255, 0.34);
-  background: var(--ranni-accent-soft);
-  color: var(--ranni-text-0);
 }
 
 .sidebarFooter {
@@ -442,13 +426,6 @@
   white-space: nowrap;
 }
 
-.chatHeader span,
-.chatMeta {
-  color: var(--ranni-text-2);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
 .headerControls {
   min-width: 0;
   flex: 1;
@@ -459,35 +436,27 @@
   gap: var(--space-3);
 }
 
-.chatMeta {
-  min-width: 0;
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.chatMeta > span {
-  display: inline-flex;
-  align-items: center;
+.pageNavSelect {
   min-height: 30px;
   padding: 0 9px;
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-pill);
   background: var(--ranni-soft-surface);
-  white-space: nowrap;
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni);
 }
 
-.runStateBadge {
-  gap: 7px;
-}
-
-.runStateBadge > span {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--ranni-text-3);
+.pageNavSelect:hover,
+.pageNavSelect:focus-visible {
+  border-color: rgba(143, 167, 255, 0.32);
+  background: var(--ranni-accent-soft);
+  color: var(--ranni-text-0);
+  outline: none;
 }
 
 .headerTraceButton {
@@ -506,33 +475,9 @@
   white-space: nowrap;
 }
 
-.runStateBadgeActive {
-  position: relative;
-  overflow: hidden;
-  border-color: rgba(134, 199, 255, 0.34) !important;
-  color: var(--ranni-info) !important;
-  background: var(--ranni-info-soft) !important;
-}
-
-.runStateBadgeActive > span {
-  background: currentColor;
-  box-shadow: 0 0 14px currentColor;
-  animation: statusPulse 1.2s ease-in-out infinite;
-}
-
-.runStateBadgeActive::after {
-  content: "";
-  position: absolute;
-  inset: -1px auto -1px -45%;
-  width: 42%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.2),
-    transparent
-  );
-  transform: skewX(-18deg);
-  animation: statusSweep 1.8s ease-in-out infinite;
+.inspectorTraceButton {
+  width: 100%;
+  margin-top: var(--space-2);
 }
 
 .feedWrap {
@@ -1834,6 +1779,39 @@
   transform: translate(-50%, -50%);
 }
 
+.agentLimitModal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(460px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-xl);
+  background: var(--ranni-modal-bg);
+  box-shadow: var(--shadow-soft), var(--shadow-inset);
+  backdrop-filter: blur(22px);
+  transform: translate(-50%, -50%);
+}
+
+.agentLimitBody {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.agentLimitBody p {
+  margin: 0;
+  color: var(--ranni-text-1);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.agentLimitActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .processDebugBody {
   min-height: 0;
   display: grid;
@@ -2822,11 +2800,6 @@
     width: 100%;
   }
 
-  .chatMeta {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
   .headerTraceButton {
     width: 100%;
     justify-content: center;
@@ -2865,12 +2838,14 @@
   }
 
   .workspacePickerModal,
+  .agentLimitModal,
   .processDebugModal {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 20px);
   }
 
   .workspacePickerBody,
+  .agentLimitBody,
   .processDebugBody {
     padding: var(--space-4);
   }

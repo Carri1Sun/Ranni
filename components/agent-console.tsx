@@ -168,9 +168,22 @@ type ActiveAgentRequest = {
   stopped: boolean;
 };
 
+type ActiveAgentRunState = Record<
+  string,
+  {
+    runId?: string;
+    startedAt: number;
+  }
+>;
+
 type ActivityDebugTarget = {
   activityId: string;
   sessionId: string;
+};
+
+type AgentLimitNotice = {
+  activeCount: number;
+  limit: number;
 };
 
 const STARTER_PROMPTS = [
@@ -183,6 +196,8 @@ const INITIAL_ASSISTANT_MESSAGE =
   "我可以读取文件、搜索网页、调用工具并整理研究报告。给我一个主题，或让我先检查当前工作区。";
 
 const DEFAULT_SESSION_TITLE = "新研究会话";
+const AGENT_CONCURRENCY_LIMIT_CODE = "AGENT_CONCURRENCY_LIMIT";
+const MAX_CONCURRENT_AGENT_RUNS = 3;
 const SESSION_TITLE_MAX_LENGTH = 15;
 const SESSIONS_STORAGE_KEY = "next-agent:sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
@@ -1051,6 +1066,30 @@ function createErrorDisplay(message: string): ActivityDisplay {
     meta: "error",
     source: "fallback",
     title: "运行出现错误",
+  };
+}
+
+async function readChatErrorPayload(response: Response) {
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+
+  if (contentType.includes("application/json") && text.trim()) {
+    try {
+      return JSON.parse(text) as {
+        activeCount?: number;
+        error?: string;
+        errorCode?: string;
+        limit?: number;
+      };
+    } catch {
+      return {
+        error: text,
+      };
+    }
+  }
+
+  return {
+    error: text,
   };
 }
 
@@ -2693,7 +2732,10 @@ export function AgentConsole({
   const [draftSessionError, setDraftSessionError] = useState("");
   const [activityDebugTarget, setActivityDebugTarget] =
     useState<ActivityDebugTarget | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const [activeAgentRuns, setActiveAgentRuns] =
+    useState<ActiveAgentRunState>({});
+  const [agentLimitNotice, setAgentLimitNotice] =
+    useState<AgentLimitNotice | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
   const [workspacePickerMode, setWorkspacePickerMode] =
@@ -2758,7 +2800,11 @@ export function AgentConsole({
   const settingsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const activeAgentRequestRef = useRef<ActiveAgentRequest | null>(null);
+  const activeSessionIdRef = useRef(activeSessionId);
+  const isDraftSessionActiveRef = useRef(isDraftSessionActive);
+  const activeAgentRequestsRef = useRef<Map<string, ActiveAgentRequest>>(
+    new Map(),
+  );
 
   const isNearBottom = (node: HTMLDivElement) =>
     node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
@@ -3014,6 +3060,14 @@ export function AgentConsole({
     sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    isDraftSessionActiveRef.current = isDraftSessionActive;
+  }, [isDraftSessionActive]);
+
+  useEffect(() => {
     const node = feedRef.current;
 
     if (node && activeView === "chat" && sessions.length > 0) {
@@ -3077,7 +3131,10 @@ export function AgentConsole({
         clearTimeout(inspectorTransitionTimerRef.current);
       }
 
-      activeAgentRequestRef.current?.controller.abort();
+      activeAgentRequestsRef.current.forEach((request) => {
+        request.controller.abort();
+      });
+      activeAgentRequestsRef.current.clear();
     };
   }, []);
 
@@ -3662,29 +3719,73 @@ export function AgentConsole({
     }));
   };
 
+  const showAgentLimitNotice = (
+    activeCount = MAX_CONCURRENT_AGENT_RUNS,
+    limit = MAX_CONCURRENT_AGENT_RUNS,
+  ) => {
+    setAgentLimitNotice({
+      activeCount,
+      limit,
+    });
+  };
+
+  const setActiveAgentRun = (sessionId: string, runId?: string) => {
+    setActiveAgentRuns((current) => ({
+      ...current,
+      [sessionId]: {
+        runId,
+        startedAt: current[sessionId]?.startedAt ?? Date.now(),
+      },
+    }));
+  };
+
+  const clearActiveAgentRun = (sessionId: string) => {
+    setActiveAgentRuns((current) => {
+      if (!current[sessionId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
   const applyTraceEvent = (sessionId: string, event: StreamEvent) => {
     updateSession(sessionId, (session) => applyTraceEventToSession(session, event));
 
     if (event.type === "run_started") {
-      if (activeAgentRequestRef.current?.sessionId === sessionId) {
-        activeAgentRequestRef.current.runId = event.runId;
+      const activeRequest = activeAgentRequestsRef.current.get(sessionId);
+
+      if (activeRequest) {
+        activeRequest.runId = event.runId;
+        setActiveAgentRun(sessionId, event.runId);
       }
 
-      setSelectedRunId(event.runId);
-      setSelectedStepId("");
+      if (
+        !isDraftSessionActiveRef.current &&
+        sessionId === activeSessionIdRef.current
+      ) {
+        setSelectedRunId(event.runId);
+        setSelectedStepId("");
+      }
       return;
     }
 
-    if (event.type === "step_started") {
+    if (
+      event.type === "step_started" &&
+      !isDraftSessionActiveRef.current &&
+      sessionId === activeSessionIdRef.current
+    ) {
       setSelectedRunId(event.runId);
       setSelectedStepId(event.stepId);
     }
   };
 
-  const stopAgentRun = () => {
-    const activeRequest = activeAgentRequestRef.current;
+  const stopAgentRun = (sessionId: string) => {
+    const activeRequest = activeAgentRequestsRef.current.get(sessionId);
 
-    if (!activeRequest || !isRunning) {
+    if (!activeRequest) {
       return;
     }
 
@@ -3708,7 +3809,8 @@ export function AgentConsole({
       },
     );
     markRunningRunCancelled(activeRequest.sessionId, activeRequest.runId);
-    setIsRunning(false);
+    activeAgentRequestsRef.current.delete(sessionId);
+    clearActiveAgentRun(sessionId);
   };
 
   const expandSidebar = () => {
@@ -4083,7 +4185,23 @@ export function AgentConsole({
 
     const trimmed = messageText.trim();
 
-    if (!trimmed || isRunning) {
+    if (!trimmed) {
+      return;
+    }
+
+    if (
+      !isDraftSessionActive &&
+      activeSession &&
+      activeAgentRequestsRef.current.has(activeSession.id)
+    ) {
+      return;
+    }
+
+    if (activeAgentRequestsRef.current.size >= MAX_CONCURRENT_AGENT_RUNS) {
+      showAgentLimitNotice(
+        activeAgentRequestsRef.current.size,
+        MAX_CONCURRENT_AGENT_RUNS,
+      );
       return;
     }
 
@@ -4109,6 +4227,19 @@ export function AgentConsole({
     }
 
     const sessionId = sessionForRun.id;
+
+    if (activeAgentRequestsRef.current.has(sessionId)) {
+      return;
+    }
+
+    if (activeAgentRequestsRef.current.size >= MAX_CONCURRENT_AGENT_RUNS) {
+      showAgentLimitNotice(
+        activeAgentRequestsRef.current.size,
+        MAX_CONCURRENT_AGENT_RUNS,
+      );
+      return;
+    }
+
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
@@ -4118,13 +4249,14 @@ export function AgentConsole({
       sessionForRun.title === DEFAULT_SESSION_TITLE &&
       !sessionForRun.messages.some((message) => message.role === "user");
     const abortController = new AbortController();
-
-    activeAgentRequestRef.current = {
+    const activeRequest: ActiveAgentRequest = {
       controller: abortController,
       sessionId,
       stopped: false,
     };
-    setIsRunning(true);
+
+    activeAgentRequestsRef.current.set(sessionId, activeRequest);
+    setActiveAgentRun(sessionId);
     setInput("");
 
     try {
@@ -4179,8 +4311,17 @@ export function AgentConsole({
       });
 
       if (!response.ok || !response.body) {
-        const text = await response.text();
-        throw new Error(text || "接口请求失败");
+        const payload = await readChatErrorPayload(response);
+
+        if (payload.errorCode === AGENT_CONCURRENCY_LIMIT_CODE) {
+          showAgentLimitNotice(
+            payload.activeCount ?? activeAgentRequestsRef.current.size,
+            payload.limit ?? MAX_CONCURRENT_AGENT_RUNS,
+          );
+          return;
+        }
+
+        throw new Error(payload.error || "接口请求失败");
       }
 
       const reader = response.body.getReader();
@@ -4474,7 +4615,7 @@ export function AgentConsole({
         }
       }
     } catch (caughtError) {
-      const wasStopped = activeAgentRequestRef.current?.stopped;
+      const wasStopped = activeRequest.stopped;
       const isAbortError =
         caughtError instanceof DOMException && caughtError.name === "AbortError";
 
@@ -4486,11 +4627,13 @@ export function AgentConsole({
         caughtError instanceof Error ? caughtError.message : "请求失败";
       appendActivity(sessionId, "error", "错误", message);
     } finally {
-      if (activeAgentRequestRef.current?.controller === abortController) {
-        activeAgentRequestRef.current = null;
+      if (
+        activeAgentRequestsRef.current.get(sessionId)?.controller ===
+        abortController
+      ) {
+        activeAgentRequestsRef.current.delete(sessionId);
+        clearActiveAgentRun(sessionId);
       }
-
-      setIsRunning(false);
     }
   };
 
@@ -4773,11 +4916,13 @@ export function AgentConsole({
     provider: selectedProvider.provider,
   };
   const inspectorRuntime = selectedRun?.runtime ?? settingsRuntimeInfo;
-  const runningSessionId = isRunning
-    ? activeAgentRequestRef.current?.sessionId
+  const activeAgentRunCount = Object.keys(activeAgentRuns).length;
+  const currentSessionRun = !isDraftSessionActive
+    ? activeAgentRuns[activeSession.id]
     : undefined;
+  const currentSessionIsRunning = Boolean(currentSessionRun);
   const latestProcessActivityId =
-    !isDraftSessionActive && runningSessionId === activeSession.id
+    !isDraftSessionActive && currentSessionIsRunning
       ? [...activeSession.feed]
           .reverse()
           .find((item) => item.kind === "activity")?.id
@@ -4870,36 +5015,6 @@ export function AgentConsole({
               </button>
             </div>
 
-            <section className={styles.sidebarNavSection}>
-              <div className={styles.sidebarLabel}>页面</div>
-              <div className={styles.sidebarNavList}>
-                {PAGE_NAV_ITEMS.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`${styles.sidebarNavButton} ${
-                      activeView === item.id ? styles.sidebarNavButtonActive : ""
-                    }`}
-                    type="button"
-                    onClick={() => {
-                      setActiveView(item.id);
-
-                      if (item.id !== "chat") {
-                        setIsDraftSessionActive(false);
-                        setDraftSessionError("");
-                      }
-
-                      if (isSidebarOverlayMode) {
-                        collapseSidebar();
-                      }
-                    }}
-                  >
-                    <span>{item.label}</span>
-                    <small>{item.description}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-
             <div className={styles.sidebarLabel}>
               {`历史 Session · ${sessions.length}`}
             </div>
@@ -4909,7 +5024,7 @@ export function AgentConsole({
                 const isActive =
                   !isDraftSessionActive && session.id === activeSession.id;
                 const sessionIsRunning =
-                  runningSessionId === session.id ||
+                  Boolean(activeAgentRuns[session.id]) ||
                   session.runs.some((run) => run.status === "running");
 
                 return (
@@ -4923,6 +5038,7 @@ export function AgentConsole({
                       setActiveSessionId(session.id);
                       setIsDraftSessionActive(false);
                       setDraftSessionError("");
+                      setActiveView("chat");
 
                       if (isSidebarOverlayMode) {
                         collapseSidebar();
@@ -4982,35 +5098,21 @@ export function AgentConsole({
               <h2>{isDraftSessionActive ? DEFAULT_SESSION_TITLE : activeSession.title}</h2>
             </div>
             <div className={styles.headerControls}>
-              <div className={styles.chatMeta}>
-                <span>
-                  {isDraftSessionActive
-                    ? "草稿"
-                    : formatSessionTime(activeSession.updatedAt)}
-                </span>
-                <span
-                  className={`${styles.runStateBadge} ${
-                    isRunning ? styles.runStateBadgeActive : ""
-                  }`}
-                >
-                  <span />
-                  {isRunning ? "执行中" : "空闲"}
-                </span>
-                <span>
-                  {isProviderReady ? settingsRuntimeInfo.provider : "模型未连接"}
-                </span>
-                <span>{workspaceLabel}</span>
-              </div>
               {!isDraftSessionActive ? (
-                <button
-                  className={styles.headerTraceButton}
-                  type="button"
-                  onClick={() => exportSessionTrace(activeSession)}
+                <select
+                  className={styles.pageNavSelect}
+                  value={activeView}
+                  onChange={(event) => {
+                    setActiveView(event.target.value as ViewMode);
+                  }}
+                  aria-label="切换页面"
                 >
-                  {sessionTraceActionState?.sessionId === activeSession.id
-                    ? "已导出 trace"
-                    : "导出 trace"}
-                </button>
+                  {PAGE_NAV_ITEMS.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
               ) : null}
               <button
                 className={styles.iconButton}
@@ -5051,7 +5153,6 @@ export function AgentConsole({
                         event.preventDefault();
 
                         if (
-                          !isRunning &&
                           workspacePickerStatus !== "loading" &&
                           input.trim()
                         ) {
@@ -5150,7 +5251,8 @@ export function AgentConsole({
                       );
                     const ActivityIcon = getProcessIconComponent(display.icon);
                     const isLatestActive =
-                      isRunning && latestProcessActivityId === item.id;
+                      currentSessionIsRunning &&
+                      latestProcessActivityId === item.id;
 
                     if (item.type === "thinking") {
                       return (
@@ -5658,17 +5760,17 @@ export function AgentConsole({
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
 
-                      if (!isRunning && input.trim()) {
+                      if (!currentSessionIsRunning && input.trim()) {
                         void sendMessage(input);
                       }
                     }
                   }}
                 />
-                {isRunning ? (
+                {currentSessionIsRunning ? (
                   <button
                     className={`${styles.submitButton} ${styles.stopButton}`}
                     type="button"
-                    onClick={stopAgentRun}
+                    onClick={() => stopAgentRun(activeSession.id)}
                   >
                     停止
                   </button>
@@ -5719,7 +5821,44 @@ export function AgentConsole({
               </button>
             </div>
 
-          <section className={styles.inspectorSection}>
+            <section className={styles.inspectorSection}>
+              <div className={styles.inspectorHeader}>
+                <h3>会话信息</h3>
+              </div>
+              <div className={styles.inspectorMetrics}>
+                <div>
+                  <span>更新时间</span>
+                  <strong>
+                    {isDraftSessionActive
+                      ? "草稿"
+                      : formatSessionTime(activeSession.updatedAt)}
+                  </strong>
+                </div>
+                <div>
+                  <span>并行任务</span>
+                  <strong>
+                    {activeAgentRunCount}/{MAX_CONCURRENT_AGENT_RUNS}
+                  </strong>
+                </div>
+                <div>
+                  <span>工作目录</span>
+                  <strong>{workspaceLabel}</strong>
+                </div>
+              </div>
+              {!isDraftSessionActive ? (
+                <button
+                  className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
+                  type="button"
+                  onClick={() => exportSessionTrace(activeSession)}
+                >
+                  {sessionTraceActionState?.sessionId === activeSession.id
+                    ? "已导出 trace"
+                    : "导出 trace"}
+                </button>
+              ) : null}
+            </section>
+
+            <section className={styles.inspectorSection}>
             <div className={styles.inspectorHeader}>
               <h3>Current Run</h3>
               <span
@@ -6641,6 +6780,55 @@ export function AgentConsole({
                 ) : null}
               </div>
             </section>
+          </section>
+        </>
+      ) : null}
+
+      {agentLimitNotice ? (
+        <>
+          <button
+            aria-label="关闭任务上限提醒"
+            className={styles.modalBackdrop}
+            type="button"
+            onClick={() => setAgentLimitNotice(null)}
+          />
+
+          <section
+            aria-labelledby="agent-limit-title"
+            className={styles.agentLimitModal}
+            role="dialog"
+            aria-modal="true"
+          >
+            <header className={styles.settingsHeader}>
+              <div>
+                <p>Concurrency Limit</p>
+                <h3 id="agent-limit-title">并行任务已达上限</h3>
+              </div>
+              <button
+                className={styles.iconButton}
+                type="button"
+                onClick={() => setAgentLimitNotice(null)}
+              >
+                ×
+              </button>
+            </header>
+
+            <div className={styles.agentLimitBody}>
+              <p>
+                同时进行的任务数量已达上限。当前正在运行{" "}
+                {agentLimitNotice.activeCount} 个任务，最多支持{" "}
+                {agentLimitNotice.limit} 个。
+              </p>
+              <div className={styles.agentLimitActions}>
+                <button
+                  className={styles.primarySettingsButton}
+                  type="button"
+                  onClick={() => setAgentLimitNotice(null)}
+                >
+                  知道了
+                </button>
+              </div>
+            </div>
           </section>
         </>
       ) : null}

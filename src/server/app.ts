@@ -23,6 +23,8 @@ const execFileAsync = promisify(execFile);
 const SYSTEM_PICKER_TIMEOUT_MS = 120_000;
 const SESSION_TITLE_MAX_LENGTH = 15;
 const SESSION_TITLE_PROMPT_MAX_LENGTH = 4000;
+const AGENT_CONCURRENCY_LIMIT_CODE = "AGENT_CONCURRENCY_LIMIT";
+const MAX_CONCURRENT_AGENT_RUNS = 3;
 
 const optionalSecretSchema = z
   .string()
@@ -586,6 +588,7 @@ function parseJsonObjectFromText(text: string) {
 
 export function createServerApp() {
   const app = express();
+  let activeAgentRunCount = 0;
 
   app.use(express.json({ limit: "1mb" }));
   app.use((request, response, next) => {
@@ -915,6 +918,17 @@ export function createServerApp() {
       return;
     }
 
+    if (activeAgentRunCount >= MAX_CONCURRENT_AGENT_RUNS) {
+      response.status(429).json({
+        activeCount: activeAgentRunCount,
+        error: "同时进行的任务数量已达上限，请等待已有任务完成后再试。",
+        errorCode: AGENT_CONCURRENCY_LIMIT_CODE,
+        limit: MAX_CONCURRENT_AGENT_RUNS,
+      });
+      return;
+    }
+
+    activeAgentRunCount += 1;
     response.status(200);
     response.setHeader(
       "Content-Type",
@@ -961,6 +975,7 @@ export function createServerApp() {
           error instanceof Error ? error.message : "Agent 执行失败，请重试。",
       });
     } finally {
+      activeAgentRunCount = Math.max(0, activeAgentRunCount - 1);
       completed = true;
       request.off("aborted", abortRun);
       response.off("close", abortRun);
