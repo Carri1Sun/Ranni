@@ -480,6 +480,11 @@
   margin-top: var(--space-2);
 }
 
+.inspectorExportActions {
+  display: grid;
+  gap: var(--space-2);
+}
+
 .feedWrap {
   position: relative;
   min-height: 0;
@@ -727,6 +732,59 @@
   border-radius: var(--radius-sm);
   background: var(--ranni-secondary-bg);
   color: var(--ranni-text-2);
+}
+
+.runLifecycleLine {
+  align-self: center;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px auto;
+  color: var(--ranni-text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runLifecycleLine svg {
+  flex: none;
+  color: var(--ranni-text-3);
+}
+
+.runLifecycleLineError,
+.runLifecycleLineError svg {
+  color: var(--ranni-danger);
+}
+
+.thinkingInline {
+  align-self: stretch;
+  flex: none;
+  margin: 0 7%;
+  color: var(--ranni-text-2);
+}
+
+.thinkingInline pre {
+  margin: 0;
+  overflow: visible;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.thinkingInlineActive pre::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 3px;
+  border-radius: var(--radius-xs);
+  background: currentColor;
+  opacity: 0.5;
+  vertical-align: -0.12em;
+  animation: statusPulse 1s ease-in-out infinite;
 }
 
 .activityDisclosure {
@@ -1180,6 +1238,12 @@
 
 .traceSummaryGrid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.traceActionBar {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
 }
 
 .summaryCard,
@@ -2806,7 +2870,8 @@
   }
 
   .message,
-  .activity {
+  .activity,
+  .thinkingInline {
     max-width: 100%;
     margin: 0;
   }

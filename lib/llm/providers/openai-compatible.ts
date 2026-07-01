@@ -101,6 +101,39 @@ type OpenAIChatResponse = {
   };
 };
 
+type OpenAIChatStreamChunk = {
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      role?: string;
+      tool_calls?: Array<
+        OpenAIToolCall & {
+          index?: number;
+        }
+      >;
+    };
+    finish_reason?: string | null;
+    index?: number;
+  }>;
+  id?: string;
+  model?: string;
+  request_id?: string | null;
+  usage?: OpenAIChatResponse["usage"];
+};
+
+type StreamingToolCall = {
+  arguments: string;
+  id?: string;
+  index: number;
+  name: string;
+  type?: "function";
+};
+
+type OpenAIToolCallDelta = OpenAIToolCall & {
+  index?: number;
+};
+
 type RuntimeConfig = {
   apiKey: string;
   baseUrl: string;
@@ -692,12 +725,216 @@ function getRequestId(response: Response, payload: OpenAIChatResponse) {
   );
 }
 
+function readSseDataBlocks(buffer: string) {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const parts = normalized.split("\n\n");
+
+  return {
+    blocks: parts.slice(0, -1),
+    rest: parts.at(-1) ?? "",
+  };
+}
+
+function parseSseData(block: string) {
+  const lines = block.split("\n");
+  const dataLines = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart());
+
+  return dataLines.length > 0 ? dataLines.join("\n") : "";
+}
+
+function appendToolCallDelta(
+  toolCalls: Map<number, StreamingToolCall>,
+  delta: OpenAIToolCallDelta,
+) {
+  const index = typeof delta.index === "number" ? delta.index : 0;
+  const current: StreamingToolCall =
+    toolCalls.get(index) ??
+    {
+      arguments: "",
+      index,
+      name: "",
+    };
+
+  if (delta.id) {
+    current.id = delta.id;
+  }
+
+  if (delta.type === "function") {
+    current.type = "function";
+  }
+
+  if (delta.function?.name) {
+    current.name += delta.function.name;
+  }
+
+  if (delta.function?.arguments) {
+    current.arguments += delta.function.arguments;
+  }
+
+  toolCalls.set(index, current);
+}
+
+function toOpenAIToolCalls(toolCalls: Map<number, StreamingToolCall>) {
+  return [...toolCalls.values()]
+    .sort((left, right) => left.index - right.index)
+    .filter((toolCall) => toolCall.name || toolCall.arguments || toolCall.id)
+    .map((toolCall) => ({
+      id: toolCall.id?.trim() || crypto.randomUUID(),
+      type: "function" as const,
+      function: {
+        name: toolCall.name.trim() || "unknown_tool",
+        arguments: toolCall.arguments || "{}",
+      },
+    }));
+}
+
+async function readStreamingResponse({
+  modelConfig,
+  onThinkingDelta,
+  options,
+  request,
+  response,
+  runtime,
+  signal,
+}: {
+  modelConfig?: ModelConnectionConfig;
+  onThinkingDelta?: (payload: { delta: string }) => void;
+  options: OpenAICompatibleProviderOptions;
+  request: TraceModelRequest;
+  response: Response;
+  runtime: RuntimeConfig;
+  signal?: AbortSignal;
+}): Promise<CreateAgentMessageResult> {
+  const reader = response.body?.getReader();
+
+  if (!reader) {
+    throw new Error("流式响应没有可读取的 body。");
+  }
+
+  const decoder = new TextDecoder();
+  const toolCalls = new Map<number, StreamingToolCall>();
+  let buffer = "";
+  let content = "";
+  let done = false;
+  let finishReason: string | null = null;
+  let id = "";
+  let model = "";
+  let reasoningContent = "";
+  let usage: OpenAIChatResponse["usage"] | undefined;
+
+  const processData = (data: string) => {
+    if (!data) {
+      return;
+    }
+
+    if (data === "[DONE]") {
+      done = true;
+      return;
+    }
+
+    const chunk = JSON.parse(data) as OpenAIChatStreamChunk;
+    id ||= chunk.id?.trim() || "";
+    model ||= chunk.model?.trim() || "";
+
+    if (chunk.usage) {
+      usage = chunk.usage;
+    }
+
+    const choice = chunk.choices?.[0];
+
+    if (!choice) {
+      return;
+    }
+
+    if (choice.finish_reason) {
+      finishReason = choice.finish_reason;
+    }
+
+    const delta = choice.delta;
+
+    if (!delta) {
+      return;
+    }
+
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      reasoningContent += delta.reasoning_content;
+      onThinkingDelta?.({ delta: delta.reasoning_content });
+    }
+
+    if (typeof delta.content === "string" && delta.content) {
+      content += delta.content;
+    }
+
+    for (const toolCall of delta.tool_calls ?? []) {
+      appendToolCallDelta(toolCalls, toolCall);
+    }
+  };
+
+  while (!done) {
+    throwIfAborted(signal);
+
+    const { done: readerDone, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !readerDone });
+    const { blocks, rest } = readSseDataBlocks(buffer);
+    buffer = rest;
+
+    for (const block of blocks) {
+      processData(parseSseData(block));
+    }
+
+    if (readerDone) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    processData(parseSseData(buffer));
+  }
+
+  const responseMessage = {
+    role: "assistant",
+    content: content || null,
+    ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+    ...(toolCalls.size > 0 ? { tool_calls: toOpenAIToolCalls(toolCalls) } : {}),
+  } satisfies NonNullable<OpenAIChatResponse["choices"]>[number]["message"];
+  const messageId = id || crypto.randomUUID();
+  const responseModel = model || runtime.model;
+  const requestId =
+    response.headers.get("x-request-id") ??
+    response.headers.get("request-id") ??
+    response.headers.get("x-dashscope-request-id") ??
+    null;
+
+  return {
+    message: {
+      content: normalizeAssistantBlocks(responseMessage),
+      id: messageId,
+      model: responseModel,
+      role: "assistant",
+    },
+    request,
+    response: {
+      content: [responseMessage],
+      id: messageId,
+      model: responseModel,
+      requestId,
+      role: responseMessage.role ?? "assistant",
+      stopReason: finishReason,
+      usage: toUsageSnapshot(usage, getRuntimeInfo(options, modelConfig)),
+    } satisfies TraceModelResponse,
+  } satisfies CreateAgentMessageResult;
+}
+
 export function createOpenAICompatibleProvider(
   options: OpenAICompatibleProviderOptions,
 ) {
   async function createMessage({
     messages,
     modelConfig,
+    onThinkingDelta,
     onRetry,
     signal,
     system,
@@ -718,6 +955,11 @@ export function createOpenAICompatibleProvider(
       system,
       tools,
     });
+    const shouldStream = Boolean(onThinkingDelta);
+    const actualRequestBody = {
+      ...requestBody,
+      ...(shouldStream ? { stream: true } : {}),
+    };
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       throwIfAborted(signal);
@@ -729,12 +971,24 @@ export function createOpenAICompatibleProvider(
             Authorization: `Bearer ${runtime.apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify(actualRequestBody),
           signal,
         });
 
         if (!response.ok) {
           throw await parseErrorResponse(response);
+        }
+
+        if (shouldStream) {
+          return await readStreamingResponse({
+            modelConfig,
+            onThinkingDelta,
+            options,
+            request,
+            response,
+            runtime,
+            signal,
+          });
         }
 
         const payload = (await response.json()) as OpenAIChatResponse;

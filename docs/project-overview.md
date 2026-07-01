@@ -39,12 +39,16 @@ Ranni 的当前产品模型可以概括为五件事：
 - 展示用户消息、assistant 回复和运行活动。
 - 在草稿页状态下展示新 session 输入和执行目录选择。
 - 在会话 / 报告 / 运行详情之间切换。
-- 运行活动以过程项展示，覆盖 run 生命周期、异常 step、task state、工具调用、工具结果、research state 和错误。
+- 运行活动以轻量过程展示，覆盖 run 生命周期、异常 step、task state、工具调用、工具结果、research state 和错误。Run 生命周期只显示一行弱提示。
+- 模型 thinking 以正文形式流式展示；agent 会等待 thinking delta 发完后再发送后续过程事件，完整 thinking 在模型输出完成后进入 session trace。
+- 最终 assistant 回复通过 `assistant_delta` 流式进入同一条消息，最终 `assistant` event 负责完整内容校准和 trace 持久化。
 - 工具调用会先用本地规则即时生成短标题、说明、图标和 meta，再异步请求模型改写为更自然的中文文案。
 - 支持 Markdown 渲染。
 - 支持复制 assistant 消息。
 - 支持导出 assistant 消息为 `.md`。
 - 支持导出完整 `trace.txt`。
+- 支持导出前端流事件顺序，用于排查接收顺序和展示顺序。
+- 支持导出消息流 UI 顺序，用于对照最终展示列表。
 - 支持 `Enter` 发送、`Shift + Enter` 换行。
 - 当前 session 运行中时，输入区会变成终止按钮。
 - 最多支持 3 个 agent run 并行；达到上限时弹出任务数量上限提醒。
@@ -118,14 +122,16 @@ Deep research 任务会额外强调动态研究地图、正文核验、证据记
 
 会话过程项按语义分为七类：
 
-- `step`：run 开始/结束，以及失败或终止的 step；成功的 step 开始/完成不进入默认会话流。
+- `step`：run 开始/结束，以及失败或终止的 step；在会话流中显示为一行弱提示。
 - `state`：`task_state` 中 current mode、next action、verification 的变化。
-- `thinking`：模型返回的 thinking 会以独立会话过程卡片展示，可展开阅读、复制，并继续关联到对应 run / step trace。
+- `thinking`：模型返回的 thinking 会先通过 `thinking_delta` 流式展示正文；后端会补齐缺失的最终 thinking 后缀，并等待 delta 发完后再发送后续过程项。
 - `status`：模型重试、运行提示等短状态。
 - `tool_call`：工具调用意图，显示图标、短标题、目标和补充 meta。
 - `tool_result`：工具执行结果，显示成功/失败、耗时和结果摘要。
 - `research`：research notebook 状态更新。
 - `error`：接口、模型或工具层错误。
+
+assistant 回复作为会话消息展示。最终整体回复会先通过 `assistant_delta` 流式更新同一条消息，完整 `assistant` event 用于最终内容校准。
 
 展示层默认隐藏原始 JSON 和长结果，只保留可读摘要。完整信息不丢弃，仍保存在 run trace 中，由 Debug info 浮窗按当前过程项关联展示。
 

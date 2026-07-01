@@ -186,6 +186,46 @@ type AgentLimitNotice = {
   limit: number;
 };
 
+type ThinkingStreamState = Record<
+  string,
+  {
+    activityId?: string;
+    content: string;
+    runId: string;
+    stepId: string;
+    stepIndex: number;
+    updatedAt: number;
+  }
+>;
+
+type ThinkingStreamRuntime = {
+  activityId?: string;
+  content: string;
+  finalContent?: string;
+  pending: string;
+  runId: string;
+  sessionId: string;
+  stepId: string;
+  stepIndex: number;
+  timerId?: ReturnType<typeof setTimeout>;
+  updatedAt: number;
+};
+
+type StreamEventLogEntry = {
+  action?: string;
+  at: string;
+  detail?: Record<string, unknown>;
+  event?: Record<string, unknown>;
+  phase: "display" | "handled" | "received" | "system";
+  sequence: number;
+  sessionId: string;
+};
+
+const THINKING_STREAM_TICK_MS = 24;
+const THINKING_STREAM_MIN_CHARS = 6;
+const THINKING_STREAM_MAX_CHARS = 42;
+const STREAM_EVENT_LOG_LIMIT = 2400;
+
 const STARTER_PROMPTS = [
   "先帮我列出当前工作目录的文件结构。",
   "读取 README，如果没有就创建一个项目说明初稿。",
@@ -2283,6 +2323,48 @@ function getCompletedStepCount(run?: TraceRun) {
   return run.steps.filter((step) => step.status !== "running").length;
 }
 
+function createThinkingStreamKey({
+  runId,
+  sessionId,
+  stepId,
+}: {
+  runId: string;
+  sessionId: string;
+  stepId: string;
+}) {
+  return `${sessionId}:${runId}:${stepId}`;
+}
+
+function splitThinkingChunk(content: string, size: number) {
+  const characters = Array.from(content);
+
+  return {
+    chunk: characters.slice(0, size).join(""),
+    rest: characters.slice(size).join(""),
+  };
+}
+
+function getThinkingStreamChunkSize(pending: string) {
+  const length = Array.from(pending).length;
+
+  if (length <= THINKING_STREAM_MIN_CHARS) {
+    return length;
+  }
+
+  return Math.min(
+    THINKING_STREAM_MAX_CHARS,
+    Math.max(THINKING_STREAM_MIN_CHARS, Math.ceil(length / 18)),
+  );
+}
+
+function isRunLifecycleActivity(item: FeedActivity) {
+  return (
+    item.eventType === "run_started" ||
+    item.eventType === "run_completed" ||
+    item.eventType === "step_completed"
+  );
+}
+
 function hasReportSignals(content: string) {
   const normalized = content.trim();
 
@@ -2393,6 +2475,261 @@ function buildSessionTraceExportText(session: SessionRecord) {
     JSON.stringify(payload, null, 2),
     "",
   ].join("\n");
+}
+
+function summarizeStreamEventValue(value: string, limit = 160) {
+  return {
+    length: value.length,
+    preview:
+      value.length > limit ? `${value.slice(0, limit)}...[truncated]` : value,
+  };
+}
+
+function summarizeFeedOrderItem({
+  index,
+  item,
+  sessionId,
+  thinkingStreams,
+}: {
+  index: number;
+  item: FeedItem;
+  sessionId: string;
+  thinkingStreams: ThinkingStreamState;
+}) {
+  const base = {
+    id: item.id,
+    kind: item.kind,
+    order: index + 1,
+  };
+
+  if (item.kind === "message") {
+    return {
+      ...base,
+      content: summarizeStreamEventValue(item.content),
+      role: item.role,
+      uiName: item.role === "user" ? "用户消息" : "Assistant 消息",
+    };
+  }
+
+  const thinkingStreamKey =
+    item.type === "thinking" && item.runId && item.stepId
+      ? createThinkingStreamKey({
+          runId: item.runId,
+          sessionId,
+          stepId: item.stepId,
+        })
+      : "";
+  const visibleDetail =
+    (thinkingStreamKey ? thinkingStreams[thinkingStreamKey]?.content : "") ||
+    item.detail;
+
+  return {
+    ...base,
+    detail: summarizeStreamEventValue(item.detail),
+    display: item.display
+      ? {
+          detail: summarizeStreamEventValue(item.display.detail),
+          icon: item.display.icon,
+          meta: item.display.meta,
+          source: item.display.source,
+          title: item.display.title,
+        }
+      : undefined,
+    eventType: item.eventType,
+    label: item.label,
+    runId: item.runId,
+    stepId: item.stepId,
+    stepIndex: item.stepIndex,
+    toolName: item.toolName,
+    toolUseId: item.toolUseId,
+    type: item.type,
+    uiName:
+      item.type === "thinking"
+        ? "Thinking 正文"
+        : isRunLifecycleActivity(item)
+          ? "Run 生命周期行"
+          : "过程项",
+    visibleDetail: summarizeStreamEventValue(visibleDetail),
+  };
+}
+
+function buildFeedOrderExportText({
+  session,
+  thinkingStreams,
+}: {
+  session: SessionRecord;
+  thinkingStreams: ThinkingStreamState;
+}) {
+  const exportedAt = new Date().toISOString();
+  const payload = {
+    exportedAt,
+    feedCount: session.feed.length,
+    items: session.feed.map((item, index) =>
+      summarizeFeedOrderItem({
+        index,
+        item,
+        sessionId: session.id,
+        thinkingStreams,
+      }),
+    ),
+    session: {
+      id: session.id,
+      title: session.title,
+      workspaceRoot: session.workspaceRoot,
+    },
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+function summarizeStreamEvent(event: StreamEvent) {
+  const base: Record<string, unknown> = {
+    type: event.type,
+  };
+
+  if ("runId" in event) {
+    base.runId = event.runId;
+  }
+
+  if ("stepId" in event) {
+    base.stepId = event.stepId;
+  }
+
+  if ("stepIndex" in event) {
+    base.stepIndex = event.stepIndex;
+  }
+
+  if ("timestamp" in event) {
+    base.eventTimestamp = event.timestamp;
+  }
+
+  if (event.type === "thinking_delta" || event.type === "assistant_delta") {
+    return {
+      ...base,
+      delta: summarizeStreamEventValue(event.delta),
+      ...(event.type === "assistant_delta" ? { reset: event.reset ?? false } : {}),
+    };
+  }
+
+  if (
+    event.type === "thinking" ||
+    event.type === "assistant" ||
+    event.type === "status" ||
+    event.type === "error"
+  ) {
+    return {
+      ...base,
+      message: summarizeStreamEventValue(event.message),
+    };
+  }
+
+  if (event.type === "tool_call") {
+    return {
+      ...base,
+      arguments: summarizeStreamEventValue(prettifyPayload(event.arguments)),
+      name: event.name,
+      toolUseId: event.toolUseId,
+    };
+  }
+
+  if (event.type === "tool_result") {
+    return {
+      ...base,
+      durationMs: event.durationMs,
+      name: event.name,
+      result: summarizeStreamEventValue(event.result),
+      success: event.success,
+      toolUseId: event.toolUseId,
+    };
+  }
+
+  if (event.type === "task_state") {
+    return {
+      ...base,
+      currentMode: event.taskState.currentMode,
+      nextAction: event.taskState.nextAction,
+      verificationStatus: event.taskState.verification.status,
+    };
+  }
+
+  if (event.type === "model_request") {
+    return {
+      ...base,
+      messageCount: event.request.messages.length,
+      model: event.request.runtime.model,
+      provider: event.request.runtime.provider,
+      toolCount: event.request.tools.length,
+    };
+  }
+
+  if (event.type === "model_response") {
+    return {
+      ...base,
+      contentCount: event.response.content.length,
+      model: event.response.model,
+      requestId: event.response.requestId,
+      stopReason: event.response.stopReason,
+    };
+  }
+
+  if (event.type === "run_started") {
+    return {
+      ...base,
+      model: event.runtime.model,
+      prompt: summarizeStreamEventValue(event.prompt),
+      provider: event.runtime.provider,
+      startedAt: event.startedAt,
+      toolCount: event.toolDefinitions.length,
+    };
+  }
+
+  if (event.type === "step_started") {
+    return {
+      ...base,
+      startedAt: event.startedAt,
+    };
+  }
+
+  if (event.type === "step_completed" || event.type === "run_completed") {
+    return {
+      ...base,
+      durationMs: event.durationMs,
+      endedAt: event.endedAt,
+      status: event.status,
+      stopReason: "stopReason" in event ? event.stopReason : undefined,
+      totalSteps: "totalSteps" in event ? event.totalSteps : undefined,
+    };
+  }
+
+  if (event.type === "research_state") {
+    return {
+      ...base,
+      researchState: summarizeStreamEventValue(event.researchState),
+    };
+  }
+
+  return base;
+}
+
+function buildStreamEventExportText({
+  entries,
+  session,
+}: {
+  entries: StreamEventLogEntry[];
+  session: SessionRecord;
+}) {
+  const exportedAt = new Date().toISOString();
+  const payload = {
+    exportedAt,
+    entries,
+    session: {
+      id: session.id,
+      title: session.title,
+      workspaceRoot: session.workspaceRoot,
+    },
+  };
+
+  return JSON.stringify(payload, null, 2);
 }
 
 function buildActivityDebugPayload({
@@ -2736,6 +3073,8 @@ export function AgentConsole({
     useState<ActiveAgentRunState>({});
   const [agentLimitNotice, setAgentLimitNotice] =
     useState<AgentLimitNotice | null>(null);
+  const [thinkingStreams, setThinkingStreams] =
+    useState<ThinkingStreamState>({});
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
   const [workspacePickerMode, setWorkspacePickerMode] =
@@ -2779,6 +3118,9 @@ export function AgentConsole({
   const [sessionTraceActionState, setSessionTraceActionState] = useState<{
     sessionId: string;
   } | null>(null);
+  const [streamEventExportSessionId, setStreamEventExportSessionId] =
+    useState("");
+  const [feedOrderExportSessionId, setFeedOrderExportSessionId] = useState("");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
   const [isSidebarClosing, setIsSidebarClosing] = useState(false);
@@ -2789,6 +3131,12 @@ export function AgentConsole({
   const feedRef = useRef<HTMLDivElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTraceActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const streamEventExportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const feedOrderExportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const sidebarTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -2802,6 +3150,13 @@ export function AgentConsole({
   );
   const activeSessionIdRef = useRef(activeSessionId);
   const isDraftSessionActiveRef = useRef(isDraftSessionActive);
+  const thinkingStreamActivityIdsRef = useRef<Map<string, string>>(new Map());
+  const thinkingStreamRuntimeRef = useRef<Record<string, ThinkingStreamRuntime>>(
+    {},
+  );
+  const thinkingStreamsRef = useRef<ThinkingStreamState>({});
+  const streamEventLogRef = useRef<Record<string, StreamEventLogEntry[]>>({});
+  const streamEventSequenceRef = useRef(0);
   const activeAgentRequestsRef = useRef<Map<string, ActiveAgentRequest>>(
     new Map(),
   );
@@ -3119,6 +3474,14 @@ export function AgentConsole({
         clearTimeout(sessionTraceActionTimerRef.current);
       }
 
+      if (streamEventExportTimerRef.current) {
+        clearTimeout(streamEventExportTimerRef.current);
+      }
+
+      if (feedOrderExportTimerRef.current) {
+        clearTimeout(feedOrderExportTimerRef.current);
+      }
+
       if (settingsToastTimerRef.current) {
         clearTimeout(settingsToastTimerRef.current);
       }
@@ -3130,6 +3493,15 @@ export function AgentConsole({
       if (inspectorTransitionTimerRef.current) {
         clearTimeout(inspectorTransitionTimerRef.current);
       }
+
+      Object.values(thinkingStreamRuntimeRef.current).forEach((stream) => {
+        if (stream.timerId) {
+          clearTimeout(stream.timerId);
+        }
+      });
+      thinkingStreamRuntimeRef.current = {};
+      thinkingStreamActivityIdsRef.current.clear();
+      thinkingStreamsRef.current = {};
 
       activeAgentRequestsRef.current.forEach((request) => {
         request.controller.abort();
@@ -3206,6 +3578,66 @@ export function AgentConsole({
       );
       sessionTraceActionTimerRef.current = null;
     }, 1800);
+  };
+
+  const flashStreamEventExport = (sessionId: string) => {
+    setStreamEventExportSessionId(sessionId);
+
+    if (streamEventExportTimerRef.current) {
+      clearTimeout(streamEventExportTimerRef.current);
+    }
+
+    streamEventExportTimerRef.current = setTimeout(() => {
+      setStreamEventExportSessionId((current) =>
+        current === sessionId ? "" : current,
+      );
+      streamEventExportTimerRef.current = null;
+    }, 1800);
+  };
+
+  const flashFeedOrderExport = (sessionId: string) => {
+    setFeedOrderExportSessionId(sessionId);
+
+    if (feedOrderExportTimerRef.current) {
+      clearTimeout(feedOrderExportTimerRef.current);
+    }
+
+    feedOrderExportTimerRef.current = setTimeout(() => {
+      setFeedOrderExportSessionId((current) =>
+        current === sessionId ? "" : current,
+      );
+      feedOrderExportTimerRef.current = null;
+    }, 1800);
+  };
+
+  const appendStreamEventLog = ({
+    action,
+    detail,
+    event,
+    phase,
+    sessionId,
+  }: {
+    action?: string;
+    detail?: Record<string, unknown>;
+    event?: StreamEvent;
+    phase: StreamEventLogEntry["phase"];
+    sessionId: string;
+  }) => {
+    const entry: StreamEventLogEntry = {
+      action,
+      at: new Date().toISOString(),
+      detail,
+      event: event ? summarizeStreamEvent(event) : undefined,
+      phase,
+      sequence: streamEventSequenceRef.current + 1,
+      sessionId,
+    };
+    streamEventSequenceRef.current = entry.sequence;
+
+    const existing = streamEventLogRef.current[sessionId] ?? [];
+    streamEventLogRef.current[sessionId] = [...existing, entry].slice(
+      -STREAM_EVENT_LOG_LIMIT,
+    );
   };
 
   const flashSettingsToast = (message: string) => {
@@ -3583,6 +4015,38 @@ export function AgentConsole({
     flashSessionTraceAction(session.id);
   };
 
+  const exportStreamEventLog = (session: SessionRecord) => {
+    const sessionSegment = sanitizeFileNameSegment(session.title || "session");
+    const fileName = `${createTimestampFileSegment()}-${
+      sessionSegment || "session"
+    }-stream-events.json`;
+    downloadTextFile({
+      content: buildStreamEventExportText({
+        entries: streamEventLogRef.current[session.id] ?? [],
+        session,
+      }),
+      fileName,
+      mimeType: "application/json;charset=utf-8",
+    });
+    flashStreamEventExport(session.id);
+  };
+
+  const exportFeedOrder = (session: SessionRecord) => {
+    const sessionSegment = sanitizeFileNameSegment(session.title || "session");
+    const fileName = `${createTimestampFileSegment()}-${
+      sessionSegment || "session"
+    }-feed-order.json`;
+    downloadTextFile({
+      content: buildFeedOrderExportText({
+        session,
+        thinkingStreams,
+      }),
+      fileName,
+      mimeType: "application/json;charset=utf-8",
+    });
+    flashFeedOrderExport(session.id);
+  };
+
   const updateSession = (
     sessionId: string,
     updater: (session: SessionRecord) => SessionRecord,
@@ -3652,6 +4116,69 @@ export function AgentConsole({
           : item,
       ),
     }));
+  };
+
+  const updateActivityDetail = ({
+    activityId,
+    detail,
+    display,
+    sessionId,
+  }: {
+    activityId: string;
+    detail: string;
+    display?: ActivityDisplay;
+    sessionId: string;
+  }) => {
+    updateSession(sessionId, (session) => ({
+      ...session,
+      updatedAt: Date.now(),
+      feed: session.feed.map((item) =>
+        item.kind === "activity" && item.id === activityId
+          ? {
+              ...item,
+              detail,
+              ...(display ? { display } : {}),
+            }
+          : item,
+      ),
+    }));
+  };
+
+  const upsertFeedMessage = (sessionId: string, nextMessage: ChatMessage) => {
+    updateSession(sessionId, (session) => {
+      const messageExists = session.messages.some(
+        (message) => message.id === nextMessage.id,
+      );
+      const feedExists = session.feed.some(
+        (item) => item.kind === "message" && item.id === nextMessage.id,
+      );
+
+      return {
+        ...session,
+        updatedAt: Date.now(),
+        messages: messageExists
+          ? session.messages.map((message) =>
+              message.id === nextMessage.id ? nextMessage : message,
+            )
+          : [...session.messages, nextMessage],
+        feed: feedExists
+          ? session.feed.map((item) =>
+              item.kind === "message" && item.id === nextMessage.id
+                ? {
+                    kind: "message",
+                    ...nextMessage,
+                  }
+                : item,
+            )
+          : [
+              ...session.feed,
+              {
+                kind: "message",
+                ...nextMessage,
+              },
+            ],
+      };
+    });
   };
 
   const removeDuplicateStatusForThinking = ({
@@ -3751,6 +4278,339 @@ export function AgentConsole({
     });
   };
 
+  function removeThinkingStreamSnapshot(key: string) {
+    const nextRef = { ...thinkingStreamsRef.current };
+    delete nextRef[key];
+    thinkingStreamsRef.current = nextRef;
+    setThinkingStreams((current) => {
+      if (!current[key]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function updateThinkingStreamSnapshot(
+    key: string,
+    stream: ThinkingStreamRuntime,
+  ) {
+    setThinkingStreams((current) => {
+      const next = {
+        ...current,
+        [key]: {
+          activityId: stream.activityId,
+          content: stream.content,
+          runId: stream.runId,
+          stepId: stream.stepId,
+          stepIndex: stream.stepIndex,
+          updatedAt: stream.updatedAt,
+        },
+      };
+
+      thinkingStreamsRef.current = next;
+      return next;
+    });
+  }
+
+  function completeThinkingStream(key: string) {
+    const stream = thinkingStreamRuntimeRef.current[key];
+
+    if (!stream) {
+      thinkingStreamActivityIdsRef.current.delete(key);
+      removeThinkingStreamSnapshot(key);
+      return;
+    }
+
+    if (stream.timerId) {
+      clearTimeout(stream.timerId);
+    }
+
+    const content = stream.finalContent ?? stream.content;
+
+    if (stream.activityId && content) {
+      updateActivityDetail({
+        activityId: stream.activityId,
+        detail: content,
+        display: createThinkingDisplay(content),
+        sessionId: stream.sessionId,
+      });
+    }
+
+    delete thinkingStreamRuntimeRef.current[key];
+    thinkingStreamActivityIdsRef.current.delete(key);
+    removeThinkingStreamSnapshot(key);
+  }
+
+  function flushThinkingStream(key: string) {
+    const stream = thinkingStreamRuntimeRef.current[key];
+
+    if (!stream) {
+      return;
+    }
+
+    stream.timerId = undefined;
+
+    if (!stream.pending) {
+      if (stream.finalContent !== undefined) {
+        completeThinkingStream(key);
+      }
+      return;
+    }
+
+    const { chunk, rest } = splitThinkingChunk(
+      stream.pending,
+      getThinkingStreamChunkSize(stream.pending),
+    );
+    stream.content += chunk;
+    stream.pending = rest;
+    stream.updatedAt = Date.now();
+    updateThinkingStreamSnapshot(key, stream);
+
+    if (stream.pending) {
+      scheduleThinkingStreamFlush(key);
+      return;
+    }
+
+    if (stream.finalContent !== undefined) {
+      completeThinkingStream(key);
+    }
+  }
+
+  function scheduleThinkingStreamFlush(key: string) {
+    const stream = thinkingStreamRuntimeRef.current[key];
+
+    if (!stream || stream.timerId) {
+      return;
+    }
+
+    stream.timerId = setTimeout(
+      () => flushThinkingStream(key),
+      THINKING_STREAM_TICK_MS,
+    );
+  }
+
+  const ensureThinkingActivity = ({
+    runId,
+    sessionId,
+    stepId,
+    stepIndex,
+  }: {
+    runId: string;
+    sessionId: string;
+    stepId: string;
+    stepIndex: number;
+  }) => {
+    const key = createThinkingStreamKey({ runId, sessionId, stepId });
+    let activityId = thinkingStreamActivityIdsRef.current.get(key);
+
+    if (!activityId && settings.showThinkingInFeed) {
+      activityId = appendActivity(
+        sessionId,
+        "thinking",
+        `Step ${stepIndex} thinking`,
+        "",
+        {
+          display: createThinkingDisplay(""),
+          eventType: "thinking",
+          runId,
+          stepId,
+          stepIndex,
+        },
+      );
+      thinkingStreamActivityIdsRef.current.set(key, activityId);
+    }
+
+    return activityId;
+  };
+
+  const enqueueThinkingStreamContent = ({
+    content,
+    finalContent,
+    runId,
+    sessionId,
+    stepId,
+    stepIndex,
+  }: {
+    content: string;
+    finalContent?: string;
+    runId: string;
+    sessionId: string;
+    stepId: string;
+    stepIndex: number;
+  }) => {
+    if (!content && finalContent === undefined) {
+      return;
+    }
+
+    const key = createThinkingStreamKey({ runId, sessionId, stepId });
+    const activityId = ensureThinkingActivity({
+      runId,
+      sessionId,
+      stepId,
+      stepIndex,
+    });
+
+    if (!activityId) {
+      return;
+    }
+
+    const runtimeStream = thinkingStreamRuntimeRef.current[key];
+
+    if (content && finalContent === undefined && !runtimeStream) {
+      const existing = thinkingStreamsRef.current[key];
+      const nextContent = `${existing?.content ?? ""}${content}`;
+
+      setThinkingStreams((current) => {
+        const next = {
+          ...current,
+          [key]: {
+            activityId,
+            content: nextContent,
+            runId,
+            stepId,
+            stepIndex,
+            updatedAt: Date.now(),
+          },
+        };
+
+        thinkingStreamsRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    const existingSnapshot = thinkingStreamsRef.current[key];
+    const stream =
+      runtimeStream ??
+      {
+        activityId,
+        content: existingSnapshot?.content ?? "",
+        pending: "",
+        runId,
+        sessionId,
+        stepId,
+        stepIndex,
+        updatedAt: Date.now(),
+      };
+
+    stream.activityId = activityId;
+    stream.runId = runId;
+    stream.sessionId = sessionId;
+    stream.stepId = stepId;
+    stream.stepIndex = stepIndex;
+    stream.updatedAt = Date.now();
+
+    if (content) {
+      stream.pending += content;
+    }
+
+    if (finalContent !== undefined) {
+      const queuedContent = `${stream.content}${stream.pending}`;
+      stream.finalContent = finalContent;
+
+      if (finalContent.startsWith(queuedContent)) {
+        stream.pending += finalContent.slice(queuedContent.length);
+      } else if (finalContent.startsWith(stream.content)) {
+        stream.pending = finalContent.slice(stream.content.length);
+      }
+    }
+
+    thinkingStreamRuntimeRef.current[key] = stream;
+    scheduleThinkingStreamFlush(key);
+  };
+
+  const handleThinkingDelta = ({
+    delta,
+    runId,
+    sessionId,
+    stepId,
+    stepIndex,
+  }: {
+    delta: string;
+    runId: string;
+    sessionId: string;
+    stepId: string;
+    stepIndex: number;
+  }) => {
+    enqueueThinkingStreamContent({
+      content: delta,
+      runId,
+      sessionId,
+      stepId,
+      stepIndex,
+    });
+  };
+
+  const finalizeThinkingStream = ({
+    finalContent,
+    runId,
+    sessionId,
+    stepId,
+    stepIndex,
+  }: {
+    finalContent?: string;
+    runId: string;
+    sessionId: string;
+    stepId: string;
+    stepIndex?: number;
+  }) => {
+    const key = createThinkingStreamKey({ runId, sessionId, stepId });
+    const runtimeStream = thinkingStreamRuntimeRef.current[key];
+    const stream = thinkingStreamsRef.current[key];
+    const activityId =
+      thinkingStreamActivityIdsRef.current.get(key) ??
+      runtimeStream?.activityId ??
+      stream?.activityId;
+    const content =
+      finalContent ??
+      runtimeStream?.finalContent ??
+      `${runtimeStream?.content ?? stream?.content ?? ""}${
+        runtimeStream?.pending ?? ""
+      }`;
+
+    if (runtimeStream || content) {
+      enqueueThinkingStreamContent({
+        content: "",
+        finalContent: content,
+        runId,
+        sessionId,
+        stepId,
+        stepIndex: runtimeStream?.stepIndex ?? stream?.stepIndex ?? stepIndex ?? 1,
+      });
+      return;
+    }
+
+    if (activityId) {
+      completeThinkingStream(key);
+    } else {
+      thinkingStreamActivityIdsRef.current.delete(key);
+      removeThinkingStreamSnapshot(key);
+    }
+  };
+
+  const finalizeRunThinkingStreams = (sessionId: string, runId: string) => {
+    const entries = [
+      ...Object.entries(thinkingStreamRuntimeRef.current).filter(
+        ([, stream]) => stream.runId === runId,
+      ),
+      ...Object.entries(thinkingStreamsRef.current).filter(
+        ([key, stream]) =>
+          stream.runId === runId && !thinkingStreamRuntimeRef.current[key],
+      ),
+    ];
+
+    for (const [, stream] of entries) {
+      finalizeThinkingStream({
+        runId,
+        sessionId,
+        stepId: stream.stepId,
+      });
+    }
+  };
+
   const applyTraceEvent = (sessionId: string, event: StreamEvent) => {
     updateSession(sessionId, (session) => applyTraceEventToSession(session, event));
 
@@ -3790,6 +4650,14 @@ export function AgentConsole({
     }
 
     activeRequest.stopped = true;
+    appendStreamEventLog({
+      action: "stop_requested",
+      detail: {
+        runId: activeRequest.runId,
+      },
+      phase: "system",
+      sessionId,
+    });
     activeRequest.controller.abort();
     appendActivity(
       activeRequest.sessionId,
@@ -3809,6 +4677,9 @@ export function AgentConsole({
       },
     );
     markRunningRunCancelled(activeRequest.sessionId, activeRequest.runId);
+    if (activeRequest.runId) {
+      finalizeRunThinkingStreams(activeRequest.sessionId, activeRequest.runId);
+    }
     activeAgentRequestsRef.current.delete(sessionId);
     clearActiveAgentRun(sessionId);
   };
@@ -4106,6 +4977,16 @@ export function AgentConsole({
       const result = payload.result;
 
       if (!result?.title || !result.detail) {
+        appendStreamEventLog({
+          action: "activity_rewrite_skipped",
+          detail: {
+            activityId,
+            reason: "missing_result_text",
+            type: event.type,
+          },
+          phase: "display",
+          sessionId,
+        });
         return;
       }
 
@@ -4116,11 +4997,32 @@ export function AgentConsole({
         source: "model",
         title: result.title,
       });
+      appendStreamEventLog({
+        action: "activity_rewrite_applied",
+        detail: {
+          activityId,
+          title: result.title,
+          type: event.type,
+        },
+        phase: "display",
+        sessionId,
+      });
     } catch (error) {
       if (signal?.aborted) {
         return;
       }
 
+      appendStreamEventLog({
+        action: "activity_rewrite_failed",
+        detail: {
+          activityId,
+          message:
+            error instanceof Error ? error.message : "activity rewrite failed",
+          type: event.type,
+        },
+        phase: "display",
+        sessionId,
+      });
       console.warn("Failed to rewrite process activity.", error);
     }
   };
@@ -4258,6 +5160,15 @@ export function AgentConsole({
     activeAgentRequestsRef.current.set(sessionId, activeRequest);
     setActiveAgentRun(sessionId);
     setInput("");
+    appendStreamEventLog({
+      action: "request_started",
+      detail: {
+        promptLength: trimmed.length,
+        provider: settings.provider,
+      },
+      phase: "system",
+      sessionId,
+    });
 
     try {
       const history = [
@@ -4328,6 +5239,7 @@ export function AgentConsole({
       const decoder = new TextDecoder();
       let buffer = "";
       let assistantMessageId: string | null = null;
+      let assistantStreamContent = "";
       let lastTaskStateSignature = "";
 
       while (true) {
@@ -4343,10 +5255,68 @@ export function AgentConsole({
           }
 
           const event = JSON.parse(line) as StreamEvent;
+          appendStreamEventLog({
+            event,
+            phase: "received",
+            sessionId,
+          });
+
+          if (event.type === "thinking_delta") {
+            handleThinkingDelta({
+              delta: event.delta,
+              runId: event.runId,
+              sessionId,
+              stepId: event.stepId,
+              stepIndex: event.stepIndex,
+            });
+            appendStreamEventLog({
+              action: "thinking_delta_applied",
+              detail: {
+                deltaLength: event.delta.length,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
+            continue;
+          }
+
+          if (event.type === "assistant_delta") {
+            const nextId: string = assistantMessageId ?? createId();
+            assistantMessageId = nextId;
+            assistantStreamContent = `${event.reset ? "" : assistantStreamContent}${
+              event.delta
+            }`;
+            upsertFeedMessage(sessionId, {
+              content: assistantStreamContent,
+              id: nextId,
+              role: "assistant",
+            });
+            appendStreamEventLog({
+              action: "assistant_delta_upserted",
+              detail: {
+                deltaLength: event.delta.length,
+                messageId: nextId,
+                messageLength: assistantStreamContent.length,
+                reset: event.reset ?? false,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
+            continue;
+          }
+
           applyTraceEvent(sessionId, event);
+          appendStreamEventLog({
+            action: "trace_merged",
+            event,
+            phase: "handled",
+            sessionId,
+          });
 
           if (event.type === "run_started") {
-            appendActivity(
+            const activityId = appendActivity(
               sessionId,
               "step",
               "开始执行任务",
@@ -4357,10 +5327,30 @@ export function AgentConsole({
                 runId: event.runId,
               },
             );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "step",
+                label: "开始执行任务",
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
           if (event.type === "step_started") {
+            appendStreamEventLog({
+              action: "display_skipped",
+              detail: {
+                reason: "step_started_hidden",
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
@@ -4373,7 +5363,7 @@ export function AgentConsole({
 
             if (signature !== lastTaskStateSignature) {
               lastTaskStateSignature = signature;
-              appendActivity(
+              const activityId = appendActivity(
                 sessionId,
                 "state",
                 "任务状态",
@@ -4386,17 +5376,49 @@ export function AgentConsole({
                   stepIndex: event.stepIndex,
                 },
               );
+              appendStreamEventLog({
+                action: "activity_appended",
+                detail: {
+                  activityId,
+                  activityType: "state",
+                  signature,
+                },
+                event,
+                phase: "display",
+                sessionId,
+              });
+            } else {
+              appendStreamEventLog({
+                action: "display_skipped",
+                detail: {
+                  reason: "duplicate_task_state",
+                  signature,
+                },
+                event,
+                phase: "display",
+                sessionId,
+              });
             }
             continue;
           }
 
           if (event.type === "status") {
-            appendActivity(sessionId, "status", "状态", event.message, {
+            const activityId = appendActivity(sessionId, "status", "状态", event.message, {
               display: createStatusDisplay(event.message),
               eventType: event.type,
               runId: event.runId,
               stepId: event.stepId,
               stepIndex: event.stepIndex,
+            });
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "status",
+              },
+              event,
+              phase: "display",
+              sessionId,
             });
             continue;
           }
@@ -4410,19 +5432,32 @@ export function AgentConsole({
             });
 
             if (settings.showThinkingInFeed) {
-              appendActivity(
+              finalizeThinkingStream({
+                finalContent: event.message,
+                runId: event.runId,
                 sessionId,
-                "thinking",
-                `Step ${event.stepIndex} thinking`,
-                event.message,
-                {
-                  display: createThinkingDisplay(event.message),
-                  eventType: event.type,
-                  runId: event.runId,
-                  stepId: event.stepId,
-                  stepIndex: event.stepIndex,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+              });
+              appendStreamEventLog({
+                action: "thinking_finalized",
+                detail: {
+                  messageLength: event.message.length,
                 },
-              );
+                event,
+                phase: "display",
+                sessionId,
+              });
+            } else {
+              appendStreamEventLog({
+                action: "display_skipped",
+                detail: {
+                  reason: "thinking_feed_disabled",
+                },
+                event,
+                phase: "display",
+                sessionId,
+              });
             }
             continue;
           }
@@ -4447,6 +5482,18 @@ export function AgentConsole({
                 toolUseId: event.toolUseId,
               },
             );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "tool_call",
+                toolName: event.name,
+                toolUseId: event.toolUseId,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
 
             void requestActivityRewrite({
               activityId,
@@ -4464,7 +5511,7 @@ export function AgentConsole({
           }
 
           if (event.type === "tool_result") {
-            appendActivity(
+            const activityId = appendActivity(
               sessionId,
               "tool_result",
               `${event.name} 返回`,
@@ -4484,11 +5531,24 @@ export function AgentConsole({
                 toolUseId: event.toolUseId,
               },
             );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "tool_result",
+                success: event.success,
+                toolName: event.name,
+                toolUseId: event.toolUseId,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
           if (event.type === "research_state") {
-            appendActivity(
+            const activityId = appendActivity(
               sessionId,
               "research",
               "研究状态",
@@ -4506,61 +5566,56 @@ export function AgentConsole({
               updatedAt: Date.now(),
               researchContext: event.researchState,
             }));
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "research",
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
           if (event.type === "assistant") {
             const nextId: string = assistantMessageId ?? createId();
             assistantMessageId = nextId;
-
-            updateSession(sessionId, (session) => {
-              const nextMessage: ChatMessage = {
-                id: nextId,
-                role: "assistant",
-                content: event.message,
-              };
-              const messageExists = session.messages.some(
-                (message) => message.id === nextId,
-              );
-              const feedExists = session.feed.some(
-                (item) => item.kind === "message" && item.id === nextId,
-              );
-
-              return {
-                ...session,
-                updatedAt: Date.now(),
-                messages: messageExists
-                  ? session.messages.map((message) =>
-                      message.id === nextId ? nextMessage : message,
-                    )
-                  : [...session.messages, nextMessage],
-                feed: feedExists
-                  ? session.feed.map((item) =>
-                      item.kind === "message" && item.id === nextId
-                        ? {
-                            kind: "message",
-                            ...nextMessage,
-                          }
-                        : item,
-                    )
-                  : [
-                      ...session.feed,
-                      {
-                        kind: "message",
-                        ...nextMessage,
-                      },
-                    ],
-              };
+            assistantStreamContent = event.message;
+            upsertFeedMessage(sessionId, {
+              content: event.message,
+              id: nextId,
+              role: "assistant",
+            });
+            appendStreamEventLog({
+              action: "assistant_final_upserted",
+              detail: {
+                messageId: nextId,
+                messageLength: event.message.length,
+              },
+              event,
+              phase: "display",
+              sessionId,
             });
             continue;
           }
 
           if (event.type === "step_completed") {
             if (event.status === "completed") {
+              appendStreamEventLog({
+                action: "display_skipped",
+                detail: {
+                  reason: "completed_step_hidden",
+                },
+                event,
+                phase: "display",
+                sessionId,
+              });
               continue;
             }
 
-            appendActivity(
+            const activityId = appendActivity(
               sessionId,
               event.status === "failed" ? "error" : "step",
               `Step ${event.stepIndex} ${event.status}`,
@@ -4577,11 +5632,23 @@ export function AgentConsole({
                 stepIndex: event.stepIndex,
               },
             );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: event.status === "failed" ? "error" : "step",
+                status: event.status,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
           if (event.type === "run_completed") {
-            appendActivity(
+            finalizeRunThinkingStreams(sessionId, event.runId);
+            const activityId = appendActivity(
               sessionId,
               event.status === "failed" ? "error" : "step",
               `Run ${event.status}`,
@@ -4596,18 +5663,63 @@ export function AgentConsole({
                 runId: event.runId,
               },
             );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: event.status === "failed" ? "error" : "step",
+                status: event.status,
+              },
+              event,
+              phase: "display",
+              sessionId,
+            });
             continue;
           }
 
           if (event.type === "error") {
-            appendActivity(sessionId, "error", "错误", event.message, {
-              display: createErrorDisplay(event.message),
-              eventType: event.type,
-              runId: event.runId,
-              stepId: event.stepId,
-              stepIndex: event.stepIndex,
+            const activityId = appendActivity(
+              sessionId,
+              "error",
+              "错误",
+              event.message,
+              {
+                display: createErrorDisplay(event.message),
+                eventType: event.type,
+                runId: event.runId,
+                stepId: event.stepId,
+                stepIndex: event.stepIndex,
+              },
+            );
+            appendStreamEventLog({
+              action: "activity_appended",
+              detail: {
+                activityId,
+                activityType: "error",
+              },
+              event,
+              phase: "display",
+              sessionId,
             });
+            continue;
           }
+
+          if (event.type === "done") {
+            appendStreamEventLog({
+              action: "stream_done",
+              event,
+              phase: "handled",
+              sessionId,
+            });
+            continue;
+          }
+
+          appendStreamEventLog({
+            action: "unhandled_event",
+            event,
+            phase: "handled",
+            sessionId,
+          });
         }
 
         if (done) {
@@ -4620,13 +5732,43 @@ export function AgentConsole({
         caughtError instanceof DOMException && caughtError.name === "AbortError";
 
       if (wasStopped || isAbortError) {
+        appendStreamEventLog({
+          action: "request_aborted",
+          detail: {
+            reason: wasStopped ? "user_stop" : "abort_error",
+          },
+          phase: "system",
+          sessionId,
+        });
+        if (activeRequest.runId) {
+          finalizeRunThinkingStreams(sessionId, activeRequest.runId);
+        }
         return;
       }
 
       const message =
         caughtError instanceof Error ? caughtError.message : "请求失败";
+      appendStreamEventLog({
+        action: "request_failed",
+        detail: {
+          message,
+        },
+        phase: "system",
+        sessionId,
+      });
+      if (activeRequest.runId) {
+        finalizeRunThinkingStreams(sessionId, activeRequest.runId);
+      }
       appendActivity(sessionId, "error", "错误", message);
     } finally {
+      appendStreamEventLog({
+        action: "request_finally",
+        detail: {
+          activeRunId: activeRequest.runId,
+        },
+        phase: "system",
+        sessionId,
+      });
       if (
         activeAgentRequestsRef.current.get(sessionId)?.controller ===
         abortController
@@ -5254,61 +6396,44 @@ export function AgentConsole({
                       currentSessionIsRunning &&
                       latestProcessActivityId === item.id;
 
-                    if (item.type === "thinking") {
+                    if (isRunLifecycleActivity(item)) {
                       return (
-                        <article
+                        <div
                           key={item.id}
-                          className={`${styles.activity} ${styles.thinking} ${
-                            isLatestActive ? styles.activityActive : ""
+                          className={`${styles.runLifecycleLine} ${
+                            item.type === "error"
+                              ? styles.runLifecycleLineError
+                              : ""
                           }`}
                         >
-                          <div className={styles.activityIcon} aria-hidden="true">
-                            <ActivityIcon size={16} strokeWidth={2} />
-                          </div>
-                          <div className={styles.activityContent}>
-                            <details className={styles.thinkingDisclosure}>
-                              <summary className={styles.thinkingSummary}>
-                                <span className={styles.thinkingTitleLine}>
-                                  <strong>{display.title}</strong>
-                                  {display.meta ? <span>{display.meta}</span> : null}
-                                </span>
-                                <p>{display.detail}</p>
-                                <span className={styles.thinkingSummaryHint}>
-                                  展开完整思考
-                                </span>
-                              </summary>
-                              <pre className={styles.thinkingBody}>{item.detail}</pre>
-                              <div className={styles.thinkingActions}>
-                                <button
-                                  className={styles.messageActionButton}
-                                  type="button"
-                                  onClick={() => {
-                                    void copyArbitraryText(item.id, item.detail);
-                                  }}
-                                >
-                                  {messageActionState?.id === item.id &&
-                                  messageActionState.action === "copied"
-                                    ? "已复制"
-                                    : "复制 thinking"}
-                                </button>
-                                {settings.showProcessDetails ? (
-                                  <button
-                                    className={styles.messageActionButton}
-                                    type="button"
-                                    onClick={() =>
-                                      setActivityDebugTarget({
-                                        activityId: item.id,
-                                        sessionId: activeSession.id,
-                                      })
-                                    }
-                                  >
-                                    查看 Trace
-                                  </button>
-                                ) : null}
-                              </div>
-                            </details>
-                          </div>
-                        </article>
+                          <ActivityIcon size={14} strokeWidth={2} />
+                          <span>{display.title}</span>
+                        </div>
+                      );
+                    }
+
+                    if (item.type === "thinking") {
+                      const streamKey =
+                        item.runId && item.stepId
+                          ? createThinkingStreamKey({
+                              runId: item.runId,
+                              sessionId: activeSession.id,
+                              stepId: item.stepId,
+                            })
+                          : "";
+                      const thinkingContent =
+                        (streamKey ? thinkingStreams[streamKey]?.content : "") ||
+                        item.detail;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`${styles.thinkingInline} ${
+                            isLatestActive ? styles.thinkingInlineActive : ""
+                          }`}
+                        >
+                          <pre>{thinkingContent}</pre>
+                        </div>
                       );
                     }
 
@@ -5485,6 +6610,26 @@ export function AgentConsole({
               <section className={styles.traceDetailPanel}>
                 {selectedRun ? (
                   <>
+                    <div className={styles.traceActionBar}>
+                      <button
+                        className={styles.headerTraceButton}
+                        type="button"
+                        onClick={() => exportFeedOrder(activeSession)}
+                      >
+                        {feedOrderExportSessionId === activeSession.id
+                          ? "已导出消息流顺序"
+                          : "导出消息流顺序"}
+                      </button>
+                      <button
+                        className={styles.headerTraceButton}
+                        type="button"
+                        onClick={() => exportStreamEventLog(activeSession)}
+                      >
+                        {streamEventExportSessionId === activeSession.id
+                          ? "已导出事件顺序"
+                          : "导出事件顺序"}
+                      </button>
+                    </div>
                     <div className={styles.traceSummaryGrid}>
                       <article className={styles.summaryCard}>
                         <span>模型</span>
@@ -5846,15 +6991,35 @@ export function AgentConsole({
                 </div>
               </div>
               {!isDraftSessionActive ? (
-                <button
-                  className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
-                  type="button"
-                  onClick={() => exportSessionTrace(activeSession)}
-                >
-                  {sessionTraceActionState?.sessionId === activeSession.id
-                    ? "已导出 trace"
-                    : "导出 trace"}
-                </button>
+                <div className={styles.inspectorExportActions}>
+                  <button
+                    className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
+                    type="button"
+                    onClick={() => exportSessionTrace(activeSession)}
+                  >
+                    {sessionTraceActionState?.sessionId === activeSession.id
+                      ? "已导出 trace"
+                      : "导出 trace"}
+                  </button>
+                  <button
+                    className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
+                    type="button"
+                    onClick={() => exportStreamEventLog(activeSession)}
+                  >
+                    {streamEventExportSessionId === activeSession.id
+                      ? "已导出事件顺序"
+                      : "导出事件顺序"}
+                  </button>
+                  <button
+                    className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
+                    type="button"
+                    onClick={() => exportFeedOrder(activeSession)}
+                  >
+                    {feedOrderExportSessionId === activeSession.id
+                      ? "已导出消息流顺序"
+                      : "导出消息流顺序"}
+                  </button>
+                </div>
               ) : null}
             </section>
 
@@ -6709,7 +7874,7 @@ export function AgentConsole({
                       <span>
                         <strong>在会话流显示模型思考</strong>
                         <small>
-                          开启后，模型返回的 thinking 会以独立卡片显示，完整内容仍保留在运行详情中。
+                          开启后，模型返回的 thinking 会以正文流式展示，完整内容仍保留在运行详情中。
                         </small>
                       </span>
                       <input

@@ -58,6 +58,8 @@ sequenceDiagram
     Agent-->>UI: context_snapshot + model_request
     Agent->>Model: createMessage
     Model-->>Agent: text/thinking/tool_use
+    Agent-->>UI: thinking_delta while model streams reasoning
+    Agent->>Agent: drain thinking_delta before visible follow-up events
     Agent-->>UI: model_response + thinking/status
     alt tool use
       Agent->>Tool: executeTool
@@ -66,6 +68,7 @@ sequenceDiagram
       Agent->>FS: sync task state/memory
       Agent-->>UI: tool_call + tool_result + task_state
     else final answer
+      Agent-->>UI: assistant_delta
       Agent-->>UI: assistant
       Agent-->>UI: run_completed
     end
@@ -116,19 +119,25 @@ sequenceDiagram
 - `context_snapshot`
 - `model_request`
 - `model_response`
+- `thinking_delta`
 - `thinking`
 - `tool_call`
 - `tool_result`
 - `research_state`
 - `task_state`
 - `status`
+- `assistant_delta`
 - `assistant`
 - `step_completed`
 - `run_completed`
 - `error`
 - `done`
 
-前端通过 `applyTraceEventToSession` 把事件合并到当前 session 的 runs、steps、feed 和 messages。`thinking` 事件既进入 step trace，也可以按 Debug 设置在会话流中显示为独立可展开卡片。
+前端通过 `applyTraceEventToSession` 把持久事件合并到当前 session 的 runs、steps、feed 和 messages。
+
+`thinking_delta` 是内存态事件，用于会话栏中流式展示模型 thinking 正文。它不会直接写入 session 持久数据，避免 token 级输出频繁写 localStorage。后端会用 paced emitter 发送 thinking delta；模型响应结束后，如果完整 thinking 还有未展示后缀，后端会继续补发 delta，并在 delta drain 完成后再发送后续可见过程事件。完整 `thinking` 事件到达时，前端立即把内容合并到 step trace，并把同一条展示项写回持久 feed。取消或失败时，前端会把已收到的内存态 thinking 内容写回已有展示项再清理内存态。
+
+`assistant_delta` 是最终整体回复的流式事件。前端用它创建或更新同一条 assistant 消息；完整 `assistant` 事件到达后，前端用最终内容校准这条消息，并把它合并到 run trace。
 
 ## Abort 传播
 

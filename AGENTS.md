@@ -48,7 +48,6 @@ This project is currently in the debugging phase and does not need to adhere to 
 - For architecture or agent behavior changes, update the matching docs under `docs/agent-arch/`, `docs/agent-orchestration.md`, or `docs/runtime-architecture.md`.
 - For component or directory ownership changes, update `docs/component-map.md`.
 - For product-level capability changes, update `docs/project-overview.md`.
-- When documenting historical commit work, add files under `docs/update-log/` using `update-编号-内容概要标题.md`.
 - Keep concept docs separate from implementation docs:
   - `docs/core-concept/` is for foundational concepts.
   - `docs/agent-arch/` is for agent loop, action way, implementation notes, and architecture optimization.

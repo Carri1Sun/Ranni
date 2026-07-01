@@ -149,7 +149,9 @@ Ranni 应该积极使用工具，但不是制造噪音。
 4. 来源较多或内容复杂时写入 `.ranni` source notes、evidence、decisions。
 5. 最终回答区分事实、推论、建议、不确定性。
 
-Deep research 的目标不是固定 trajectory，而是唤起模型自身的研究能力。对于宽问题，Ranni 会鼓励模型先建立研究地图，包括时间窗口、覆盖维度、来源策略和停止规则；中途根据新证据修订研究地图；最终前做 coverage audit。
+Deep research 的目标不是固定 trajectory，而是唤起模型自身的研究能力。对于宽问题，Ranni 会鼓励模型先建立研究地图，包括时间窗口、覆盖维度、来源策略和停止规则；中途根据新证据修订研究地图；必要时在最终前做 coverage audit。
+
+Research finalization guard 按当前对话动态启用。普通介绍、直接回答、自我介绍、用户明确不需要搜索或来源的任务会关闭这个 guard；模型自己进入 research 但用户没有要求来源纪律时只作为 soft research，不强制补后置步骤；明确要求调研、搜索、最新信息、来源、引用、证据、论文或 benchmark 的任务才会进入 strict 策略。strict 策略最多触发一次，并只要求补一个最小研究校验步骤，避免把最终回答变成固定仪式。
 
 用户显式要求的交付结构也是 research map 的一部分。例如用户要求区分来源类型、地区、时间窗口、stakeholder、方法类别或比较轴时，这些要求需要进入 coverage dimensions / source strategy，并在最终回答中保留下来。最终引用修复不能把这些用户要求的结构冲掉。
 

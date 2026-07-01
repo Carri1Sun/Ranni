@@ -16,7 +16,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
 - 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
-- DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；前端可把模型 thinking 作为独立可展开过程卡片展示，并在运行详情中保留完整阅读面板。
+- DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory 等工具。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
@@ -27,7 +27,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 
 ```text
 components/        React UI 组件，核心是 agent-console
-docs/              产品、架构、核心概念和 update log 文档
+docs/              产品、架构和核心概念文档
 lib/agent.ts       Agent 主循环、状态同步、guard、chunked final、trace 事件
 lib/llm/           模型 provider 适配层
 lib/tools.ts       本地工具、网页工具、computer-use 工具、task memory 工具
@@ -182,7 +182,6 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - [Agent 编排理念](docs/agent-orchestration.md)
 - [Harness 核心概念](docs/core-concept/harness.md)
 - [Agent 架构文档](docs/agent-arch/agent-arch-optimize.md)
-- [Update Log](docs/update-log/README.md)
 - [Ranni UI Design System](docs/v1-ranni-design.md)
 - [Ranni UI Requirements](docs/v1-ranni-ui-requirements.md)
 

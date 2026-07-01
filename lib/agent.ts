@@ -34,9 +34,12 @@ const MAX_EMPTY_FINAL_REPAIR_ATTEMPTS = 2;
 const MAX_CHUNKED_FINAL_PARTS = 8;
 const MAX_MODEL_FAILURE_RECOVERY_ATTEMPTS = 1;
 const MAX_RESEARCH_ANSWER_QUALITY_REPAIR_ATTEMPTS = 1;
-const MAX_RESEARCH_FINALIZATION_GUARD_ATTEMPTS = 2;
+const MAX_RESEARCH_FINALIZATION_GUARD_ATTEMPTS = 1;
 const MAX_TOOL_STEPS = 500;
 const MAX_UNSAFE_TOOL_CALL_REPAIR_ATTEMPTS = 2;
+const STREAM_DELTA_TICK_MS = 22;
+const STREAM_DELTA_MIN_CHARS = 4;
+const STREAM_DELTA_MAX_CHARS = 80;
 const RESEARCH_TOOL_NAMES = new Set([
   "plan_research",
   "record_research_finding",
@@ -73,6 +76,8 @@ type ResearchSignals = {
   synthesisBriefWrites: number;
 };
 
+type ResearchFinalizationGuardPolicy = "off" | "soft" | "strict";
+
 type ChunkedFinalState = {
   chunks: string[];
   expectedTotal: number | null;
@@ -107,6 +112,109 @@ function isAbortError(error: unknown) {
 function assertNotAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
     throw createAbortError();
+  }
+}
+
+function sleep(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const abort = () => {
+      clearTimeout(timer);
+      reject(createAbortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function splitStreamDelta(content: string, size: number) {
+  const characters = Array.from(content);
+
+  return {
+    chunk: characters.slice(0, size).join(""),
+    rest: characters.slice(size).join(""),
+  };
+}
+
+function getStreamDeltaChunkSize(pending: string) {
+  const length = Array.from(pending).length;
+
+  if (length <= STREAM_DELTA_MIN_CHARS) {
+    return length;
+  }
+
+  return Math.min(
+    STREAM_DELTA_MAX_CHARS,
+    Math.max(STREAM_DELTA_MIN_CHARS, Math.ceil(length / 32)),
+  );
+}
+
+class PacedTextEmitter {
+  private pending = "";
+  private processing: Promise<void> | undefined;
+
+  constructor(
+    private readonly emitDelta: (delta: string) => void,
+    private readonly signal?: AbortSignal,
+  ) {}
+
+  enqueue(delta: string) {
+    if (!delta) {
+      return;
+    }
+
+    this.pending += delta;
+
+    if (!this.processing) {
+      this.start();
+    }
+  }
+
+  async drain() {
+    while (this.pending || this.processing) {
+      await (this.processing ?? Promise.resolve());
+    }
+  }
+
+  private start() {
+    this.processing = this.flush().catch((error) => {
+      if (isAbortError(error)) {
+        this.pending = "";
+        return;
+      }
+
+      throw error;
+    });
+  }
+
+  private async flush() {
+    try {
+      while (this.pending) {
+        assertNotAborted(this.signal);
+
+        const { chunk, rest } = splitStreamDelta(
+          this.pending,
+          getStreamDeltaChunkSize(this.pending),
+        );
+        this.pending = rest;
+        this.emitDelta(chunk);
+        await sleep(STREAM_DELTA_TICK_MS, this.signal);
+      }
+    } finally {
+      this.processing = undefined;
+
+      if (this.pending && !this.signal?.aborted) {
+        this.start();
+      }
+    }
   }
 }
 
@@ -947,7 +1055,7 @@ function updateResearchSignals({
 
 function isNonTrivialResearchRequest(prompt: string, taskState: TaskState) {
   const researchIntent =
-    /调研|研究|搜索|总结|综述|介绍|最新|学术|工业|方法论|评测|benchmark|survey|research|compare|comparison|landscape|state of/i.test(
+    /调研|研究|搜索|查找|检索|资料|来源|引用|证据|综述|最新|学术|工业|方法论|评测|benchmark|survey|research|compare|comparison|landscape|state of/i.test(
       prompt,
     );
   const stateSuggestsResearch =
@@ -959,18 +1067,74 @@ function isNonTrivialResearchRequest(prompt: string, taskState: TaskState) {
   return researchIntent || stateSuggestsResearch;
 }
 
+function getResearchFinalizationGuardPolicy({
+  latestUserPrompt,
+  taskState,
+}: {
+  latestUserPrompt: string;
+  taskState: TaskState;
+}): ResearchFinalizationGuardPolicy {
+  const prompt = latestUserPrompt.trim();
+  const stateText = [
+    taskState.deliverable,
+    taskState.nextAction,
+    ...taskState.plan,
+    ...taskState.successCriteria,
+  ].join("\n");
+
+  if (
+    /自我介绍|不用搜索|无需搜索|不用查|无需查|直接回答|凭已有知识|不需要引用|不需要来源|简单介绍/i.test(
+      prompt,
+    )
+  ) {
+    return "off";
+  }
+
+  if (
+    /深度?调研|调研|研究|搜索|查找|检索|资料|来源|引用|证据|最新|近况|论文|学术|评测|benchmark|survey|research|landscape|state of|citation|source|evidence/i.test(
+      prompt,
+    )
+  ) {
+    return "strict";
+  }
+
+  if (/来源|引用|证据|覆盖|coverage|source|citation|evidence/i.test(stateText)) {
+    return "strict";
+  }
+
+  if (taskState.currentMode === "research") {
+    return "soft";
+  }
+
+  if (
+    taskState.plan.some((item) =>
+      /research|source|evidence|coverage|调研|来源|证据|覆盖/i.test(item),
+    )
+  ) {
+    return "soft";
+  }
+
+  return "off";
+}
+
 function shouldRunResearchFinalizationGuard({
   guardCount,
   latestUserPrompt,
+  policy,
   signals,
   taskState,
 }: {
   guardCount: number;
   latestUserPrompt: string;
+  policy: ResearchFinalizationGuardPolicy;
   signals: ResearchSignals;
   taskState: TaskState;
 }) {
   if (guardCount >= MAX_RESEARCH_FINALIZATION_GUARD_ATTEMPTS) {
+    return false;
+  }
+
+  if (policy !== "strict") {
     return false;
   }
 
@@ -1001,16 +1165,16 @@ function shouldRunResearchFinalizationGuard({
     return true;
   }
 
-  if (signals.fetchUrlCount >= 1 && !hasRecordedEvidence) {
+  if (signals.fetchUrlCount >= 2 && !hasRecordedEvidence) {
     return true;
   }
 
-  if (signals.searchWebCount >= 3 && !hasCoverageReview) {
+  if (signals.searchWebCount >= 4 && !hasCoverageReview) {
     return true;
   }
 
   if (
-    signals.searchWebCount + signals.fetchUrlCount >= 6 &&
+    signals.searchWebCount + signals.fetchUrlCount >= 8 &&
     !hasExternalMemory
   ) {
     return true;
@@ -1394,6 +1558,49 @@ export async function runAgentTurn({
     type: "status",
   });
 
+  let lastAssistantStreamMessage = "";
+  const emitAssistantMessage = async ({
+    message,
+    stepId,
+    stepIndex,
+  }: {
+    message: string;
+    stepId: string;
+    stepIndex: number;
+  }) => {
+    assertNotAborted(signal);
+
+    const shouldReset = !message.startsWith(lastAssistantStreamMessage);
+    const deltaSource = shouldReset
+      ? message
+      : message.slice(lastAssistantStreamMessage.length);
+    let isFirstDelta = true;
+    const assistantEmitter = new PacedTextEmitter((delta) => {
+      emit({
+        delta,
+        ...(shouldReset && isFirstDelta ? { reset: true } : {}),
+        runId,
+        stepId,
+        stepIndex,
+        timestamp: Date.now(),
+        type: "assistant_delta",
+      });
+      isFirstDelta = false;
+    }, signal);
+
+    assistantEmitter.enqueue(deltaSource);
+    await assistantEmitter.drain();
+    lastAssistantStreamMessage = message;
+
+    emit({
+      message,
+      runId,
+      stepId,
+      stepIndex,
+      type: "assistant",
+    });
+  };
+
   let completedSteps = 0;
   let currentStepId: string | undefined;
   let currentStepIndex: number | undefined;
@@ -1469,12 +1676,31 @@ export async function runAgentTurn({
       assertNotAborted(signal);
 
       let assistantResult: Awaited<ReturnType<typeof createMessage>>;
+      let streamedThinking = "";
+      const thinkingEmitter = new PacedTextEmitter((delta) => {
+        emit({
+          delta,
+          runId,
+          stepId,
+          stepIndex,
+          timestamp: Date.now(),
+          type: "thinking_delta",
+        });
+      }, signal);
 
       try {
         assistantResult = await createMessage({
           system,
           messages: conversation,
           modelConfig,
+          onThinkingDelta: ({ delta }) => {
+            if (!delta) {
+              return;
+            }
+
+            streamedThinking += delta;
+            thinkingEmitter.enqueue(delta);
+          },
           onRetry: ({ attempt, reason }) => {
             const message = `${runtime.model} 服务暂时不稳定，正在自动重试（${attempt}/1）。原因：${reason}`;
 
@@ -1493,6 +1719,10 @@ export async function runAgentTurn({
       } catch (error) {
         if (signal?.aborted || isAbortError(error)) {
           throw error;
+        }
+
+        if (streamedThinking.trim()) {
+          await thinkingEmitter.drain();
         }
 
         if (
@@ -1567,14 +1797,6 @@ export async function runAgentTurn({
 
       assertNotAborted(signal);
 
-      emit({
-        response: assistantResult.response,
-        runId,
-        stepId,
-        stepIndex,
-        type: "model_response",
-      });
-
       const blocks = assistantResult.message.content;
       conversation.push({
         role: "assistant",
@@ -1586,14 +1808,14 @@ export async function runAgentTurn({
       const toolUseBlocks = getToolUseBlocks(blocks);
 
       if (thinking) {
-        emit({
-          message: thinking,
-          runId,
-          stepId,
-          stepIndex,
-          timestamp: Date.now(),
-          type: "status",
-        });
+        const missingThinking = thinking.startsWith(streamedThinking)
+          ? thinking.slice(streamedThinking.length)
+          : streamedThinking.trim()
+            ? ""
+            : thinking;
+
+        thinkingEmitter.enqueue(missingThinking);
+        await thinkingEmitter.drain();
 
         emit({
           message: thinking,
@@ -1603,7 +1825,17 @@ export async function runAgentTurn({
           timestamp: Date.now(),
           type: "thinking",
         });
+      } else if (streamedThinking.trim()) {
+        await thinkingEmitter.drain();
       }
+
+      emit({
+        response: assistantResult.response,
+        runId,
+        stepId,
+        stepIndex,
+        type: "model_response",
+      });
 
       if (toolUseBlocks.length === 0) {
         const responseWasTruncated = isLengthStopReason(
@@ -1694,14 +1926,12 @@ export async function runAgentTurn({
           });
           candidateFinalMessage = renderChunkedFinal(chunkedFinalState);
 
-          emit({
+          await emitAssistantMessage({
             message: chunkedPart.done
               ? candidateFinalMessage
               : `${candidateFinalMessage}\n\n（未完，正在继续生成下一部分…）`,
-            runId,
             stepId,
             stepIndex,
-            type: "assistant",
           });
 
           if (!chunkedPart.done) {
@@ -1791,10 +2021,17 @@ export async function runAgentTurn({
           continue;
         }
 
+        const researchFinalizationGuardPolicy =
+          getResearchFinalizationGuardPolicy({
+            latestUserPrompt,
+            taskState,
+          });
+
         if (
           shouldRunResearchFinalizationGuard({
             guardCount: researchFinalizationGuardCount,
             latestUserPrompt,
+            policy: researchFinalizationGuardPolicy,
             signals: researchSignals,
             taskState,
           })
@@ -1803,13 +2040,13 @@ export async function runAgentTurn({
           applyTaskPatch({
             currentMode: "research",
             nextAction:
-              "补足研究证据、覆盖审查或外部记忆后再综合最终结论。",
+              "补一个最小 research 校验步骤，再综合最终结论。",
           });
           await syncTaskMemory();
           emitTaskState();
           emit({
             message:
-              "检测到调研轨迹还缺少证据核验或覆盖审查，继续补足 research 信号。",
+              "这类问题需要更可靠的来源或覆盖确认，先补一个最小研究步骤。",
             runId,
             stepId,
             stepIndex,
@@ -1958,12 +2195,10 @@ export async function runAgentTurn({
         const finalMessage =
           candidateFinalMessage || "任务已完成，但模型没有返回可显示文本。";
 
-        emit({
+        await emitAssistantMessage({
           message: finalMessage,
-          runId,
           stepId,
           stepIndex,
-          type: "assistant",
         });
 
         completedSteps = stepIndex;

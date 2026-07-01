@@ -14,6 +14,7 @@
 - [一级页面结构](#一级页面结构)
 - [导航栏](#导航栏)
 - [会话栏子结构](#会话栏子结构)
+- [消息流展示触发类型](#消息流展示触发类型)
 - [目录选择弹窗](#目录选择弹窗)
 - [任务上限弹窗](#任务上限弹窗)
 - [报告页](#报告页)
@@ -69,12 +70,49 @@
 | 用户消息 | User Message | 用户发送的消息卡片。 |
 | Assistant 消息 | Assistant Message | 模型最终回复卡片。 |
 | 过程项 | Process Item / Activity | 工具调用、状态、thinking、错误等运行过程展示。 |
-| Thinking 卡片 | Thinking Card | 模型 thinking 的可展开过程卡片。 |
+| Thinking 正文 | Thinking Text | 模型 thinking 的流式正文展示。 |
+| Run 生命周期行 | Run Lifecycle Line | run 开始、完成、失败、终止的一行弱提示。 |
 | 消息工具条 | Message Toolbar | 复制、导出 `.md` 等按钮。 |
 | 回到底部按钮 | Scroll To Bottom | 消息流未到底部时出现。 |
 | 底部输入区 | Composer | 已创建 session 的输入区。 |
 | 发送按钮 | Send Button | 提交当前输入。 |
 | 停止按钮 | Stop Button | 运行中替换发送按钮。 |
+
+## 消息流展示触发类型
+
+这张表定义“什么输入会在消息流中新增或更新一条可见内容”。后续新增过程样式、消息样式或事件类型时，先更新这里，再改组件和 CSS。
+
+### 会展示的触发源
+
+| 触发源 | 当前 UI 名称 | 英文名 | 展示行为 | 备注 |
+| --- | --- | --- | --- | --- |
+| 用户发送消息 | 用户消息 | User Message | 新增一条消息卡片。 | `FeedMessage`，由前端提交时写入。 |
+| `assistant_delta` | Assistant 消息 | Assistant Message | 创建或更新同一条 assistant 消息卡片。 | 流式更新最终整体回复。 |
+| `assistant` | Assistant 消息 | Assistant Message | 校准或新增完整 assistant 消息卡片。 | 完整最终回复，同时进入 run trace。 |
+| `run_started` | Run 生命周期行 | Run Lifecycle Line | 新增一行弱提示。 | 显示 run 开始。 |
+| `run_completed` | Run 生命周期行 | Run Lifecycle Line | 新增一行弱提示。 | 显示 run 完成、失败或取消。 |
+| `step_completed`，状态为 `failed` / `cancelled` | Run 生命周期行 / 错误过程项 | Run Lifecycle Line / Error Activity | 新增一条失败或终止提示。 | `completed` 状态当前不展示。 |
+| `status` | 状态过程项 | Status Activity | 新增一条状态过程项。 | 用于模型重试、运行提示等短状态。 |
+| `task_state`，关键签名变化 | 任务状态过程项 | Task State Activity | 新增一条任务状态过程项。 | 签名为 current mode、next action、verification status。 |
+| `thinking_delta` | Thinking 正文 | Thinking Text | 创建或更新同一条 thinking 正文。 | 受 Debug 设置中的 thinking 展示开关影响。 |
+| `thinking` | Thinking 正文 | Thinking Text | 校准或补齐同一条 thinking 正文。 | 完整内容进入 step trace。 |
+| `tool_call` | 工具调用过程项 | Tool Call Activity | 新增一条工具调用过程项。 | 后续可能被模型改写展示文案。 |
+| `tool_result` | 工具结果过程项 | Tool Result Activity | 新增一条工具结果过程项。 | 显示成功/失败、耗时和摘要。 |
+| `research_state` | 研究状态过程项 | Research Activity | 新增一条研究状态过程项。 | 同步 research notebook 摘要。 |
+| `error` | 错误过程项 | Error Activity | 新增一条错误过程项。 | 用于接口、模型或工具层错误。 |
+| 用户点击停止按钮 | 手动终止过程项 | Manual Stop Activity | 新增一条终止提示。 | 前端本地动作，同时 abort 当前 run。 |
+
+### 当前不新增消息流内容的事件
+
+| 触发源 | 行为 | 备注 |
+| --- | --- | --- |
+| `step_started` | 更新运行详情选中 step。 | 消息流不新增内容。 |
+| `context_snapshot` | 写入 run / step trace。 | 消息流不新增内容。 |
+| `model_request` | 写入 run / step trace。 | 消息流不新增内容。 |
+| `model_response` | 写入 run / step trace。 | 消息流不新增内容。 |
+| `step_completed`，状态为 `completed` | 写入 step trace。 | 成功 step 完成当前不新增内容。 |
+| `done` | 标记 `/api/chat` 流结束。 | 消息流不新增内容。 |
+| 活动文案改写结果 | 更新已有过程项。 | 不新增消息流条目，只改写标题、说明、图标或 meta。 |
 
 ### 草稿页状态
 
@@ -122,12 +160,14 @@
 | Step 列表 | Step List | 当前 run 下的 step。 |
 | Trace 详情面板 | Trace Detail Panel | 右侧详细 trace 内容。 |
 | Trace 区块 | Trace Block | System Prompt、Model Request、Tool Calls 等内容块。 |
+| 事件顺序导出按钮 | Event Order Export Button | 导出当前 session 的前端流事件接收和展示处理顺序。 |
+| 消息流顺序导出按钮 | Feed Order Export Button | 导出当前 session 的消息流实际 UI 展示顺序。 |
 
 ## 运行状态栏
 
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
-| 会话信息 | Session Info | 顶部集中区：更新时间、并行任务数量、工作目录、导出 trace；草稿态隐藏导出。 |
+| 会话信息 | Session Info | 顶部集中区：更新时间、并行任务数量、工作目录、导出 trace、导出事件顺序、导出消息流顺序；草稿态隐藏导出。 |
 | 当前 Run | Current Run | 当前选中或最近 run 的摘要。 |
 | Task State 面板 | Task State Panel | goal、next action、verification 等。 |
 | Step 进度 | Step Progress | 当前 run 的 step 列表。 |

@@ -167,6 +167,14 @@ export type StreamEvent =
       type: "model_response";
     }
   | {
+      delta: string;
+      runId: string;
+      stepId: string;
+      stepIndex: number;
+      timestamp: number;
+      type: "thinking_delta";
+    }
+  | {
       message: string;
       runId: string;
       stepId: string;
@@ -217,6 +225,15 @@ export type StreamEvent =
       stepIndex?: number;
       timestamp: number;
       type: "status";
+    }
+  | {
+      delta: string;
+      reset?: boolean;
+      runId: string;
+      stepId: string;
+      stepIndex: number;
+      timestamp: number;
+      type: "assistant_delta";
     }
   | {
       message: string;

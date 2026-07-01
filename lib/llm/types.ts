@@ -62,6 +62,7 @@ export type AgentAssistantMessage = {
 export type CreateAgentMessageOptions = {
   messages: AgentMessage[];
   modelConfig?: ModelConnectionConfig;
+  onThinkingDelta?: (payload: { delta: string }) => void;
   onRetry?: (payload: { attempt: number; reason: string }) => void;
   signal?: AbortSignal;
   system: string;

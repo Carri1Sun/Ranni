@@ -10,7 +10,7 @@
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
 | `lib/` | Agent loop、工具、模型适配、trace、workspace、task memory |
-| `docs/` | 产品、架构、核心概念、update log |
+| `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
 | `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
 
@@ -41,8 +41,10 @@
 - chat / report / trace 三个页面。
 - `/api/chat` NDJSON 流读取。
 - run、step、tool、task state、thinking trace 的前端合并。
+- thinking delta 的前端内存态展示、最终 thinking 持久化切换和 assistant delta 消息更新。
+- 前端流事件顺序日志、消息流 UI 顺序和导出。
 - 最多 3 个并行 agent run 的前端状态、按 session 终止和上限弹窗。
-- 会话过程项的本地摘要、模型改写回填、thinking 卡片、图标展示和 debug info 浮窗。
+- 会话过程项的本地摘要、模型改写回填、图标展示和 debug info 浮窗。
 - 手动终止运行。
 - assistant 消息复制、导出 markdown。
 - session 级 trace 导出，包含未完成 run。
@@ -68,6 +70,7 @@
 - Trace 页面。
 - 运行状态栏。
 - 会话过程项、运行中状态 badge、扫光动效。
+- Run 生命周期弱提示和 thinking 正文流式/渐进展示。
 - 设置弹窗。
 - workspace picker。
 - provider list。
@@ -141,7 +144,7 @@ Agent 主循环。
 - 执行工具。
 - 同步 task state、task memory、research state。
 - 触发 completion guard、final answer repair、unsafe tool-call guard。
-- 输出 trace stream events。
+- 输出 trace stream events，包括内存态 `thinking_delta`、`assistant_delta` 和最终持久化事件。
 - 处理 abort/cancel。
 
 ### `lib/tools.ts`
@@ -254,6 +257,7 @@ OpenAI-compatible 通用 provider。
 
 - 构造 chat completions 请求。
 - 解析 text、thinking、tool calls。
+- 解析 OpenAI-compatible Chat Completions 流式响应，向 agent 回传 thinking delta。
 - 保留 raw tool input 和 JSON parse error。
 - 处理 retry。
 - 支持 abort。

@@ -936,6 +936,8 @@ export function createServerApp() {
     );
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.flushHeaders();
 
     const abortController = new AbortController();
     let completed = false;
