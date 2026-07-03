@@ -631,20 +631,21 @@
 }
 
 .activity {
-  align-self: stretch;
+  align-self: flex-start;
   flex: none;
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-3);
-  margin: 0 4%;
+  gap: var(--space-1);
+  width: 92%;
+  margin: 0;
   min-height: 58px;
   overflow: hidden;
   padding: 11px 12px;
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-md);
-  background: var(--ranni-subtle-surface);
+  background: transparent;
 }
 
 .activityActive {
@@ -735,12 +736,12 @@
 }
 
 .runLifecycleLine {
-  align-self: center;
+  align-self: flex-start;
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin: 2px auto;
+  margin: 2px 0;
   color: var(--ranni-text-3);
   font-size: 12px;
   line-height: 1.45;
@@ -757,9 +758,10 @@
 }
 
 .thinkingInline {
-  align-self: stretch;
+  align-self: flex-start;
   flex: none;
-  margin: 0 7%;
+  width: 86%;
+  margin: 0;
   color: var(--ranni-text-2);
 }
 
@@ -833,33 +835,78 @@
 }
 
 .status {
-  border-color: var(--ranni-line-1);
-  background: var(--ranni-info-soft);
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: flex-start;
+  min-height: 20px;
+  padding: 8px 10px;
+  overflow: visible;
+  border-color: rgba(134, 199, 255, 0.1);
+  border-radius: var(--radius-sm);
+  background: rgba(134, 199, 255, 0.035);
+}
+
+.status.activityActive {
+  border-color: rgba(134, 199, 255, 0.16);
+  box-shadow: 0 0 0 1px rgba(134, 199, 255, 0.04);
+}
+
+.status.activityActive::after {
+  display: none;
+}
+
+.status .activityIcon {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ranni-text-3);
+}
+
+.status .activityContent {
+  display: grid;
+  gap: 2px;
+}
+
+.status .activityTopLine {
+  flex: none;
+}
+
+.status .activityTopLine span {
+  display: none;
+}
+
+.status .activityContent p {
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .tool_call {
   border-color: rgba(169, 150, 255, 0.24);
-  background: rgba(169, 150, 255, 0.08);
+  background: transparent;
 }
 
 .tool_result {
   border-color: var(--ranni-line-1);
-  background: var(--ranni-success-soft);
+  background: transparent;
 }
 
 .step {
   border-color: rgba(134, 199, 255, 0.22);
-  background: var(--ranni-info-soft);
+  background: transparent;
 }
 
 .state {
   border-color: rgba(200, 178, 125, 0.26);
-  background: var(--ranni-gold-soft);
+  background: transparent;
 }
 
 .research {
   border-color: rgba(104, 214, 163, 0.24);
-  background: rgba(104, 214, 163, 0.07);
+  background: transparent;
 }
 
 .thinking {
@@ -873,7 +920,7 @@
 
 .error {
   border-color: rgba(164, 59, 69, 0.28);
-  background: var(--ranni-danger-soft);
+  background: transparent;
 }
 
 .tool_call .activityIcon {

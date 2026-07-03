@@ -82,6 +82,32 @@
 
 这张表定义“什么输入会在消息流中新增或更新一条可见内容”。后续新增过程样式、消息样式或事件类型时，先更新这里，再改组件和 CSS。
 
+### UI 元素类型
+
+代码里的消息流数据结构是 `FeedItem = FeedMessage | FeedActivity`，渲染入口在 `components/agent-console.tsx` 的 `activeSession.feed.map(...)`。
+
+| UI 元素类型 | 代码定义 / 识别条件 | 展示逻辑 | 流式 / 更新逻辑 | 对齐方式 |
+| --- | --- | --- | --- | --- |
+| 用户消息 | `FeedMessage`，`kind: "message"`，`role: "user"` | 渲染为消息卡片，使用 `message userMessage`；正文用普通 `<p>` 展示，保留换行。 | 用户提交时新增一条；当前没有流式输出，提交后通常不再更新。 | 在消息流右侧对齐，`align-self: flex-end`；宽度按内容收缩，最大 `min(88%, 900px)`。 |
+| Assistant 消息 | `FeedMessage`，`kind: "message"`，`role: "assistant"` | 渲染为消息卡片，使用 `message assistantMessage`；正文走 Markdown 渲染；底部带复制和导出 `.md` 的消息工具条。 | `assistant_delta` 创建或更新同一条消息，形成流式输出；`assistant` 用最终内容校准或补齐同一条消息。 | 在消息流左侧对齐，`align-self: flex-start`；宽度按内容收缩，最大 `min(88%, 900px)`。 |
+| Run 生命周期行 | `FeedActivity`，`eventType` 为 `run_started` / `run_completed` / `step_completed` | 渲染为一行弱提示，使用 `runLifecycleLine`；包含小图标和短标题；失败状态追加红色样式。 | 每个生命周期事件新增一行；没有流式输出；当前不会改写已有生命周期行。 | 在消息流左侧对齐，`align-self: flex-start`，`margin: 2px 0`。 |
+| 状态过程项 | `FeedActivity`，`type: "status"` | 渲染为浅背景、浅边框的行内过程项；左侧 20x20 无背景图标；右侧第一行展示标题，第二行展示 detail；meta 不展示；标题不换行，detail 空间不足时换行。 | 每个 `status` 事件新增一行；当前没有流式输出；后续收到内容相同的 `thinking` 事件时可能移除重复状态行。 | 在消息流左侧对齐，`align-self: flex-start`；宽度为 `92%`。 |
+| Thinking 正文 | `FeedActivity`，`type: "thinking"` | 渲染为正文文本块，使用 `thinkingInline`；内容放在 `<pre>`，保留换行和空白；活动中显示闪烁光标。 | `thinking_delta` 按 run / step 复用同一条正文并持续追加；`thinking` 用最终内容补齐或校准；受 Debug 设置中的 thinking 展示开关控制。 | 在消息流左侧对齐，`align-self: flex-start`；宽度为 `86%`。 |
+| 过程项 | `FeedActivity`，除 Run 生命周期行、状态过程项和 Thinking 正文外的 activity | 渲染为透明背景的过程卡片，使用 `activity` + `type` class；卡片内包含图标、标题、可选 meta、单行 detail，开启过程详情时显示信息按钮。 | 默认按事件新增一张卡片；工具调用过程项可能被活动文案改写结果更新 `display`；最新活动项在运行中显示 active 动效。 | 在消息流左侧对齐，`align-self: flex-start`；宽度为 `92%`。 |
+
+`FeedActivity.type` 当前代码定义为：
+
+| `ActivityType` | 当前 UI 名称 | 套用的 UI 元素类型 | 展示 / 更新逻辑 |
+| --- | --- | --- | --- |
+| `status` | 状态过程项 | 状态过程项 | 模型重试、运行提示等短状态；每个 `status` 事件新增一行浅背景、浅边框的状态过程项。 |
+| `tool_call` | 工具调用过程项 | 过程项 | 工具开始调用时新增一张过程卡片；后续活动文案改写可能更新标题、说明、图标或 meta。 |
+| `tool_result` | 工具结果过程项 | 过程项 | 工具返回后新增一张过程卡片；展示成功/失败、耗时和摘要。 |
+| `error` | 错误过程项 | 过程项 / Run 生命周期行 | 普通 `error` 事件展示为错误过程卡片；失败的 run / step 生命周期事件展示为红色生命周期行。 |
+| `step` | Run 生命周期行 / 手动终止过程项 | Run 生命周期行或过程项 | `run_started`、非失败 `run_completed`、取消的 `step_completed` 展示为生命周期行；用户点击停止按钮新增一张手动终止过程卡片。 |
+| `state` | 任务状态过程项 | 过程项 | `task_state` 的 current mode、next action、verification status 签名变化时新增一张过程卡片；重复签名不新增。 |
+| `research` | 研究状态过程项 | 过程项 | `research_state` 到达时新增一张过程卡片，并同步更新 session 的 research context。 |
+| `thinking` | Thinking 正文 | Thinking 正文 | `thinking_delta` 流式追加到同一条正文，`thinking` 负责最终校准。 |
+
 ### 会展示的触发源
 
 | 触发源 | 当前 UI 名称 | 英文名 | 展示行为 | 备注 |

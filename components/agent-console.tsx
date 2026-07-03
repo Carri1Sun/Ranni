@@ -1000,7 +1000,7 @@ function createStatusDisplay(message: string): ActivityDisplay {
 
   return {
     detail: compactMessage,
-    icon: "activity",
+    icon: "state",
     meta: "status",
     source: "fallback",
     title: "更新运行状态",
