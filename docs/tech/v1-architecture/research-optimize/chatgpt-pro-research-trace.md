@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-12
+---
+
 Pro thinking
 Planning comprehensive agent evaluation research
 The user asked for a detailed summary on the latest in academic and industry work regarding Agent evaluation. I need to browse current sources and provide citations for factual claims. I'll focus on collecting recent papers, benchmarks like GAIA, AgentBench, and others, and maybe ask if they care about specific areas (coding or browser). I’ll get started without delay.

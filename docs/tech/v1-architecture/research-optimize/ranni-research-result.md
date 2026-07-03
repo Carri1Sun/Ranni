@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-12
+---
+
 # 🔬 AI Agent 评测：2024–2025 学术与工业界全景调研
 
 > 来源覆盖 arXiv、OpenAI、Anthropic、Google DeepMind、UC Berkeley RDI、Stanford HAI 等一手渠道，覆盖 15+ 评测基准、3 大工业界评测体系、评测方法论前沿及 5 大核心挑战。

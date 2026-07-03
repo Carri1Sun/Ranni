@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-12
+---
+
 # Deep Research Quality Rubric
 
 这份 rubric 用于评估 Ranni deep research run 的结果和可见 trajectory。它不是固定执行流程，而是用于分析模型能力是否被 harness、prompt、工具和文件记忆充分唤起。

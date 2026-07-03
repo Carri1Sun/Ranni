@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-06-29
+---
+
 # Project Overview
 
 Ranni 是一个本地优先的 AI Agent 网页工作台。它的目标不是做一个普通聊天界面，而是让用户选择本机一个项目目录，然后让 agent 在这个目录内理解任务、调用工具、编辑文件、运行命令、记录证据并交付结果。

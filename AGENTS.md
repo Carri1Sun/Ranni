@@ -45,12 +45,24 @@ This project is currently in the debugging phase and does not need to adhere to 
 ## Documentation Rules
 
 - Keep README aligned with current user-facing functionality and startup instructions.
-- For architecture or agent behavior changes, update the matching docs under `docs/agent-arch/`, `docs/agent-orchestration.md`, or `docs/runtime-architecture.md`.
-- For component or directory ownership changes, update `docs/component-map.md`.
-- For product-level capability changes, update `docs/project-overview.md`.
+- Use the current docs taxonomy:
+  - `docs/tech/` stores technical and architecture documents.
+  - `docs/product/` stores product and UI design documents.
+  - `docs/manuel/` stores usage guidance and teaching documents.
+- Every markdown document under `docs/` must start with metadata front matter:
+  - `author: <name>`
+  - `version: <version>`
+  - `date: YYYY-MM-DD`
+- When creating or editing docs, preserve or add the metadata front matter. Use the file creation date for `date` when available; if unavailable, use the current date.
+- Default docs metadata is `author: codex` and `version: v1`.
+- Documents under `docs/tech/v2-architecture/` use `author: manus` and `version: v2`.
+- For architecture or agent behavior changes, update the matching docs under `docs/tech/`.
+- For component or directory ownership changes, update `docs/tech/v1-architecture/component-map.md` or the current matching tech architecture document.
+- For product-level UI or capability changes, update the matching docs under `docs/product/`.
+- For user-facing usage guidance changes, update the matching docs under `docs/manuel/`.
 - Keep concept docs separate from implementation docs:
-  - `docs/core-concept/` is for foundational concepts.
-  - `docs/agent-arch/` is for agent loop, action way, implementation notes, and architecture optimization.
+  - `docs/tech/**/core-concept/` is for foundational concepts.
+  - `docs/tech/**/agent-arch/` is for agent loop, action way, implementation notes, and architecture optimization.
 
 ## Verification
 

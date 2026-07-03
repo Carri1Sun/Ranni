@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-12
+---
+
 # Research Optimize Iteration Notes
 
 ## 初始对比

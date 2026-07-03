@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-04
+---
+
 我建议你不要只给 ranni 一堆工具说明，而是给它一套“动作模式协议”。也就是：每次行动前先选择当前 mode；每个 mode 有进入条件、允许动作、退出条件、风险边界。这样它会更像一个可靠的人类工作者，而不是随机调用工具的模型。
 
 这个方向和目前公开的 agent 实践基本一致：Anthropic 的 agent 经验总结强调“简单、可组合的模式”通常比复杂框架更可靠，并建议复杂度只在能证明提升效果时增加；OpenAI 的 agent 指南也把工具分成 data/action/orchestration，并强调 run loop、工具定义、guardrails 和 human-in-the-loop。ReAct 论文的核心也是把“思考/计划”和“行动/观察”交替进行，而不是一次性想完再乱跑。([Anthropic][1])

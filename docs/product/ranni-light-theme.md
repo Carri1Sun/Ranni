@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-04-26
+---
+
 # Ranni Light Theme — Ivory Moon UI
 
 > 给 coding agent 使用的浅色模式改造说明。目标是在不破坏现有功能、后端 API、状态逻辑和暗色模式的前提下，为 Ranni 实现一套稳定、有品位、可读性好的浅色主题。

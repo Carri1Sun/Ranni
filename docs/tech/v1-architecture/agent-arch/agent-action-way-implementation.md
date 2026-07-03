@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-04
+---
+
 # Agent Action Way Implementation
 
 这份文档记录 `effective-agent-action-way.md` 中已经落地的部分。

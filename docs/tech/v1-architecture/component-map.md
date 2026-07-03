@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-06-22
+---
+
 # Component Map
 
 这份文档用于快速定位 Ranni 当前核心目录、核心文件和它们的职责。

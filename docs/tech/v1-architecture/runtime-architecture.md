@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-16
+---
+
 # Runtime Architecture
 
 这份文档说明 Ranni 当前运行时架构：浏览器 UI、Express 服务端、模型 provider、工具执行、workspace 边界和 trace 流如何协作。

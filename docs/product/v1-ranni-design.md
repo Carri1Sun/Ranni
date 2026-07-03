@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-04-26
+---
+
 # Ranni UI Design System — Moonlit Research Workbench
 
 版本：v1.0  

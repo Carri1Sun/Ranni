@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-04-26
+---
+
 # Ranni UI Refactor Requirements v1.0
 
 ## 1. Goal

@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-04
+---
+
 # Agent Orchestration
 
 这份文档记录 Ranni 当前 agent 编排理念和实现结构。它面向后续需求设计，用于回答：Ranni 怎么驾驭 LLM，哪些事情交给模型判断，哪些事情由 harness 兜底。

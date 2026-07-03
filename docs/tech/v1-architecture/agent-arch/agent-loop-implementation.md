@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-04
+---
+
 # Agent Loop Implementation
 
 这份文档记录当前已经落地的 agent loop 优化。它对应 `effective-agent-loop.md` 里的方向，覆盖任务状态、显式状态更新、验证守卫、持久化任务记忆，以及运行状态栏可观测性。

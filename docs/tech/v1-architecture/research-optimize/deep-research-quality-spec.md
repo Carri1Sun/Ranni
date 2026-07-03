@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-12
+---
+
 # Deep Research Quality Spec
 
 这份 spec 定义 deep research 最终产物的质量目标。它服务于 judge harness、人工 review 和后续 prompt / tool / guard 迭代。

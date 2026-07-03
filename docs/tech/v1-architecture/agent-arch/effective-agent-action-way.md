@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-04
+---
+
 对，你说的这些应该单独做成一类：**Stateful Effective Actions**。它们不是普通工具调用，而是让 agent 把任务状态、搜索计划、证据、失败路径、下一步行动外部化到文件里。这样 agent 不会完全依赖上下文窗口。
 
 这和现在比较成熟的 agent 设计思路一致：Anthropic 把“context engineering”描述为为 agent 管理有限上下文的策略，并明确提到长任务需要 compaction、note-taking、多 agent 等方法；LangChain 也把 context engineering 分成 write、select、compress、isolate，其中 write context 就包括把 scratchpad / notes 写到上下文窗口外。([Anthropic][1])

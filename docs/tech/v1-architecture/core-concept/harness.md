@@ -1,3 +1,9 @@
+---
+author: codex
+version: v1
+date: 2026-05-03
+---
+
 # Harness
 
 ## 一句话定义
