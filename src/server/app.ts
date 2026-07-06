@@ -20,6 +20,7 @@ import {
   testComputerUseConnection,
   testTavilyConnection,
 } from "../../lib/tools";
+import { listSkillIndices } from "../../lib/skills/registry";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -59,11 +60,13 @@ const modelSettingsSchema = z
   }));
 
 const toolSettingsSchema = z.object({
+  activeSkills: z.array(z.string().trim().min(1)).max(24).optional().default([]),
   computerUseApiKey: optionalSecretSchema,
   computerUseModel: optionalSecretSchema,
   tavilyApiKey: optionalSecretSchema,
 });
 const defaultToolSettings = {
+  activeSkills: [],
   computerUseApiKey: undefined,
   computerUseModel: undefined,
   tavilyApiKey: undefined,
@@ -524,6 +527,15 @@ export function createServerApp() {
       hasApiKey: hasModelApiKey(),
       runtimeInfo: getModelRuntimeInfo(),
       workspaceRoot: getWorkspaceRoot(),
+    });
+  });
+
+  app.get("/api/skills", (_request, response) => {
+    response.json({
+      ok: true,
+      result: {
+        skills: listSkillIndices(),
+      },
     });
   });
 

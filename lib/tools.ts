@@ -31,8 +31,15 @@ import {
   resolveWorkspacePath,
   toWorkspaceRelative,
 } from "./workspace";
+import {
+  getSkillBody,
+  getSkillTools,
+  hasSkill,
+  normalizeSkillNames,
+} from "./skills/registry";
 
 export type ToolSettings = {
+  activeSkills?: string[];
   computerUseApiKey?: string;
   computerUseModel?: string;
   tavilyApiKey?: string;
@@ -43,12 +50,14 @@ export type ToolExecutionContext = {
   signal?: AbortSignal;
   taskMemory?: TaskMemory;
   taskState?: TaskState;
+  activeSkillNames?: string[];
+  activateSkill?: (name: string) => void;
   toolSettings?: ToolSettings;
   updateTaskState?: (patch: TaskStatePatch) => TaskState;
   workspaceRoot?: string;
 };
 
-type ToolDefinition = {
+export type ToolDefinition = {
   execute: (args: unknown, context: ToolExecutionContext) => Promise<string>;
   schema: z.ZodType<unknown>;
   tool: AgentToolDefinition;
@@ -109,6 +118,10 @@ const fetchUrlSchema = z.object({
 const operateComputerSchema = z.object({
   max_steps: z.number().int().min(1).max(20).default(8),
   task: z.string().min(1),
+});
+
+const loadSkillSchema = z.object({
+  name: z.string().min(1),
 });
 
 const updateTaskStateSchema = z.object({
@@ -1170,7 +1183,57 @@ async function saveResearchCheckpoint(
   });
 }
 
+async function loadSkill(
+  args: z.infer<typeof loadSkillSchema>,
+  context: ToolExecutionContext,
+) {
+  const skillName = args.name.trim();
+
+  if (!hasSkill(skillName)) {
+    throw new Error(`未知技能：${skillName}`);
+  }
+
+  const wasActive = context.activeSkillNames?.includes(skillName) ?? false;
+
+  context.activateSkill?.(skillName);
+
+  const body = getSkillBody(skillName);
+  const excerpt =
+    body.length > 1800 ? `${body.slice(0, 1800).trimEnd()}\n...` : body;
+
+  return [
+    wasActive ? `Skill already active: ${skillName}` : `Skill activated: ${skillName}`,
+    "The full skill instructions will be included in the next model step's system prompt.",
+    excerpt ? `Loaded instruction excerpt:\n${excerpt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 const toolRegistry = new Map<string, ToolDefinition>([
+  [
+    "load_skill",
+    {
+      schema: loadSkillSchema,
+      tool: {
+        name: "load_skill",
+        description:
+          "Activate a locally registered skill by name. Use this when the available skill index describes a capability needed for the current task. Activation adds the skill instructions to future system prompts and registers its skill-specific tools.",
+        input_schema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "The exact skill name from the available skill index.",
+            },
+          },
+          required: ["name"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        loadSkill(loadSkillSchema.parse(rawArgs), context),
+    },
+  ],
   [
     "update_task_state",
     {
@@ -1927,8 +1990,40 @@ const toolRegistry = new Map<string, ToolDefinition>([
   ],
 ]);
 
-export function getToolDefinitions() {
-  return [...toolRegistry.values()].map((entry) => entry.tool);
+function getSkillToolEntries(activeSkillNames: readonly string[] = []) {
+  return normalizeSkillNames(activeSkillNames).flatMap((name) =>
+    getSkillTools(name),
+  );
+}
+
+function dedupeToolEntries(entries: ToolDefinition[]) {
+  const seenNames = new Set<string>();
+  const deduped: ToolDefinition[] = [];
+
+  for (const entry of entries) {
+    if (seenNames.has(entry.tool.name)) {
+      continue;
+    }
+
+    seenNames.add(entry.tool.name);
+    deduped.push(entry);
+  }
+
+  return deduped;
+}
+
+function getToolEntry(name: string, activeSkillNames: readonly string[] = []) {
+  return (
+    toolRegistry.get(name) ??
+    getSkillToolEntries(activeSkillNames).find((entry) => entry.tool.name === name)
+  );
+}
+
+export function getToolDefinitions(activeSkillNames: readonly string[] = []) {
+  return dedupeToolEntries([
+    ...toolRegistry.values(),
+    ...getSkillToolEntries(activeSkillNames),
+  ]).map((entry) => entry.tool);
 }
 
 export async function executeTool(
@@ -1938,7 +2033,7 @@ export async function executeTool(
 ) {
   throwIfAborted(context.signal);
 
-  const tool = toolRegistry.get(name);
+  const tool = getToolEntry(name, context.activeSkillNames);
 
   if (!tool) {
     throw new Error(`未知工具：${name}`);

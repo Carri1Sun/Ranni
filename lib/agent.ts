@@ -22,6 +22,12 @@ import {
   getToolDefinitions,
   type ToolSettings,
 } from "./tools";
+import {
+  getSkillBody,
+  listSkillIndices,
+  normalizeSkillNames,
+  type SkillIndex,
+} from "./skills/registry";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -233,13 +239,17 @@ class PacedTextEmitter {
 }
 
 function createSystemPrompt({
+  activeSkillNames,
   runtime,
+  skillIndices,
   taskMemorySummary,
   taskState,
   toolNames,
   workspaceRoot,
 }: {
+  activeSkillNames: string[];
   runtime: ReturnType<typeof getModelRuntimeInfo>;
+  skillIndices: SkillIndex[];
   taskMemorySummary: string;
   taskState: TaskState;
   toolNames: string[];
@@ -379,6 +389,31 @@ function createSystemPrompt({
     "10. For code or file changes, include changed files and verification status when relevant.",
     "11. If you are blocked, say what you tried and why it did not work.",
     "",
+    ...(skillIndices.length > 0
+      ? [
+          "Available skills:",
+          "These are locally registered dynamic skills. Use load_skill with the exact name when a skill description matches the user's task. Skills selected by the user are already active.",
+          ...skillIndices.map(
+            (skill) => `- ${skill.name}: ${skill.description}`,
+          ),
+          activeSkillNames.length > 0
+            ? `Currently active skills: ${activeSkillNames.join(", ")}`
+            : "Currently active skills: none",
+          "",
+        ]
+      : []),
+    ...(activeSkillNames.length > 0
+      ? [
+          "Active skill instructions:",
+          ...activeSkillNames.flatMap((name) => {
+            const body = getSkillBody(name);
+
+            return body
+              ? [`## Skill: ${name}`, body, ""]
+              : [`## Skill: ${name}`, "(No additional instructions.)", ""];
+          }),
+        ]
+      : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
     `- Current date: ${currentDate}`,
@@ -481,8 +516,8 @@ function summarizeMessage(message: AgentMessage): TraceContextMessage {
   };
 }
 
-function toTraceToolDefinitions() {
-  return getToolDefinitions().map((tool) => ({
+function toTraceToolDefinitions(activeSkillNames: string[] = []) {
+  return getToolDefinitions(activeSkillNames).map((tool) => ({
     description: tool.description,
     inputSchema:
       "input_schema" in tool && tool.input_schema ? tool.input_schema : undefined,
@@ -1511,10 +1546,12 @@ export async function runAgentTurn({
   toolSettings,
   workspaceRoot,
 }: RunAgentTurnOptions) {
-  const toolDefinitions = getToolDefinitions();
-  const traceToolDefinitions = toTraceToolDefinitions();
   const runtime = getModelRuntimeInfo(modelConfig);
   const runStartedAt = Date.now();
+  const loadedSkills = new Set(normalizeSkillNames(toolSettings?.activeSkills));
+  const getActiveSkillNames = () => [...loadedSkills];
+  const initialActiveSkillNames = getActiveSkillNames();
+  const initialTraceToolDefinitions = toTraceToolDefinitions(initialActiveSkillNames);
 
   // ---- v2 事件发布适配层 ----
   // 保留 agent 主体内既有的 emit(legacyStreamEvent) 调用不动，在此把旧 StreamEvent 映射为
@@ -1610,7 +1647,7 @@ export async function runAgentTurn({
     runId,
     runtime,
     startedAt: runStartedAt,
-    toolDefinitions: traceToolDefinitions,
+    toolDefinitions: initialTraceToolDefinitions,
     type: "run_started",
   });
 
@@ -1728,8 +1765,13 @@ export async function runAgentTurn({
       });
       emitTaskState();
 
+      const activeSkillNames = getActiveSkillNames();
+      const toolDefinitions = getToolDefinitions(activeSkillNames);
+      const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
       const system = createSystemPrompt({
+        activeSkillNames,
         runtime,
+        skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
         taskState,
         toolNames: toolDefinitions.map((tool) => tool.name),
@@ -2421,6 +2463,10 @@ export async function runAgentTurn({
               signal,
               taskMemory,
               taskState,
+              activeSkillNames: getActiveSkillNames(),
+              activateSkill: (name) => {
+                loadedSkills.add(name);
+              },
               toolSettings,
               updateTaskState: applyTaskPatch,
               workspaceRoot,

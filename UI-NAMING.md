@@ -108,6 +108,8 @@
 | `research` | 研究状态过程项 | 过程项 | `research_state` 到达时新增一张过程卡片，并同步更新 session 的 research context。 |
 | `thinking` | Thinking 正文 | Thinking 正文 | `thinking_delta` 流式追加到同一条正文，`thinking` 负责最终校准。 |
 
+`load_skill` 工具调用使用“激活技能过程项”文案，仍归类为工具调用过程项。
+
 ### 会展示的触发源
 
 | 触发源 | 当前 UI 名称 | 英文名 | 展示行为 | 备注 |
@@ -210,6 +212,9 @@
 | 设置弹窗 | Settings Modal | 主设置面板。 |
 | 设置侧栏 | Settings Sidebar | 设置弹窗左侧 tab。 |
 | API 设置 | API Settings | provider、key、连接测试。 |
+| 能力设置 | Skills Settings | 本地 skill 能力开关，控制新 run 的强制加载能力。 |
+| 能力加载开关 | Skill Toggle | 单个本地 skill 的强制加载开关。 |
+| 能力运行状态 | Skill Runtime Status | 根据当前会话或运行 trace 展示已选或已激活的能力状态。 |
 | 外观设置 | Appearance Settings | dark、light、system。 |
 | Debug 设置 | Debug Settings | 过程详情开关。 |
 | 关于页 | About Settings | workspace、provider、本地说明。 |

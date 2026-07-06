@@ -52,7 +52,13 @@ type ActivityType =
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId = "custom" | "deepseek" | "openai" | "qwen";
-type SettingsTab = "about" | "account" | "api" | "appearance" | "debug";
+type SettingsTab =
+  | "about"
+  | "account"
+  | "api"
+  | "appearance"
+  | "debug"
+  | "skills";
 type WorkspacePickerMode = "draftSession" | "initial";
 
 type ProcessIconId =
@@ -129,6 +135,7 @@ type AgentConsoleProps = {
 };
 
 type AppSettings = {
+  activeSkills: string[];
   customApiKey: string;
   customBaseUrl: string;
   customModel: string;
@@ -143,6 +150,11 @@ type AppSettings = {
   showProcessDetails: boolean;
   tavilyApiKey: string;
   theme: ThemeMode;
+};
+
+type SkillIndex = {
+  description: string;
+  name: string;
 };
 
 type TestConnectionState =
@@ -285,6 +297,11 @@ const SETTINGS_NAV_ITEMS = [
     status: "Provider",
   },
   {
+    id: "skills",
+    label: "能力",
+    status: "Skills",
+  },
+  {
     id: "debug",
     label: "Debug",
     status: "Trace",
@@ -300,6 +317,7 @@ const SETTINGS_NAV_ITEMS = [
   status: string;
 }>;
 const DEFAULT_SETTINGS: AppSettings = {
+  activeSkills: [],
   customApiKey: "",
   customBaseUrl: "",
   customModel: "",
@@ -511,6 +529,39 @@ function isProviderId(value: unknown): value is ProviderId {
   );
 }
 
+function sanitizeSkillNames(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const names = new Set<string>();
+
+  for (const value of raw) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const name = value.trim();
+
+    if (name) {
+      names.add(name);
+    }
+  }
+
+  return [...names].slice(0, 24);
+}
+
+function getSkillDisplayLabel(name: string) {
+  const labels: Record<string, string> = {
+    demo: "Demo 验证",
+    image: "图片生成",
+    imagegen: "图片生成",
+    slides: "幻灯片生成",
+  };
+
+  return labels[name] ?? `能力 ${name}`;
+}
+
 function sanitizeSettings(raw: unknown): AppSettings {
   if (!isObject(raw)) {
     return DEFAULT_SETTINGS;
@@ -523,6 +574,7 @@ function sanitizeSettings(raw: unknown): AppSettings {
     : DEFAULT_SETTINGS.provider;
 
   return {
+    activeSkills: sanitizeSkillNames(raw.activeSkills),
     customApiKey:
       typeof raw.customApiKey === "string"
         ? raw.customApiKey.trim()
@@ -727,6 +779,7 @@ function getToolDisplayName(toolName: string) {
     fetch_url: "读取网页",
     init_task_memory: "初始化任务记忆",
     list_files: "列出文件",
+    load_skill: "激活技能",
     move_path: "移动路径",
     plan_research: "规划研究",
     read_file: "读取文件",
@@ -776,6 +829,10 @@ function getToolIcon(toolName: string): ProcessIconId {
 
   if (toolName.includes("research")) {
     return "research";
+  }
+
+  if (toolName === "load_skill") {
+    return "spark";
   }
 
   if (toolName === "update_task_state") {
@@ -843,6 +900,20 @@ function inferSearchIntent(query: string) {
 function createToolCallDisplay(toolName: string, args: unknown): ActivityDisplay {
   const displayName = getToolDisplayName(toolName);
   const icon = getToolIcon(toolName);
+
+  if (toolName === "load_skill") {
+    const skillName = getStringField(args, "name");
+
+    return {
+      detail: skillName
+        ? `${getSkillDisplayLabel(skillName)}（${skillName}）`
+        : "准备激活能力",
+      icon,
+      meta: "skill",
+      source: "fallback",
+      title: "激活技能",
+    };
+  }
 
   if (toolName === "search_web") {
     const query = getStringField(args, "query");
@@ -2286,6 +2357,7 @@ function buildModelSettings(
 
 function buildToolSettings(settings: AppSettings) {
   return {
+    activeSkills: settings.activeSkills,
     computerUseApiKey:
       settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
     computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
@@ -3106,6 +3178,11 @@ export function AgentConsole({
     useState<ThinkingStreamState>({});
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
+  const [skillIndices, setSkillIndices] = useState<SkillIndex[]>([]);
+  const [skillIndexStatus, setSkillIndexStatus] = useState<
+    "error" | "idle" | "loading" | "success"
+  >("idle");
+  const [skillIndexError, setSkillIndexError] = useState("");
   const [workspacePickerMode, setWorkspacePickerMode] =
     useState<WorkspacePickerMode>("initial");
   const [workspacePickerDirectories, setWorkspacePickerDirectories] = useState<
@@ -3334,6 +3411,57 @@ export function AgentConsole({
 
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   }, [isHydrated, settings]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setSkillIndexStatus("loading");
+    setSkillIndexError("");
+
+    void (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/skills`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            skills?: SkillIndex[];
+          };
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "无法加载能力列表。");
+        }
+
+        const skills = Array.isArray(payload.result?.skills)
+          ? payload.result.skills.filter(
+              (skill): skill is SkillIndex =>
+                typeof skill.name === "string" &&
+                typeof skill.description === "string",
+            )
+          : [];
+
+        setSkillIndices(skills);
+        setSkillIndexStatus("success");
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setSkillIndices([]);
+        setSkillIndexStatus("error");
+        setSkillIndexError(
+          error instanceof Error ? error.message : "无法加载能力列表。",
+        );
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -5680,6 +5808,53 @@ export function AgentConsole({
   const computerUseStatusLabel = effectiveComputerUseApiKey
     ? `Configured · ${maskSecret(effectiveComputerUseApiKey)}`
     : "Missing key";
+  const availableSkillNames = new Set(skillIndices.map((skill) => skill.name));
+  const selectedSkillNames = settings.activeSkills.filter((name) =>
+    availableSkillNames.has(name),
+  );
+  const activatedSkillsInSession = (() => {
+    const names = new Set<string>();
+    for (const run of activeSession?.runs ?? []) {
+      for (const step of run.steps ?? []) {
+        for (const call of step.toolCalls ?? []) {
+          if (call.name !== "load_skill") continue;
+          const skillName = (
+            call.arguments as { name?: unknown } | undefined
+          )?.name;
+          if (typeof skillName === "string" && skillName.trim()) {
+            names.add(skillName.trim());
+          }
+        }
+      }
+    }
+    return [...names];
+  })();
+  const liveSkillNames = (() => {
+    const ordered = new Set<string>();
+    for (const name of selectedSkillNames) ordered.add(name);
+    for (const name of activatedSkillsInSession) ordered.add(name);
+    return [...ordered];
+  })();
+  const liveSkillSummary =
+    liveSkillNames.length > 0
+      ? `${liveSkillNames.length} 个能力运行中`
+      : "无能力运行中";
+  const toggleActiveSkill = (name: string, enabled: boolean) => {
+    setSettings((current) => {
+      const nextNames = new Set(current.activeSkills);
+
+      if (enabled) {
+        nextNames.add(name);
+      } else {
+        nextNames.delete(name);
+      }
+
+      return {
+        ...current,
+        activeSkills: [...nextNames],
+      };
+    });
+  };
   const settingsRuntimeInfo = {
     ...runtimeInfo,
     baseUrl: selectedProviderBaseUrl || runtimeInfo.baseUrl,
@@ -6947,9 +7122,11 @@ export function AgentConsole({
                         ? "Theme"
                         : settingsTab === "api"
                           ? "Integrations"
-                          : settingsTab === "debug"
-                            ? "Debug"
-                          : "About"}
+                          : settingsTab === "skills"
+                            ? "Skills"
+                            : settingsTab === "debug"
+                              ? "Debug"
+                              : "About"}
                   </p>
                   <h3>
                     {settingsTab === "account"
@@ -6958,9 +7135,11 @@ export function AgentConsole({
                         ? "外观"
                         : settingsTab === "api"
                           ? "API 设置"
-                          : settingsTab === "debug"
-                            ? "调试"
-                          : "关于"}
+                          : settingsTab === "skills"
+                            ? "能力"
+                            : settingsTab === "debug"
+                              ? "调试"
+                              : "关于"}
                   </h3>
                 </div>
                 <button
@@ -7030,6 +7209,75 @@ export function AgentConsole({
                         </button>
                       ))}
                     </div>
+                  </section>
+                ) : null}
+
+                {settingsTab === "skills" ? (
+                  <section className={styles.settingsSection}>
+                    <div className={styles.settingsSectionHeader}>
+                      <h4>能力加载</h4>
+                      <span>{liveSkillSummary}</span>
+                    </div>
+
+                    <p className={styles.settingsHint}>
+                      开启后，新 run 会在第一步直接加载对应技能；关闭时，Agent 仍可根据能力索引调用 load_skill 自动激活。运行中已激活的能力会持续到本次 run 结束，关闭开关于下一次启动生效。
+                    </p>
+
+                    {skillIndexStatus === "loading" ? (
+                      <p className={styles.settingsHint}>正在加载本地能力列表...</p>
+                    ) : null}
+
+                    {skillIndexStatus === "error" ? (
+                      <p
+                        className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+                      >
+                        {skillIndexError}
+                      </p>
+                    ) : null}
+
+                    {skillIndexStatus === "success" && skillIndices.length === 0 ? (
+                      <p className={styles.settingsHint}>
+                        当前没有发现本地技能包。将技能放入仓库根目录的 skills/ 子目录后重启服务。
+                      </p>
+                    ) : null}
+
+                    {skillIndices.map((skill) => (
+                      <label key={skill.name} className={styles.settingsToggleRow}>
+                        <span>
+                          <strong>{getSkillDisplayLabel(skill.name)}</strong>
+                          {liveSkillNames.includes(skill.name) ? (
+                            <span style={{ fontSize: "0.72rem", opacity: 0.65, marginLeft: "0.4rem" }}>· 运行中</span>
+                          ) : null}
+                          <small>{skill.description}</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={settings.activeSkills.includes(skill.name)}
+                          onChange={(event) =>
+                            toggleActiveSkill(skill.name, event.target.checked)
+                          }
+                        />
+                      </label>
+                    ))}
+
+                    {selectedSkillNames.length > 0 ? (
+                      <div className={styles.settingsActions}>
+                        <button
+                          className={styles.secondarySettingsButton}
+                          type="button"
+                          onClick={() =>
+                            setSettings((current) => ({
+                              ...current,
+                              activeSkills: current.activeSkills.filter(
+                                (name) => !availableSkillNames.has(name),
+                              ),
+                            }))
+                          }
+                        >
+                          清空已选能力
+                        </button>
+                      </div>
+                    ) : null}
                   </section>
                 ) : null}
 
