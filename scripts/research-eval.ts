@@ -12,7 +12,167 @@ import {
   type ModelConnectionConfig,
 } from "../lib/llm";
 import type { StreamEvent } from "../lib/trace";
+import { EventBus, type PublishedEvent } from "../lib/events/event-bus";
+import { RunRegistry } from "../lib/runs/run-registry";
 import { loadEnvFiles } from "../src/server/env";
+
+// v2 事件 → 旧 StreamEvent：评测脚本的分析逻辑仍按旧事件格式编写，
+// 订阅到 v2 事件后用此函数反向映射回旧格式，保持分析逻辑不变。
+function toLegacyEvent(event: PublishedEvent): StreamEvent | null {
+  const e = event as Record<string, unknown> & { type: string };
+
+  switch (e.type) {
+    case "run.started":
+      return {
+        prompt: e.prompt,
+        runId: e.runId,
+        runtime: e.runtime,
+        startedAt: e.startedAt,
+        toolDefinitions: e.toolDefinitions,
+        type: "run_started",
+      } as unknown as StreamEvent;
+    case "run.completed":
+      return {
+        durationMs: e.durationMs,
+        endedAt: e.endedAt,
+        ...(e.error ? { error: e.error } : {}),
+        runId: e.runId,
+        status: e.status,
+        totalSteps: e.totalSteps,
+        type: "run_completed",
+      } as unknown as StreamEvent;
+    case "step.started":
+      return {
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "step_started",
+      } as unknown as StreamEvent;
+    case "step.completed":
+      return {
+        durationMs: e.durationMs,
+        endedAt: e.endedAt,
+        runId: e.runId,
+        status: e.status,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        ...(e.stopReason !== undefined ? { stopReason: e.stopReason } : {}),
+        type: "step_completed",
+      } as unknown as StreamEvent;
+    case "tool.started":
+      return {
+        arguments: e.arguments,
+        name: e.name,
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        toolUseId: e.toolUseId,
+        type: "tool_call",
+      } as unknown as StreamEvent;
+    case "tool.completed":
+      return {
+        durationMs: e.durationMs,
+        name: e.name,
+        result: e.result,
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        success: e.success,
+        toolUseId: e.toolUseId,
+        type: "tool_result",
+      } as unknown as StreamEvent;
+    case "text.completed":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "assistant",
+      } as unknown as StreamEvent;
+    case "thinking.completed":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "thinking",
+      } as unknown as StreamEvent;
+    case "model.request":
+      return {
+        request: e.request,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "model_request",
+      } as unknown as StreamEvent;
+    case "model.response":
+      return {
+        response: e.response,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "model_response",
+      } as unknown as StreamEvent;
+    case "context.snapshot":
+      return {
+        context: e.context,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "context_snapshot",
+      } as unknown as StreamEvent;
+    case "task.state":
+      return {
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        taskState: e.taskState,
+        type: "task_state",
+      } as unknown as StreamEvent;
+    case "research.state":
+      return {
+        researchState: e.researchState,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "research_state",
+      } as unknown as StreamEvent;
+    case "run.status":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "status",
+      } as unknown as StreamEvent;
+    case "text.delta":
+      return {
+        delta: e.delta,
+        ...(e.reset ? { reset: true } : {}),
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "assistant_delta",
+      } as unknown as StreamEvent;
+    case "thinking.delta":
+      return {
+        delta: e.delta,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "thinking_delta",
+      } as unknown as StreamEvent;
+    default:
+      return null;
+  }
+}
 
 type ResearchCase = {
   id: string;
@@ -1676,36 +1836,52 @@ async function runCase({
     abortController.abort();
   }, options.timeoutMs);
 
+  const sessionId = `eval-${researchCase.id}-${repeatIndex}`;
+  const eventBus = new EventBus();
+  const registry = new RunRegistry();
+  const { runId } = registry.start({ sessionId, modelConfig });
+
+  const unsubscribe = eventBus.subscribe(sessionId, 0, (v2Event) => {
+    const event = toLegacyEvent(v2Event);
+
+    if (!event) {
+      return;
+    }
+
+    events.push(event);
+    fsSync.appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8");
+
+    if (event.type === "assistant") {
+      finalText = event.message;
+      fsSync.writeFileSync(finalPath, finalText || "(empty final answer)", "utf8");
+    }
+
+    if (
+      event.type === "run_started" ||
+      event.type === "step_completed" ||
+      event.type === "tool_result" ||
+      event.type === "run_completed" ||
+      event.type === "assistant"
+    ) {
+      fsSync.writeFileSync(
+        partialStatusPath,
+        renderPartialStatus({
+          eventCount: events.length,
+          finalText,
+          researchCase,
+          startedAt,
+        }),
+        "utf8",
+      );
+    }
+  });
+
   try {
     await runAgentTurn({
-      emit: (event) => {
-        events.push(event);
-        fsSync.appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8");
-
-        if (event.type === "assistant") {
-          finalText = event.message;
-          fsSync.writeFileSync(finalPath, finalText || "(empty final answer)", "utf8");
-        }
-
-        if (
-          event.type === "run_started" ||
-          event.type === "step_completed" ||
-          event.type === "tool_result" ||
-          event.type === "run_completed" ||
-          event.type === "assistant"
-        ) {
-          fsSync.writeFileSync(
-            partialStatusPath,
-            renderPartialStatus({
-              eventCount: events.length,
-              finalText,
-              researchCase,
-              startedAt,
-            }),
-            "utf8",
-          );
-        }
-      },
+      runId,
+      sessionId,
+      streamKey: sessionId,
+      eventBus,
       messages: [
         {
           role: "user",
@@ -1720,6 +1896,7 @@ async function runCase({
       workspaceRoot: options.workspaceRoot,
     });
   } finally {
+    unsubscribe();
     clearTimeout(timeout);
   }
 

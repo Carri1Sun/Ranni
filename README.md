@@ -160,7 +160,10 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
 - `POST /api/workspaces/pick`：调用系统文件夹选择器。
 - `POST /api/session/title`：根据首条消息异步生成 session 标题。
-- `POST /api/chat`：启动一轮 agent 对话，返回 NDJSON 流式事件；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
+- `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
+- `GET /api/events`：Event 通道，SSE 单向下行广播三层事件（`streamKey`=session、`lastSeq` 续传）。
+- `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
+- `POST /api/runs/:runId/abort`：中断运行中的 run。
 - `POST /api/model/test`：测试当前模型 provider 配置。
 - `POST /api/tavily/test`：测试 Tavily 搜索 key。
 - `POST /api/computer-use/test`：测试 Computer use 模块的 OpenAI key 和 `computer` tool 可用性。

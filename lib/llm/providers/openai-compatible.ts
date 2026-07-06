@@ -745,6 +745,28 @@ function parseSseData(block: string) {
   return dataLines.length > 0 ? dataLines.join("\n") : "";
 }
 
+// 某些 OpenAI 兼容 provider 会把多条 JSON（或 [DONE] 与 JSON）拼在同一个 data: 块里，
+// 直接 JSON.parse 整块会抛错中断流。这里把 data 内容拆成多条候选消息：
+// 整体是单行时零开销直接返回，多行时按行拆分，逐条交由 processData 解析。
+function splitSseDataMessages(data: string): string[] {
+  const trimmed = data.trim();
+
+  if (!trimmed) {
+    return [];
+  }
+
+  if (trimmed === "[DONE]") {
+    return ["[DONE]"];
+  }
+
+  const lines = trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.length > 1 ? lines : [trimmed];
+}
+
 function appendToolCallDelta(
   toolCalls: Map<number, StreamingToolCall>,
   delta: OpenAIToolCallDelta,
@@ -835,7 +857,7 @@ async function readStreamingResponse({
       return;
     }
 
-    const chunk = JSON.parse(data) as OpenAIChatStreamChunk;
+    const chunk = JSON.parse(data.trim()) as OpenAIChatStreamChunk;
     id ||= chunk.id?.trim() || "";
     model ||= chunk.model?.trim() || "";
 
@@ -882,7 +904,9 @@ async function readStreamingResponse({
     buffer = rest;
 
     for (const block of blocks) {
-      processData(parseSseData(block));
+      for (const message of splitSseDataMessages(parseSseData(block))) {
+        processData(message);
+      }
     }
 
     if (readerDone) {
@@ -891,7 +915,9 @@ async function readStreamingResponse({
   }
 
   if (buffer.trim()) {
-    processData(parseSseData(buffer));
+    for (const message of splitSseDataMessages(parseSseData(buffer))) {
+      processData(message);
+    }
   }
 
   const responseMessage = {

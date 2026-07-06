@@ -7,6 +7,9 @@ import { promisify } from "node:util";
 import { z } from "zod";
 
 import { runAgentTurn } from "../../lib/agent";
+import { EventBus } from "../../lib/events/event-bus";
+import { EventMapper } from "../../lib/runs/event-mapper";
+import { RunRegistry } from "../../lib/runs/run-registry";
 import {
   createMessage,
   getModelRuntimeInfo,
@@ -78,6 +81,7 @@ const requestSchema = z.object({
   modelSettings: modelSettingsSchema,
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
   workspaceRoot: optionalWorkspaceRootSchema,
+  sessionId: z.string().trim().min(1),
 });
 
 const testModelSchema = z.object({
@@ -89,38 +93,12 @@ const sessionTitleSchema = z.object({
   modelSettings: modelSettingsSchema,
 });
 
-const activityDescribeSchema = z.object({
-  event: z.object({ type: z.string().trim().min(1) }).passthrough(),
-  modelSettings: modelSettingsSchema,
-});
-
 const testTavilySchema = z.object({
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
 });
 
 const testComputerUseSchema = z.object({
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
-});
-
-const processIconSchema = z.enum([
-  "activity",
-  "check",
-  "database",
-  "error",
-  "file",
-  "globe",
-  "research",
-  "search",
-  "spark",
-  "state",
-  "terminal",
-  "tool",
-]);
-const activityRewriteResultSchema = z.object({
-  detail: z.string().trim().min(1).max(140),
-  icon: processIconSchema.optional(),
-  meta: z.string().trim().max(32).optional(),
-  title: z.string().trim().min(1).max(40),
 });
 
 const workspaceDirectorySchema = z.object({
@@ -514,81 +492,12 @@ function extractAssistantText(
     .trim();
 }
 
-function redactActivityPayload(value: unknown, depth = 0): unknown {
-  if (depth > 5) {
-    return "[depth-trimmed]";
-  }
-
-  if (typeof value === "string") {
-    return value.length > 900 ? `${value.slice(0, 900)}...[trimmed]` : value;
-  }
-
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.slice(0, 12).map((item) => redactActivityPayload(item, depth + 1));
-  }
-
-  const result: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(value).slice(0, 24)) {
-    if (/api[-_]?key|token|secret|password|authorization|cookie/i.test(key)) {
-      result[key] = "[redacted]";
-      continue;
-    }
-
-    result[key] = redactActivityPayload(item, depth + 1);
-  }
-
-  return result;
-}
-
-function buildActivityRewritePrompt(event: Record<string, unknown>) {
-  return [
-    "请把下面的 Ranni agent 过程事件改写成适合消息流展示的中文短文案。",
-    "",
-    "输出 JSON：",
-    '{"title":"不超过 14 个中文字","detail":"不超过 36 个中文字","meta":"可选补充信息","icon":"activity|check|database|error|file|globe|research|search|spark|state|terminal|tool"}',
-    "",
-    "规则：",
-    "- 只描述正在做什么，不编造工具结果。",
-    "- 不展示原始 JSON、密钥、token、cookie、完整命令输出或长 URL。",
-    "- title 用动宾结构，例如「搜索骨片获取途径」「读取项目 README」「运行类型检查」。",
-    "- detail 补充目标、范围、最多条数、文件名、域名、Step 等信息。",
-    "- search_web 要从 query 中提炼搜索意图，例如 query 为「饥荒 联机版 骨片 刷 鳗鱼 腐烂 鱼人 化石 传送门」时，title 写「搜索骨片获取途径」。",
-    "- fetch_url 用「读取网页内容」或更具体的页面主题。",
-    "- run_terminal 用「运行终端命令」，detail 只保留安全的短命令摘要。",
-    "",
-    "事件：",
-    JSON.stringify(redactActivityPayload(event), null, 2).slice(0, 3200),
-  ].join("\n");
-}
-
-function parseJsonObjectFromText(text: string) {
-  const withoutFence = text
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(withoutFence);
-  } catch {
-    const start = withoutFence.indexOf("{");
-    const end = withoutFence.lastIndexOf("}");
-
-    if (start >= 0 && end > start) {
-      return JSON.parse(withoutFence.slice(start, end + 1));
-    }
-
-    throw new Error("模型没有返回可解析的 JSON。");
-  }
-}
-
 export function createServerApp() {
   const app = express();
-  let activeAgentRunCount = 0;
+  const eventBus = new EventBus();
+  const registry = new RunRegistry();
+  const eventMapper = new EventMapper(eventBus, registry);
+  eventMapper.start();
 
   app.use(express.json({ limit: "1mb" }));
   app.use((request, response, next) => {
@@ -823,78 +732,10 @@ export function createServerApp() {
     }
   });
 
-  app.post("/api/activity/describe", async (request, response) => {
-    let payload: z.infer<typeof activityDescribeSchema>;
+  const steerSchema = z.object({ message: z.string().trim().min(1) });
 
-    try {
-      payload = activityDescribeSchema.parse(request.body);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "请求体格式不正确";
-
-      response.status(400).json({ error: message, ok: false });
-      return;
-    }
-
-    const abortController = new AbortController();
-    const abort = () => {
-      if (!abortController.signal.aborted) {
-        abortController.abort();
-      }
-    };
-
-    request.on("aborted", abort);
-
-    try {
-      const result = await createMessage({
-        modelConfig: payload.modelSettings,
-        signal: abortController.signal,
-        system: [
-          "你是 Ranni 的 agent 过程展示改写器。",
-          "你的任务是把机器事件改写为短、清晰、可信的中文 UI 文案。",
-          "只输出一个 JSON 对象，不要输出 Markdown，不要解释。",
-        ].join("\n"),
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: buildActivityRewritePrompt(payload.event),
-              },
-            ],
-          },
-        ],
-        tools: [],
-      });
-      const parsed = parseJsonObjectFromText(
-        extractAssistantText(result.message.content),
-      );
-      const rewrite = activityRewriteResultSchema.parse(parsed);
-
-      response.json({
-        ok: true,
-        result: {
-          ...rewrite,
-          source: "model",
-        },
-      });
-    } catch (error) {
-      if (abortController.signal.aborted) {
-        return;
-      }
-
-      response.status(502).json({
-        error:
-          error instanceof Error ? error.message : "过程展示改写请求失败。",
-        ok: false,
-      });
-    } finally {
-      request.off("aborted", abort);
-    }
-  });
-
-  app.post("/api/chat", async (request, response) => {
+  // Command 通道：启动 run。立即返回 runId，Agent 后台异步运行，事件经 EventBus → SSE 下发。
+  app.post("/api/runs", async (request, response) => {
     let payload: z.infer<typeof requestSchema>;
     let workspacePath: string;
 
@@ -918,9 +759,9 @@ export function createServerApp() {
       return;
     }
 
-    if (activeAgentRunCount >= MAX_CONCURRENT_AGENT_RUNS) {
+    if (registry.activeCount() >= MAX_CONCURRENT_AGENT_RUNS) {
       response.status(429).json({
-        activeCount: activeAgentRunCount,
+        activeCount: registry.activeCount(),
         error: "同时进行的任务数量已达上限，请等待已有任务完成后再试。",
         errorCode: AGENT_CONCURRENCY_LIMIT_CODE,
         limit: MAX_CONCURRENT_AGENT_RUNS,
@@ -928,65 +769,158 @@ export function createServerApp() {
       return;
     }
 
-    activeAgentRunCount += 1;
-    response.status(200);
-    response.setHeader(
-      "Content-Type",
-      "application/x-ndjson; charset=utf-8",
+    const { runId, streamKey } = registry.start({
+      sessionId: payload.sessionId,
+      modelConfig: payload.modelSettings,
+    });
+    const handle = registry.get(runId);
+
+    response.status(200).json({
+      ok: true,
+      runId,
+      sessionId: payload.sessionId,
+      streamKey,
+    });
+
+    void (async () => {
+      try {
+        await runAgentTurn({
+          runId,
+          sessionId: payload.sessionId,
+          streamKey,
+          eventBus,
+          drainSteer: (id) => registry.drainSteer(id),
+          messages: payload.messages,
+          modelConfig: payload.modelSettings,
+          signal: handle?.abortController.signal,
+          toolSettings: payload.toolSettings,
+          workspaceRoot: workspacePath,
+        });
+        registry.finish(
+          runId,
+          handle?.abortController.signal.aborted ? "cancelled" : "completed",
+        );
+      } catch (error) {
+        registry.finish(
+          runId,
+          handle?.abortController.signal.aborted ? "cancelled" : "failed",
+        );
+        console.error(
+          `Agent run ${runId} failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    })();
+  });
+
+  // Event 通道：SSE 单向下行广播。基于 lastSeq 回放 durable 事件 + 实时推送，支持断线续传。
+  app.get("/api/events", (request, response) => {
+    const streamKey =
+      typeof request.query.streamKey === "string"
+        ? request.query.streamKey.trim()
+        : "";
+
+    if (!streamKey) {
+      response.status(400).json({ error: "streamKey 是必填参数。" });
+      return;
+    }
+
+    const headerLastEventId = request.headers["last-event-id"];
+    const headerValue = Array.isArray(headerLastEventId)
+      ? headerLastEventId[0]
+      : headerLastEventId;
+    const querySeq = Number.parseInt(
+      typeof request.query.lastSeq === "string" ? request.query.lastSeq : "",
+      10,
     );
+    // 重连时浏览器自动带 Last-Event-ID header（最后收到的 seq），优先用它以避免重复回放；
+    // 首次连接无 header，回退到 query.lastSeq（前端从 localStorage 恢复）。
+    const headerSeq = Number.parseInt(headerValue ?? "", 10) || 0;
+    const lastSeq = headerSeq > 0 ? headerSeq : querySeq > 0 ? querySeq : 0;
+
+    response.status(200);
+    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     response.setHeader("Cache-Control", "no-cache, no-transform");
     response.setHeader("Connection", "keep-alive");
     response.setHeader("X-Accel-Buffering", "no");
     response.flushHeaders();
 
-    const abortController = new AbortController();
-    let completed = false;
-    const abortRun = () => {
-      if (!completed && !abortController.signal.aborted) {
-        abortController.abort();
-      }
-    };
-    const push = (event: Record<string, unknown>) => {
-      if (response.destroyed || response.writableEnded) {
+    let closed = false;
+    const unsubscribe = eventBus.subscribe(streamKey, lastSeq, (event) => {
+      if (closed || response.destroyed || response.writableEnded) {
         return;
       }
-
       try {
-        response.write(`${JSON.stringify(event)}\n`);
+        if (typeof event.seq === "number") {
+          response.write(`id: ${event.seq}\n`);
+        }
+        response.write(`data: ${JSON.stringify(event)}\n\n`);
       } catch {
-        abortRun();
+        // 客户端断开等写入异常：忽略，close 时统一清理。
       }
-    };
+    });
 
-    request.on("aborted", abortRun);
-    response.on("close", abortRun);
+    const heartbeat = setInterval(() => {
+      if (closed || response.destroyed || response.writableEnded) {
+        return;
+      }
+      try {
+        response.write(": heartbeat\n\n");
+      } catch {
+        // ignore
+      }
+    }, 25000);
+
+    request.on("close", () => {
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  });
+
+  // Command 通道：向运行中的 run 投递补充消息（Steering Queue），即发即忘。
+  app.post("/api/runs/:runId/steer", async (request, response) => {
+    let payload: z.infer<typeof steerSchema>;
 
     try {
-      await runAgentTurn({
-        messages: payload.messages,
-        modelConfig: payload.modelSettings,
-        signal: abortController.signal,
-        toolSettings: payload.toolSettings,
-        workspaceRoot: workspacePath,
-        emit: push,
-      });
+      payload = steerSchema.parse(request.body);
     } catch (error) {
-      push({
-        type: "error",
-        message:
-          error instanceof Error ? error.message : "Agent 执行失败，请重试。",
-      });
-    } finally {
-      activeAgentRunCount = Math.max(0, activeAgentRunCount - 1);
-      completed = true;
-      request.off("aborted", abortRun);
-      response.off("close", abortRun);
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
 
-      if (!response.destroyed && !response.writableEnded) {
-        push({ type: "done" });
-        response.end();
-      }
+      response.status(400).json({ error: message });
+      return;
     }
+
+    const handle = registry.get(request.params.runId);
+
+    if (!handle) {
+      response.status(404).json({ error: "运行不存在。", ok: false });
+      return;
+    }
+
+    if (handle.status !== "running") {
+      response
+        .status(409)
+        .json({ error: "运行已结束，无法补充消息。", ok: false });
+      return;
+    }
+
+    registry.steer(handle.runId, { role: "user", content: payload.message });
+    response.json({ ok: true, queued: true });
+  });
+
+  // Command 通道：中断运行中的 run。
+  app.post("/api/runs/:runId/abort", (request, response) => {
+    const handle = registry.get(request.params.runId);
+
+    if (!handle) {
+      response.status(404).json({ error: "运行不存在。", ok: false });
+      return;
+    }
+
+    registry.abort(handle.runId);
+    response.json({ ok: true });
   });
 
   app.post("/api/model/test", async (request, response) => {

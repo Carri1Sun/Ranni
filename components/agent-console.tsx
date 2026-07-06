@@ -162,7 +162,6 @@ type TestConnectionState =
     };
 
 type ActiveAgentRequest = {
-  controller: AbortController;
   runId?: string;
   sessionId: string;
   stopped: boolean;
@@ -965,48 +964,6 @@ function createToolResultDisplay({
   };
 }
 
-function createStatusDisplay(message: string): ActivityDisplay {
-  const compactMessage = compactText(message, 110);
-
-  if (/已连接/.test(message)) {
-    return {
-      detail: compactMessage,
-      icon: "spark",
-      meta: "run",
-      source: "fallback",
-      title: "开始分析请求",
-    };
-  }
-
-  if (/重试|暂时不稳定/.test(message)) {
-    return {
-      detail: compactMessage,
-      icon: "activity",
-      meta: "retry",
-      source: "fallback",
-      title: "模型请求重试",
-    };
-  }
-
-  if (message.length > 180) {
-    return {
-      detail: compactMessage,
-      icon: "spark",
-      meta: "thinking",
-      source: "fallback",
-      title: "整理执行思路",
-    };
-  }
-
-  return {
-    detail: compactMessage,
-    icon: "state",
-    meta: "status",
-    source: "fallback",
-    title: "更新运行状态",
-  };
-}
-
 function createThinkingDisplay(message: string): ActivityDisplay {
   const normalized = message
     .split(/\r?\n/)
@@ -1021,81 +978,6 @@ function createThinkingDisplay(message: string): ActivityDisplay {
     meta: "thinking",
     source: "fallback",
     title: "模型思考",
-  };
-}
-
-function createTaskStateDisplay(taskState: TaskState): ActivityDisplay {
-  return {
-    detail: compactText(taskState.nextAction || taskState.goal || "任务状态已刷新", 100),
-    icon: "state",
-    meta: taskState.currentMode,
-    source: "fallback",
-    title: "更新任务状态",
-  };
-}
-
-function createStepCompletedDisplay({
-  durationMs,
-  status,
-  stepIndex,
-}: {
-  durationMs?: number;
-  status: "failed" | "cancelled";
-  stepIndex: number;
-}): ActivityDisplay {
-  return {
-    detail:
-      status === "cancelled"
-        ? "本轮已被手动终止"
-        : "本轮执行失败，详情见调试信息",
-    icon: status === "cancelled" ? "activity" : "error",
-    meta: formatDuration(durationMs),
-    source: "fallback",
-    title:
-      status === "cancelled" ? `终止第 ${stepIndex} 轮` : `第 ${stepIndex} 轮失败`,
-  };
-}
-
-function createRunStartedDisplay(): ActivityDisplay {
-  return {
-    detail: "已建立本轮 run，开始进入 agent loop",
-    icon: "spark",
-    meta: "run",
-    source: "fallback",
-    title: "开始执行任务",
-  };
-}
-
-function createRunCompletedDisplay({
-  durationMs,
-  status,
-  totalSteps,
-}: {
-  durationMs?: number;
-  status: "completed" | "failed" | "cancelled";
-  totalSteps: number;
-}): ActivityDisplay {
-  return {
-    detail: `共 ${totalSteps} 轮 · ${formatDuration(durationMs)}`,
-    icon: status === "completed" ? "check" : status === "cancelled" ? "activity" : "error",
-    meta: getStatusLabel(status),
-    source: "fallback",
-    title:
-      status === "completed"
-        ? "任务执行完成"
-        : status === "cancelled"
-          ? "任务已终止"
-          : "任务执行失败",
-  };
-}
-
-function createResearchDisplay(): ActivityDisplay {
-  return {
-    detail: "研究笔记已产生新的结构化状态",
-    icon: "research",
-    meta: "research",
-    source: "fallback",
-    title: "更新研究笔记",
   };
 }
 
@@ -1171,6 +1053,153 @@ function createFallbackActivityDisplay(
     source: "fallback",
     title: compactText(label, 28),
   };
+}
+
+// v2 三层事件（前端消费的宽松类型；后端权威 schema 见 lib/events/schema.ts）。
+type V2Event = {
+  type: string;
+  runId?: string;
+  sessionId?: string;
+  [key: string]: unknown;
+};
+
+// v2 Layer2 TraceEvent → 旧 StreamEvent：前端 trace/debug 视图仍按旧格式重建 TraceRun，
+// 收到后端 v2 事件后反向映射回旧 StreamEvent，保持 applyTraceEventToSession 不变。
+function toLegacyStreamEvent(event: V2Event): StreamEvent | null {
+  const e = event as Record<string, unknown> & { type: string };
+
+  switch (e.type) {
+    case "run.started":
+      return {
+        prompt: e.prompt,
+        runId: e.runId,
+        runtime: e.runtime,
+        startedAt: e.startedAt,
+        toolDefinitions: e.toolDefinitions,
+        type: "run_started",
+      } as unknown as StreamEvent;
+    case "run.completed":
+      return {
+        durationMs: e.durationMs,
+        endedAt: e.endedAt,
+        ...(e.error ? { error: e.error } : {}),
+        runId: e.runId,
+        status: e.status,
+        totalSteps: e.totalSteps,
+        type: "run_completed",
+      } as unknown as StreamEvent;
+    case "step.started":
+      return {
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "step_started",
+      } as unknown as StreamEvent;
+    case "step.completed":
+      return {
+        durationMs: e.durationMs,
+        endedAt: e.endedAt,
+        runId: e.runId,
+        status: e.status,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        ...(e.stopReason !== undefined ? { stopReason: e.stopReason } : {}),
+        type: "step_completed",
+      } as unknown as StreamEvent;
+    case "tool.started":
+      return {
+        arguments: e.arguments,
+        name: e.name,
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        toolUseId: e.toolUseId,
+        type: "tool_call",
+      } as unknown as StreamEvent;
+    case "tool.completed":
+      return {
+        durationMs: e.durationMs,
+        name: e.name,
+        result: e.result,
+        runId: e.runId,
+        startedAt: e.startedAt,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        success: e.success,
+        toolUseId: e.toolUseId,
+        type: "tool_result",
+      } as unknown as StreamEvent;
+    case "text.completed":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "assistant",
+      } as unknown as StreamEvent;
+    case "thinking.completed":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "thinking",
+      } as unknown as StreamEvent;
+    case "model.request":
+      return {
+        request: e.request,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "model_request",
+      } as unknown as StreamEvent;
+    case "model.response":
+      return {
+        response: e.response,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "model_response",
+      } as unknown as StreamEvent;
+    case "context.snapshot":
+      return {
+        context: e.context,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "context_snapshot",
+      } as unknown as StreamEvent;
+    case "task.state":
+      return {
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        taskState: e.taskState,
+        type: "task_state",
+      } as unknown as StreamEvent;
+    case "research.state":
+      return {
+        researchState: e.researchState,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        type: "research_state",
+      } as unknown as StreamEvent;
+    case "run.status":
+      return {
+        message: e.message,
+        runId: e.runId,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        timestamp: e.timestamp ?? Date.now(),
+        type: "status",
+      } as unknown as StreamEvent;
+    default:
+      return null;
+  }
 }
 
 function isValidMessageRole(role: unknown): role is MessageRole {
@@ -3504,7 +3533,13 @@ export function AgentConsole({
       thinkingStreamsRef.current = {};
 
       activeAgentRequestsRef.current.forEach((request) => {
-        request.controller.abort();
+        if (request.runId) {
+          void fetch(`${apiBaseUrl}/api/runs/${request.runId}/abort`, {
+            method: "POST",
+          }).catch(() => {
+            // 组件卸载时尽力中止，忽略网络错误。
+          });
+        }
       });
       activeAgentRequestsRef.current.clear();
     };
@@ -4181,34 +4216,6 @@ export function AgentConsole({
     });
   };
 
-  const removeDuplicateStatusForThinking = ({
-    message,
-    runId,
-    sessionId,
-    stepId,
-  }: {
-    message: string;
-    runId: string;
-    sessionId: string;
-    stepId: string;
-  }) => {
-    updateSession(sessionId, (session) => ({
-      ...session,
-      feed: session.feed.filter(
-        (item) =>
-          !(
-            item.kind === "activity" &&
-            item.type === "status" &&
-            item.eventType === "status" &&
-            item.runId === runId &&
-            item.stepId === stepId &&
-            item.detail === message
-          ),
-      ),
-      updatedAt: Date.now(),
-    }));
-  };
-
   const markRunningRunCancelled = (sessionId: string, runId?: string) => {
     const endedAt = Date.now();
 
@@ -4658,7 +4665,16 @@ export function AgentConsole({
       phase: "system",
       sessionId,
     });
-    activeRequest.controller.abort();
+
+    // v2：中断走 Command 通道（POST /api/runs/:id/abort），EventSource 是 session 级长连接不受影响。
+    if (activeRequest.runId) {
+      void fetch(`${apiBaseUrl}/api/runs/${activeRequest.runId}/abort`, {
+        method: "POST",
+      }).catch((error) => {
+        console.warn("Failed to abort agent run.", error);
+      });
+    }
+
     appendActivity(
       activeRequest.sessionId,
       "status",
@@ -4683,6 +4699,183 @@ export function AgentConsole({
     activeAgentRequestsRef.current.delete(sessionId);
     clearActiveAgentRun(sessionId);
   };
+
+  // ---- v2 事件订阅：session 级 SSE + 只读渲染 ----
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventLastSeqRef = useRef<Record<string, number>>({});
+  const assistantStreamsRef = useRef<
+    Map<string, { messageId: string; content: string }>
+  >(new Map());
+  const dispatchEventRef = useRef<(sessionId: string, event: V2Event) => void>(
+    () => {},
+  );
+
+  // dispatchEventRef.current 每次渲染绑定最新闭包，EventSource onmessage 经它派发，避免重连。
+  dispatchEventRef.current = (sessionId, event) => {
+    const e = event as Record<string, unknown> & { type: string };
+
+    // Layer 1：live-only 流式增量。
+    if (e.type === "text.delta") {
+      const textId = String(e.textId ?? "");
+      let stream = assistantStreamsRef.current.get(textId);
+      if (!stream) {
+        stream = { messageId: createId(), content: "" };
+        assistantStreamsRef.current.set(textId, stream);
+      }
+      if (e.reset) {
+        stream.content = "";
+      }
+      stream.content += String(e.delta ?? "");
+      upsertFeedMessage(sessionId, {
+        content: stream.content,
+        id: stream.messageId,
+        role: "assistant",
+      });
+      return;
+    }
+
+    if (e.type === "thinking.delta") {
+      handleThinkingDelta({
+        delta: String(e.delta ?? ""),
+        runId: String(e.runId ?? ""),
+        sessionId,
+        stepId: String(e.stepId ?? ""),
+        stepIndex: Number(e.stepIndex ?? 0),
+      });
+      return;
+    }
+
+    // Layer 3：ClientNotification（UI 主消费，展示文案由后端 EventMapper 生成）。
+    if (e.type === "activity.appended") {
+      appendActivity(
+        sessionId,
+        e.activityType as ActivityType,
+        String(e.label ?? ""),
+        String(e.detail ?? ""),
+        {
+          display: e.display as ActivityDisplay,
+          eventType: "manual",
+          ...(e.runId ? { runId: String(e.runId) } : {}),
+          ...(e.stepId ? { stepId: String(e.stepId) } : {}),
+          stepIndex: e.stepIndex as number | undefined,
+          ...(e.toolName ? { toolName: String(e.toolName) } : {}),
+          ...(e.toolUseId ? { toolUseId: String(e.toolUseId) } : {}),
+        },
+      );
+      return;
+    }
+
+    if (e.type === "activity.display_updated") {
+      updateActivityDisplay(
+        sessionId,
+        String(e.activityId ?? ""),
+        e.display as ActivityDisplay,
+      );
+      return;
+    }
+
+    if (e.type === "assistant.message") {
+      const textId = String(e.textId ?? "");
+      let stream = assistantStreamsRef.current.get(textId);
+      if (!stream) {
+        stream = { messageId: createId(), content: "" };
+        assistantStreamsRef.current.set(textId, stream);
+      }
+      stream.content = String(e.message ?? "");
+      upsertFeedMessage(sessionId, {
+        content: stream.content,
+        id: stream.messageId,
+        role: "assistant",
+      });
+      return;
+    }
+
+    if (e.type === "lifecycle") {
+      if (e.phase === "run_completed") {
+        finalizeRunThinkingStreams(sessionId, String(e.runId ?? ""));
+        if (activeAgentRequestsRef.current.get(sessionId)) {
+          activeAgentRequestsRef.current.delete(sessionId);
+          clearActiveAgentRun(sessionId);
+        }
+      }
+      return;
+    }
+
+    if (e.type === "research.context.updated") {
+      const ctx = String(e.researchContext ?? "");
+      updateSession(sessionId, (session) => ({
+        ...session,
+        updatedAt: Date.now(),
+        researchContext: ctx,
+      }));
+      return;
+    }
+
+    if (e.type === "thinking.message" && settings.showThinkingInFeed) {
+      finalizeThinkingStream({
+        finalContent: String(e.message ?? ""),
+        runId: String(e.runId ?? ""),
+        sessionId,
+        stepId: String(e.stepId ?? ""),
+        stepIndex: e.stepIndex as number | undefined,
+      });
+      return;
+    }
+
+    if (e.type === "error") {
+      appendActivity(sessionId, "error", "错误", String(e.message ?? ""), {
+        display: createErrorDisplay(String(e.message ?? "")),
+        eventType: "error",
+        ...(e.runId ? { runId: String(e.runId) } : {}),
+      });
+      return;
+    }
+
+    // Layer 2：TraceEvent → 仅用于 trace/debug 视图重建；主消息流状态一律由 Layer3 notification 驱动。
+    const legacy = toLegacyStreamEvent(event);
+    if (!legacy) {
+      return;
+    }
+    applyTraceEvent(sessionId, legacy);
+  };
+
+  // session 级 SSE 订阅：跟随 activeSession 建立/切换；断线浏览器自动重连，lastSeq 续传。
+  useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+    const sessionId = activeSession.id;
+    const storedSeq =
+      Number(localStorage.getItem(`ranni:lastSeq:${sessionId}`) ?? "0") || 0;
+    const lastSeq = Math.max(eventLastSeqRef.current[sessionId] ?? 0, storedSeq);
+    const url = `${apiBaseUrl}/api/events?streamKey=${encodeURIComponent(
+      sessionId,
+    )}&lastSeq=${lastSeq}`;
+    const eventSource = new EventSource(url);
+
+    eventSource.onmessage = (messageEvent) => {
+      try {
+        const event = JSON.parse(messageEvent.data) as V2Event;
+        if (messageEvent.lastEventId) {
+          const seq = Number(messageEvent.lastEventId);
+          eventLastSeqRef.current[sessionId] = seq;
+          localStorage.setItem(`ranni:lastSeq:${sessionId}`, String(seq));
+        }
+        dispatchEventRef.current(sessionId, event);
+      } catch (error) {
+        console.warn("Failed to handle SSE event.", error);
+      }
+    };
+
+    eventSourceRef.current = eventSource;
+
+    return () => {
+      eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
+    };
+  }, [activeSession?.id, apiBaseUrl]);
 
   const expandSidebar = () => {
     if (sidebarTransitionTimerRef.current) {
@@ -4939,94 +5132,6 @@ export function AgentConsole({
     }
   };
 
-  const requestActivityRewrite = async ({
-    event,
-    fallback,
-    sessionId,
-    activityId,
-    signal,
-  }: {
-    activityId: string;
-    event: Partial<StreamEvent> & Record<string, unknown>;
-    fallback: ActivityDisplay;
-    sessionId: string;
-    signal?: AbortSignal;
-  }) => {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/activity/describe`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        signal,
-        body: JSON.stringify({
-          event,
-          modelSettings: buildModelSettings(settings),
-        }),
-      });
-      const payload = (await response.json()) as {
-        error?: string;
-        ok?: boolean;
-        result?: Partial<ActivityDisplay>;
-      };
-
-      if (!response.ok || payload.ok === false) {
-        throw new Error(payload.error || "过程展示改写失败。");
-      }
-
-      const result = payload.result;
-
-      if (!result?.title || !result.detail) {
-        appendStreamEventLog({
-          action: "activity_rewrite_skipped",
-          detail: {
-            activityId,
-            reason: "missing_result_text",
-            type: event.type,
-          },
-          phase: "display",
-          sessionId,
-        });
-        return;
-      }
-
-      updateActivityDisplay(sessionId, activityId, {
-        detail: result.detail,
-        icon: isProcessIconId(result.icon) ? result.icon : fallback.icon,
-        meta: typeof result.meta === "string" ? result.meta : fallback.meta,
-        source: "model",
-        title: result.title,
-      });
-      appendStreamEventLog({
-        action: "activity_rewrite_applied",
-        detail: {
-          activityId,
-          title: result.title,
-          type: event.type,
-        },
-        phase: "display",
-        sessionId,
-      });
-    } catch (error) {
-      if (signal?.aborted) {
-        return;
-      }
-
-      appendStreamEventLog({
-        action: "activity_rewrite_failed",
-        detail: {
-          activityId,
-          message:
-            error instanceof Error ? error.message : "activity rewrite failed",
-          type: event.type,
-        },
-        phase: "display",
-        sessionId,
-      });
-      console.warn("Failed to rewrite process activity.", error);
-    }
-  };
-
   const requestSessionTitle = async (messageText: string) => {
     try {
       const response = await fetch(`${apiBaseUrl}/api/session/title`, {
@@ -5091,11 +5196,50 @@ export function AgentConsole({
       return;
     }
 
+    // 运行中发送：作为补充消息注入（Steering），而非开启新 run。
     if (
       !isDraftSessionActive &&
       activeSession &&
       activeAgentRequestsRef.current.has(activeSession.id)
     ) {
+      const steerRequest = activeAgentRequestsRef.current.get(activeSession.id);
+
+      if (steerRequest?.runId) {
+        setInput("");
+        appendActivity(activeSession.id, "status", "补充消息", trimmed, {
+          display: {
+            detail: trimmed,
+            icon: "activity",
+            meta: "steer",
+            source: "fallback",
+            title: "已发送补充消息",
+          },
+          eventType: "manual",
+          runId: steerRequest.runId,
+        });
+
+        try {
+          await fetch(`${apiBaseUrl}/api/runs/${steerRequest.runId}/steer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: trimmed }),
+          });
+        } catch (error) {
+          appendActivity(
+            activeSession.id,
+            "error",
+            "错误",
+            "补充消息发送失败。",
+            {
+              display: createErrorDisplay("补充消息发送失败。"),
+              eventType: "manual",
+              runId: steerRequest.runId,
+            },
+          );
+          console.warn("Failed to steer agent run.", error);
+        }
+      }
+
       return;
     }
 
@@ -5150,9 +5294,7 @@ export function AgentConsole({
     const shouldGenerateSessionTitle =
       sessionForRun.title === DEFAULT_SESSION_TITLE &&
       !sessionForRun.messages.some((message) => message.role === "user");
-    const abortController = new AbortController();
     const activeRequest: ActiveAgentRequest = {
-      controller: abortController,
       sessionId,
       stopped: false,
     };
@@ -5207,21 +5349,21 @@ export function AgentConsole({
         generateSessionTitleInBackground(sessionId, trimmed);
       }
 
-      const response = await fetch(`${apiBaseUrl}/api/chat`, {
+      const response = await fetch(`${apiBaseUrl}/api/runs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        signal: abortController.signal,
         body: JSON.stringify({
           messages: history,
           modelSettings: buildModelSettings(settings),
           toolSettings: buildToolSettings(settings),
           workspaceRoot: sessionForRun.workspaceRoot,
+          sessionId,
         }),
       });
 
-      if (!response.ok || !response.body) {
+      if (!response.ok) {
         const payload = await readChatErrorPayload(response);
 
         if (payload.errorCode === AGENT_CONCURRENCY_LIMIT_CODE) {
@@ -5235,547 +5377,34 @@ export function AgentConsole({
         throw new Error(payload.error || "接口请求失败");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let assistantMessageId: string | null = null;
-      let assistantStreamContent = "";
-      let lastTaskStateSignature = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        buffer += decoder.decode(value, { stream: !done });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) {
-            continue;
-          }
-
-          const event = JSON.parse(line) as StreamEvent;
-          appendStreamEventLog({
-            event,
-            phase: "received",
-            sessionId,
-          });
-
-          if (event.type === "thinking_delta") {
-            handleThinkingDelta({
-              delta: event.delta,
-              runId: event.runId,
-              sessionId,
-              stepId: event.stepId,
-              stepIndex: event.stepIndex,
-            });
-            appendStreamEventLog({
-              action: "thinking_delta_applied",
-              detail: {
-                deltaLength: event.delta.length,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "assistant_delta") {
-            const nextId: string = assistantMessageId ?? createId();
-            assistantMessageId = nextId;
-            assistantStreamContent = `${event.reset ? "" : assistantStreamContent}${
-              event.delta
-            }`;
-            upsertFeedMessage(sessionId, {
-              content: assistantStreamContent,
-              id: nextId,
-              role: "assistant",
-            });
-            appendStreamEventLog({
-              action: "assistant_delta_upserted",
-              detail: {
-                deltaLength: event.delta.length,
-                messageId: nextId,
-                messageLength: assistantStreamContent.length,
-                reset: event.reset ?? false,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          applyTraceEvent(sessionId, event);
-          appendStreamEventLog({
-            action: "trace_merged",
-            event,
-            phase: "handled",
-            sessionId,
-          });
-
-          if (event.type === "run_started") {
-            const activityId = appendActivity(
-              sessionId,
-              "step",
-              "开始执行任务",
-              event.prompt,
-              {
-                display: createRunStartedDisplay(),
-                eventType: event.type,
-                runId: event.runId,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "step",
-                label: "开始执行任务",
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "step_started") {
-            appendStreamEventLog({
-              action: "display_skipped",
-              detail: {
-                reason: "step_started_hidden",
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "task_state") {
-            const signature = [
-              event.taskState.currentMode,
-              event.taskState.nextAction,
-              event.taskState.verification.status,
-            ].join("|");
-
-            if (signature !== lastTaskStateSignature) {
-              lastTaskStateSignature = signature;
-              const activityId = appendActivity(
-                sessionId,
-                "state",
-                "任务状态",
-                prettifyPayload(event.taskState),
-                {
-                  display: createTaskStateDisplay(event.taskState),
-                  eventType: event.type,
-                  runId: event.runId,
-                  stepId: event.stepId,
-                  stepIndex: event.stepIndex,
-                },
-              );
-              appendStreamEventLog({
-                action: "activity_appended",
-                detail: {
-                  activityId,
-                  activityType: "state",
-                  signature,
-                },
-                event,
-                phase: "display",
-                sessionId,
-              });
-            } else {
-              appendStreamEventLog({
-                action: "display_skipped",
-                detail: {
-                  reason: "duplicate_task_state",
-                  signature,
-                },
-                event,
-                phase: "display",
-                sessionId,
-              });
-            }
-            continue;
-          }
-
-          if (event.type === "status") {
-            const activityId = appendActivity(sessionId, "status", "状态", event.message, {
-              display: createStatusDisplay(event.message),
-              eventType: event.type,
-              runId: event.runId,
-              stepId: event.stepId,
-              stepIndex: event.stepIndex,
-            });
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "status",
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "thinking") {
-            removeDuplicateStatusForThinking({
-              message: event.message,
-              runId: event.runId,
-              sessionId,
-              stepId: event.stepId,
-            });
-
-            if (settings.showThinkingInFeed) {
-              finalizeThinkingStream({
-                finalContent: event.message,
-                runId: event.runId,
-                sessionId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-              });
-              appendStreamEventLog({
-                action: "thinking_finalized",
-                detail: {
-                  messageLength: event.message.length,
-                },
-                event,
-                phase: "display",
-                sessionId,
-              });
-            } else {
-              appendStreamEventLog({
-                action: "display_skipped",
-                detail: {
-                  reason: "thinking_feed_disabled",
-                },
-                event,
-                phase: "display",
-                sessionId,
-              });
-            }
-            continue;
-          }
-
-          if (event.type === "tool_call") {
-            const fallbackDisplay = createToolCallDisplay(
-              event.name,
-              event.arguments,
-            );
-            const activityId = appendActivity(
-              sessionId,
-              "tool_call",
-              `调用 ${event.name}`,
-              prettifyPayload(event.arguments),
-              {
-                display: fallbackDisplay,
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-                toolName: event.name,
-                toolUseId: event.toolUseId,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "tool_call",
-                toolName: event.name,
-                toolUseId: event.toolUseId,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-
-            void requestActivityRewrite({
-              activityId,
-              event: {
-                arguments: event.arguments,
-                name: event.name,
-                stepIndex: event.stepIndex,
-                type: event.type,
-              },
-              fallback: fallbackDisplay,
-              sessionId,
-              signal: abortController.signal,
-            });
-            continue;
-          }
-
-          if (event.type === "tool_result") {
-            const activityId = appendActivity(
-              sessionId,
-              "tool_result",
-              `${event.name} 返回`,
-              event.result,
-              {
-                display: createToolResultDisplay({
-                  durationMs: event.durationMs,
-                  result: event.result,
-                  success: event.success,
-                  toolName: event.name,
-                }),
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-                toolName: event.name,
-                toolUseId: event.toolUseId,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "tool_result",
-                success: event.success,
-                toolName: event.name,
-                toolUseId: event.toolUseId,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "research_state") {
-            const activityId = appendActivity(
-              sessionId,
-              "research",
-              "研究状态",
-              event.researchState,
-              {
-                display: createResearchDisplay(),
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-              },
-            );
-            updateSession(sessionId, (session) => ({
-              ...session,
-              updatedAt: Date.now(),
-              researchContext: event.researchState,
-            }));
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "research",
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "assistant") {
-            const nextId: string = assistantMessageId ?? createId();
-            assistantMessageId = nextId;
-            assistantStreamContent = event.message;
-            upsertFeedMessage(sessionId, {
-              content: event.message,
-              id: nextId,
-              role: "assistant",
-            });
-            appendStreamEventLog({
-              action: "assistant_final_upserted",
-              detail: {
-                messageId: nextId,
-                messageLength: event.message.length,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "step_completed") {
-            if (event.status === "completed") {
-              appendStreamEventLog({
-                action: "display_skipped",
-                detail: {
-                  reason: "completed_step_hidden",
-                },
-                event,
-                phase: "display",
-                sessionId,
-              });
-              continue;
-            }
-
-            const activityId = appendActivity(
-              sessionId,
-              event.status === "failed" ? "error" : "step",
-              `Step ${event.stepIndex} ${event.status}`,
-              prettifyPayload(event),
-              {
-                display: createStepCompletedDisplay({
-                  durationMs: event.durationMs,
-                  status: event.status,
-                  stepIndex: event.stepIndex,
-                }),
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: event.status === "failed" ? "error" : "step",
-                status: event.status,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "run_completed") {
-            finalizeRunThinkingStreams(sessionId, event.runId);
-            const activityId = appendActivity(
-              sessionId,
-              event.status === "failed" ? "error" : "step",
-              `Run ${event.status}`,
-              prettifyPayload(event),
-              {
-                display: createRunCompletedDisplay({
-                  durationMs: event.durationMs,
-                  status: event.status,
-                  totalSteps: event.totalSteps,
-                }),
-                eventType: event.type,
-                runId: event.runId,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: event.status === "failed" ? "error" : "step",
-                status: event.status,
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "error") {
-            const activityId = appendActivity(
-              sessionId,
-              "error",
-              "错误",
-              event.message,
-              {
-                display: createErrorDisplay(event.message),
-                eventType: event.type,
-                runId: event.runId,
-                stepId: event.stepId,
-                stepIndex: event.stepIndex,
-              },
-            );
-            appendStreamEventLog({
-              action: "activity_appended",
-              detail: {
-                activityId,
-                activityType: "error",
-              },
-              event,
-              phase: "display",
-              sessionId,
-            });
-            continue;
-          }
-
-          if (event.type === "done") {
-            appendStreamEventLog({
-              action: "stream_done",
-              event,
-              phase: "handled",
-              sessionId,
-            });
-            continue;
-          }
-
-          appendStreamEventLog({
-            action: "unhandled_event",
-            event,
-            phase: "handled",
-            sessionId,
-          });
-        }
-
-        if (done) {
-          break;
-        }
-      }
+      const runResponse = (await response.json()) as { runId?: string };
+      activeRequest.runId = runResponse.runId;
+      appendStreamEventLog({
+        action: "run_started_command",
+        detail: { runId: runResponse.runId },
+        phase: "system",
+        sessionId,
+      });
+      // 后续事件经 session 级 SSE 下发，由 dispatchEventRef 派发为只读渲染。
     } catch (caughtError) {
-      const wasStopped = activeRequest.stopped;
-      const isAbortError =
-        caughtError instanceof DOMException && caughtError.name === "AbortError";
-
-      if (wasStopped || isAbortError) {
-        appendStreamEventLog({
-          action: "request_aborted",
-          detail: {
-            reason: wasStopped ? "user_stop" : "abort_error",
-          },
-          phase: "system",
-          sessionId,
-        });
-        if (activeRequest.runId) {
-          finalizeRunThinkingStreams(sessionId, activeRequest.runId);
-        }
-        return;
-      }
-
       const message =
         caughtError instanceof Error ? caughtError.message : "请求失败";
       appendStreamEventLog({
         action: "request_failed",
-        detail: {
-          message,
-        },
+        detail: { message },
         phase: "system",
         sessionId,
       });
+      appendActivity(sessionId, "error", "错误", message, {
+        display: createErrorDisplay(message),
+        eventType: "manual",
+      });
+
       if (activeRequest.runId) {
         finalizeRunThinkingStreams(sessionId, activeRequest.runId);
       }
-      appendActivity(sessionId, "error", "错误", message);
-    } finally {
-      appendStreamEventLog({
-        action: "request_finally",
-        detail: {
-          activeRunId: activeRequest.runId,
-        },
-        phase: "system",
-        sessionId,
-      });
-      if (
-        activeAgentRequestsRef.current.get(sessionId)?.controller ===
-        abortController
-      ) {
-        activeAgentRequestsRef.current.delete(sessionId);
-        clearActiveAgentRun(sessionId);
-      }
+      activeAgentRequestsRef.current.delete(sessionId);
+      clearActiveAgentRun(sessionId);
     }
   };
 

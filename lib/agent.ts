@@ -28,6 +28,16 @@ import type {
   TraceContextSnapshot,
   TraceToolDefinition,
 } from "./trace";
+import { EventBus } from "./events/event-bus";
+import type { ProviderEvent, TraceEvent } from "./events/schema";
+import {
+  mapAssistantCompleted,
+  mapAssistantDelta,
+  mapLegacyTraceEvent,
+  mapThinkingCompleted,
+  mapThinkingDelta,
+  type MappingContext,
+} from "./events/legacy-map";
 import { getWorkspaceRoot } from "./workspace";
 
 const MAX_EMPTY_FINAL_REPAIR_ATTEMPTS = 2;
@@ -54,7 +64,11 @@ type PlainMessage = {
 };
 
 type RunAgentTurnOptions = {
-  emit: (event: StreamEvent) => void;
+  runId: string;
+  sessionId: string;
+  streamKey: string;
+  eventBus: EventBus;
+  drainSteer?: (runId: string) => PlainMessage[];
   messages: PlainMessage[];
   modelConfig?: ModelConnectionConfig;
   signal?: AbortSignal;
@@ -1486,7 +1500,11 @@ function createCompletionGuardMessage(taskState: TaskState) {
 }
 
 export async function runAgentTurn({
-  emit,
+  runId,
+  sessionId,
+  streamKey,
+  eventBus,
+  drainSteer,
   messages,
   modelConfig,
   signal,
@@ -1496,8 +1514,53 @@ export async function runAgentTurn({
   const toolDefinitions = getToolDefinitions();
   const traceToolDefinitions = toTraceToolDefinitions();
   const runtime = getModelRuntimeInfo(modelConfig);
-  const runId = crypto.randomUUID();
   const runStartedAt = Date.now();
+
+  // ---- v2 事件发布适配层 ----
+  // 保留 agent 主体内既有的 emit(legacyStreamEvent) 调用不动，在此把旧 StreamEvent 映射为
+  // v2 三层事件后 publish 到 EventBus，从而把 Agent 运行与 HTTP 响应生命周期解耦。
+  // 详见 docs/tech/v2-architecture/。
+  const mappingCtx: MappingContext = { runId, sessionId };
+  let activeTextId: string | undefined;
+  let activeThinkingId: string | undefined;
+
+  const publishTrace = (event: TraceEvent) => {
+    eventBus.publish(streamKey, event, { durable: true });
+  };
+  const publishLive = (event: ProviderEvent) => {
+    eventBus.publish(streamKey, event, { durable: false });
+  };
+
+  const emit = (event: StreamEvent) => {
+    switch (event.type) {
+      case "assistant_delta":
+        if (activeTextId) {
+          publishLive(mapAssistantDelta(event, mappingCtx, activeTextId));
+        }
+        return;
+      case "thinking_delta":
+        if (activeThinkingId) {
+          publishLive(mapThinkingDelta(event, mappingCtx, activeThinkingId));
+        }
+        return;
+      case "assistant":
+        if (activeTextId) {
+          publishTrace(mapAssistantCompleted(event, mappingCtx, activeTextId));
+        }
+        return;
+      case "thinking":
+        if (activeThinkingId) {
+          publishTrace(mapThinkingCompleted(event, mappingCtx, activeThinkingId));
+        }
+        return;
+      default: {
+        const trace = mapLegacyTraceEvent(event, mappingCtx);
+        if (trace) {
+          publishTrace(trace);
+        }
+      }
+    }
+  };
   const conversation: AgentMessage[] = messages.map((message) => ({
     role: message.role,
     content: [
@@ -1570,6 +1633,17 @@ export async function runAgentTurn({
   }) => {
     assertNotAborted(signal);
 
+    const textId = crypto.randomUUID();
+    activeTextId = textId;
+    publishTrace({
+      runId,
+      sessionId,
+      stepId,
+      stepIndex,
+      type: "text.started",
+      textId,
+    });
+
     const shouldReset = !message.startsWith(lastAssistantStreamMessage);
     const deltaSource = shouldReset
       ? message
@@ -1610,6 +1684,23 @@ export async function runAgentTurn({
   try {
     for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
       assertNotAborted(signal);
+
+      // Steering：发起下一次模型请求前，抽取队列中的补充消息注入上下文（参考 Pi agent-loop）。
+      const steerMessages = drainSteer?.(runId) ?? [];
+      if (steerMessages.length > 0) {
+        for (const message of steerMessages) {
+          conversation.push({
+            role: "user",
+            content: [{ type: "text", text: message.content }],
+          });
+          emit({
+            message: `已接收补充消息并注入上下文：${message.content.slice(0, 40)}…`,
+            runId,
+            timestamp: Date.now(),
+            type: "status",
+          });
+        }
+      }
 
       const stepIndex = step + 1;
       const stepId = crypto.randomUUID();
@@ -1677,6 +1768,22 @@ export async function runAgentTurn({
 
       let assistantResult: Awaited<ReturnType<typeof createMessage>>;
       let streamedThinking = "";
+      const thinkingId = crypto.randomUUID();
+      activeThinkingId = thinkingId;
+      let thinkingStarted = false;
+      const startThinkingIfNeeded = () => {
+        if (!thinkingStarted) {
+          thinkingStarted = true;
+          publishTrace({
+            runId,
+            sessionId,
+            stepId,
+            stepIndex,
+            type: "thinking.started",
+            thinkingId,
+          });
+        }
+      };
       const thinkingEmitter = new PacedTextEmitter((delta) => {
         emit({
           delta,
@@ -1698,6 +1805,7 @@ export async function runAgentTurn({
               return;
             }
 
+            startThinkingIfNeeded();
             streamedThinking += delta;
             thinkingEmitter.enqueue(delta);
           },
@@ -1814,6 +1922,7 @@ export async function runAgentTurn({
             ? ""
             : thinking;
 
+        startThinkingIfNeeded();
         thinkingEmitter.enqueue(missingThinking);
         await thinkingEmitter.drain();
 
@@ -1826,6 +1935,7 @@ export async function runAgentTurn({
           type: "thinking",
         });
       } else if (streamedThinking.trim()) {
+        startThinkingIfNeeded();
         await thinkingEmitter.drain();
       }
 

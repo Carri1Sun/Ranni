@@ -1,7 +1,7 @@
 ---
 author: codex
 version: v1
-date: 2026-06-22
+date: 2026-07-06
 ---
 
 # Component Map
@@ -15,7 +15,7 @@ date: 2026-06-22
 | `components/` | React UI 组件和 CSS module |
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
-| `lib/` | Agent loop、工具、模型适配、trace、workspace、task memory |
+| `lib/` | Agent loop、事件总线、运行注册表、EventMapper、工具、模型适配、trace、workspace、task memory |
 | `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
 | `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
@@ -45,13 +45,14 @@ date: 2026-06-22
 - workspace picker 交互。
 - settings modal。
 - chat / report / trace 三个页面。
-- `/api/chat` NDJSON 流读取。
+- session 级 SSE 订阅（`GET /api/events`），只读消费三层事件：Layer3 notification 驱动主 UI 状态、Layer2 重建 trace/debug 视图、Layer1 live delta 流式打字。
 - run、step、tool、task state、thinking trace 的前端合并。
 - thinking delta 的前端内存态展示、最终 thinking 持久化切换和 assistant delta 消息更新。
 - 前端流事件顺序日志、消息流 UI 顺序和导出。
 - 最多 3 个并行 agent run 的前端状态、按 session 终止和上限弹窗。
-- 会话过程项的本地摘要、模型改写回填、图标展示和 debug info 浮窗。
-- 手动终止运行。
+- 展示文案直接取自后端 notification（含 model 改写），前端不再二次请求 LLM。
+- 运行中补充消息（steer）、手动终止运行（POST abort）。
+- lastSeq localStorage 持久化，断线重连续传。
 - assistant 消息复制、导出 markdown。
 - session 级 trace 导出，包含未完成 run。
 - 首条消息异步 session 命名。
@@ -106,8 +107,9 @@ Express 应用定义。
 - runtime 查询。
 - workspace 推荐、校验、系统目录选择。
 - session title 生成。
-- activity display 改写。
-- chat NDJSON 流式接口和最多 3 个 active run 的并发上限。
+- 接线全局 EventBus / RunRegistry / EventMapper。
+- Command 通道：启动 run、补充消息（steer）、中断（abort），最多 3 个 active run 并发上限。
+- Event 通道：`GET /api/events` SSE 单向下行广播（Last-Event-ID 续传 + 心跳）。
 - model provider 测试。
 - Tavily 测试。
 - 生产模式静态网页托管。
@@ -119,12 +121,16 @@ Express 应用定义。
 - `GET /api/workspaces/roots`
 - `GET /api/workspaces/list`
 - `POST /api/workspaces/validate`
+- `POST /api/workspaces/auto-create`
 - `POST /api/workspaces/pick`
 - `POST /api/session/title`
-- `POST /api/activity/describe`
-- `POST /api/chat`，达到并行 run 上限时返回 `AGENT_CONCURRENCY_LIMIT`
+- `POST /api/runs`（启动 run，达到上限返回 `AGENT_CONCURRENCY_LIMIT`）
+- `GET /api/events`（SSE，query `streamKey` + `lastSeq`）
+- `POST /api/runs/:runId/steer`（补充消息入队）
+- `POST /api/runs/:runId/abort`（中断）
 - `POST /api/model/test`
 - `POST /api/tavily/test`
+- `POST /api/computer-use/test`
 
 ### `src/server/index.ts`
 
@@ -142,7 +148,7 @@ Agent 主循环。
 
 主要职责：
 
-- 创建 run id。
+- 接收外部传入的 runId / sessionId / streamKey / EventBus / drainSteer。
 - 构造 system prompt。
 - 注入 task state 和 task memory summary。
 - 调用模型。
@@ -150,8 +156,26 @@ Agent 主循环。
 - 执行工具。
 - 同步 task state、task memory、research state。
 - 触发 completion guard、final answer repair、unsafe tool-call guard。
-- 输出 trace stream events，包括内存态 `thinking_delta`、`assistant_delta` 和最终持久化事件。
+- 通过内部 emit 适配层把旧 StreamEvent 映射为 v2 三层事件（Layer2 TraceEvent durable + Layer1 delta live-only）发布到 EventBus，包含三段式 `text.started/delta/completed`、`thinking.started/delta/completed`。
+- 循环开头 `drainSteer(runId)` 抽取补充消息注入上下文（Steering）。
 - 处理 abort/cancel。
+
+### `lib/events/`
+
+v2 事件驱动架构的核心模块。
+
+- `schema.ts`：三层事件类型（ProviderEvent / TraceEvent / ClientNotification）+ 三段式（textId / thinkingId）+ 共享展示类型（ActivityDisplay / ProcessIconId / ActivityType）+ `DURABLE_EVENT_TYPES`。
+- `event-bus.ts`：进程内单例 EventBus。per-streamKey(=sessionId) ring buffer + 单调 seq + 同步回放订阅 + `subscribeAll`。durable 入 buffer 可回放，live-only 仅广播。
+- `legacy-map.ts`：旧 `StreamEvent` → v2 事件映射纯函数，供 agent.ts emit 适配层使用。
+
+### `lib/runs/`
+
+运行实例管理与展示投影。
+
+- `run-registry.ts`：运行注册表。runId 在此生成（上移自 agent），维护 steerQueue（steer/drainSteer）、abort（触发 AbortController + 清空队列）、并发计数（activeCount）。
+- `event-mapper.ts`：EventMapper。订阅所有 Layer2 TraceEvent 投影为 Layer3 ClientNotification；`tool.started` 异步调 LLM 生成 model display → `activity.display_updated`；`run.completed` 前 await 改写（8s 超时）；`task.state` 签名去重；`research.state` → `research.context.updated`，`thinking.completed` → `thinking.message`。
+- `display-fallback.ts`：展示文案 fallback 纯函数（前后端共享，从 components/agent-console.tsx 抽取）。
+- `activity-rewrite.ts`：LLM 改写逻辑（prompt / 脱敏 / 解析 / `rewriteActivityDisplay`），供 mapper 使用。
 
 ### `lib/tools.ts`
 
@@ -228,7 +252,7 @@ Research notebook 运行期记录。
 
 主要职责：
 
-- 直接调用 `runAgentTurn` 跑 research case。
+- 创建本地 EventBus / RunRegistry，订阅 v2 事件并用 `toLegacyEvent` 反向映射回旧 `StreamEvent`，保持既有分析逻辑不变；调用 `runAgentTurn` 跑 research case。
 - 输出 `trace.ndjson`、`final.md`、`metrics.json`、`score.md`、`trajectory-analysis.md`、`comparison.md`。
 - 读取 `.ranni/runs/<runId>/` 中间文件，分析文件记忆是否被写入和读回。
 - 支持 run 对比：`--compare <baseline> <candidate>`。

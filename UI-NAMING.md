@@ -126,7 +126,8 @@
 | `tool_result` | 工具结果过程项 | Tool Result Activity | 新增一条工具结果过程项。 | 显示成功/失败、耗时和摘要。 |
 | `research_state` | 研究状态过程项 | Research Activity | 新增一条研究状态过程项。 | 同步 research notebook 摘要。 |
 | `error` | 错误过程项 | Error Activity | 新增一条错误过程项。 | 用于接口、模型或工具层错误。 |
-| 用户点击停止按钮 | 手动终止过程项 | Manual Stop Activity | 新增一条终止提示。 | 前端本地动作，同时 abort 当前 run。 |
+| 用户点击停止按钮 | 手动终止过程项 | Manual Stop Activity | 新增一条终止提示。 | 前端本地动作，同时 `POST /api/runs/:runId/abort` 中断当前 run。 |
+| 运行中发送补充消息 | 补充消息过程项 | Steer Activity | 新增一条「已发送补充消息」提示。 | 经 `POST /api/runs/:runId/steer` 投递，Agent 在下一 turn 边界注入。 |
 
 ### 当前不新增消息流内容的事件
 
@@ -137,7 +138,6 @@
 | `model_request` | 写入 run / step trace。 | 消息流不新增内容。 |
 | `model_response` | 写入 run / step trace。 | 消息流不新增内容。 |
 | `step_completed`，状态为 `completed` | 写入 step trace。 | 成功 step 完成当前不新增内容。 |
-| `done` | 标记 `/api/chat` 流结束。 | 消息流不新增内容。 |
 | 活动文案改写结果 | 更新已有过程项。 | 不新增消息流条目，只改写标题、说明、图标或 meta。 |
 
 ### 草稿页状态
