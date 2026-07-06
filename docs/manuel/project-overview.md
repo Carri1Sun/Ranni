@@ -162,6 +162,6 @@ Trace 导出挂在 session 上，不再依赖某条 assistant 回复。点击顶
 ## 当前边界
 
 - Ranni 是本地优先应用，设置密钥保存在 localStorage，不适合作为多用户远端服务直接部署。
-- 目录选择依赖本机系统能力；Linux 需要 `zenity` 或 `kdialog`。草稿页不选择目录时，发送首条消息会由后端在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-<sessionId>` 目录。
+- 目录选择依赖本机系统能力；Linux 需要 `zenity` 或 `kdialog`。草稿页不选择目录时，发送首条消息会由后端在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` 目录，同一秒内重复创建会追加数字后缀。
 - `write_file` 是全文件写入工具，适合小文件或完整重写，不适合盲目局部 patch。
 - `.ranni` 是 agent 任务记忆，不是用户文档归档区。

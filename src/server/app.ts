@@ -153,26 +153,62 @@ function resolveDefaultWorkspaceBase() {
   );
 }
 
-function sanitizeDirectoryName(value: string) {
-  // sessionId 来自 crypto.randomUUID()（仅含十六进制与连字符），这里做防御性清洗，
-  // 去掉路径分隔符等不安全字符，保证自动创建的目录名跨平台可用。
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, "");
+function padTimestampPart(value: number) {
+  return String(value).padStart(2, "0");
+}
 
+function formatWorkspaceTimestamp(date = new Date()) {
+  const datePart = [
+    date.getFullYear(),
+    padTimestampPart(date.getMonth() + 1),
+    padTimestampPart(date.getDate()),
+  ].join("-");
+  const timePart = [
+    padTimestampPart(date.getHours()),
+    padTimestampPart(date.getMinutes()),
+    padTimestampPart(date.getSeconds()),
+  ].join("-");
+
+  return `${datePart}_${timePart}`;
+}
+
+function isFileExistsError(error: unknown) {
   return (
-    normalized
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "session"
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
   );
 }
 
-async function createAutoSessionWorkspace(sessionId: string) {
-  const directoryName = `ranni-session-${sanitizeDirectoryName(sessionId)}`;
-  const targetPath = path.join(resolveDefaultWorkspaceBase(), directoryName);
+async function createUniqueDirectory(basePath: string, baseDirectoryName: string) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const directoryName =
+      attempt === 0 ? baseDirectoryName : `${baseDirectoryName}-${attempt + 1}`;
+    const targetPath = path.join(basePath, directoryName);
 
-  await fs.promises.mkdir(targetPath, { recursive: true });
+    try {
+      await fs.promises.mkdir(targetPath);
+      return targetPath;
+    } catch (error) {
+      if (isFileExistsError(error)) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("无法创建默认工作目录。");
+}
+
+async function createAutoSessionWorkspace() {
+  const basePath = resolveDefaultWorkspaceBase();
+  const directoryName = `ranni-session-${formatWorkspaceTimestamp()}`;
+
+  await fs.promises.mkdir(basePath, { recursive: true });
+
+  const targetPath = await createUniqueDirectory(basePath, directoryName);
 
   const stats = await fs.promises.stat(targetPath);
 
@@ -612,10 +648,8 @@ export function createServerApp() {
   });
 
   app.post("/api/workspaces/auto-create", async (request, response) => {
-    let payload: z.infer<typeof autoWorkspaceSchema>;
-
     try {
-      payload = autoWorkspaceSchema.parse(request.body);
+      autoWorkspaceSchema.parse(request.body);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "请求体格式不正确";
@@ -625,7 +659,7 @@ export function createServerApp() {
     }
 
     try {
-      const workspacePath = await createAutoSessionWorkspace(payload.sessionId);
+      const workspacePath = await createAutoSessionWorkspace();
 
       response.json({
         ok: true,
