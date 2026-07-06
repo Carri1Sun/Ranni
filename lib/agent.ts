@@ -240,6 +240,7 @@ class PacedTextEmitter {
 
 function createSystemPrompt({
   activeSkillNames,
+  researchMode,
   runtime,
   skillIndices,
   taskMemorySummary,
@@ -248,6 +249,7 @@ function createSystemPrompt({
   workspaceRoot,
 }: {
   activeSkillNames: string[];
+  researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
   skillIndices: SkillIndex[];
   taskMemorySummary: string;
@@ -419,6 +421,7 @@ function createSystemPrompt({
     `- Current date: ${currentDate}`,
     `- Max tool steps: ${MAX_TOOL_STEPS}`,
     `- Current model: ${runtime.model}`,
+    `- Research validation mode: ${researchMode ? "on" : "off"}`,
     `- Available tools: ${toolNames.join(", ")}`,
     "",
     "Current task state:",
@@ -1118,11 +1121,17 @@ function isNonTrivialResearchRequest(prompt: string, taskState: TaskState) {
 
 function getResearchFinalizationGuardPolicy({
   latestUserPrompt,
+  researchMode,
   taskState,
 }: {
   latestUserPrompt: string;
+  researchMode: boolean;
   taskState: TaskState;
 }): ResearchFinalizationGuardPolicy {
+  if (!researchMode) {
+    return "off";
+  }
+
   const prompt = latestUserPrompt.trim();
   const stateText = [
     taskState.deliverable,
@@ -1369,16 +1378,22 @@ function getResearchReadabilityIssues(visibleContent: string) {
 function shouldRunResearchAnswerQualityGuard({
   guardCount,
   latestUserPrompt,
+  researchMode,
   signals,
   taskState,
   visibleContent,
 }: {
   guardCount: number;
   latestUserPrompt: string;
+  researchMode: boolean;
   signals: ResearchSignals;
   taskState: TaskState;
   visibleContent: string;
 }) {
+  if (!researchMode) {
+    return false;
+  }
+
   if (guardCount >= MAX_RESEARCH_ANSWER_QUALITY_REPAIR_ATTEMPTS) {
     return false;
   }
@@ -1618,6 +1633,7 @@ export async function runAgentTurn({
   let researchAnswerQualityRepairCount = 0;
   let researchFinalizationGuardCount = 0;
   let unsafeToolCallRepairCount = 0;
+  const researchMode = toolSettings?.researchMode ?? false;
   const researchSignals = createInitialResearchSignals();
   const researchNotebook = createResearchNotebook({
     latestUserPrompt,
@@ -1770,6 +1786,7 @@ export async function runAgentTurn({
       const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
       const system = createSystemPrompt({
         activeSkillNames,
+        researchMode,
         runtime,
         skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
@@ -2176,6 +2193,7 @@ export async function runAgentTurn({
         const researchFinalizationGuardPolicy =
           getResearchFinalizationGuardPolicy({
             latestUserPrompt,
+            researchMode,
             taskState,
           });
 
@@ -2234,6 +2252,7 @@ export async function runAgentTurn({
           shouldRunResearchAnswerQualityGuard({
             guardCount: researchAnswerQualityRepairCount,
             latestUserPrompt,
+            researchMode,
             signals: researchSignals,
             taskState,
             visibleContent: candidateFinalMessage,

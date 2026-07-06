@@ -63,12 +63,14 @@ const toolSettingsSchema = z.object({
   activeSkills: z.array(z.string().trim().min(1)).max(24).optional().default([]),
   computerUseApiKey: optionalSecretSchema,
   computerUseModel: optionalSecretSchema,
+  researchMode: z.boolean().optional().default(false),
   tavilyApiKey: optionalSecretSchema,
 });
 const defaultToolSettings = {
   activeSkills: [],
   computerUseApiKey: undefined,
   computerUseModel: undefined,
+  researchMode: false,
   tavilyApiKey: undefined,
 };
 

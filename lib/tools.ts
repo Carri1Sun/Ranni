@@ -42,6 +42,7 @@ export type ToolSettings = {
   activeSkills?: string[];
   computerUseApiKey?: string;
   computerUseModel?: string;
+  researchMode?: boolean;
   tavilyApiKey?: string;
 };
 

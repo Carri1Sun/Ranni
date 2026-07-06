@@ -2358,6 +2358,7 @@ function buildModelSettings(
 function buildToolSettings(
   settings: AppSettings,
   extraActiveSkills: string[] = [],
+  researchMode = false,
 ) {
   const activeSkills = new Set(settings.activeSkills);
 
@@ -2374,6 +2375,7 @@ function buildToolSettings(
     computerUseApiKey:
       settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
     computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
+    researchMode,
     tavilyApiKey: settings.tavilyApiKey.trim(),
   };
 }
@@ -3208,6 +3210,7 @@ export function AgentConsole({
     useState("");
   const [isSlidesComposerSkillEnabled, setIsSlidesComposerSkillEnabled] =
     useState(false);
+  const [isResearchModeEnabled, setIsResearchModeEnabled] = useState(false);
   const [workspacePickerStatus, setWorkspacePickerStatus] = useState<
     "error" | "idle" | "loading"
   >("idle");
@@ -5501,7 +5504,11 @@ export function AgentConsole({
         body: JSON.stringify({
           messages: history,
           modelSettings: buildModelSettings(settings),
-          toolSettings: buildToolSettings(settings, extraActiveSkills),
+          toolSettings: buildToolSettings(
+            settings,
+            extraActiveSkills,
+            isResearchModeEnabled,
+          ),
           workspaceRoot: sessionForRun.workspaceRoot,
           sessionId,
         }),
@@ -5524,6 +5531,7 @@ export function AgentConsole({
       const runResponse = (await response.json()) as { runId?: string };
       activeRequest.runId = runResponse.runId;
       setIsSlidesComposerSkillEnabled(false);
+      setIsResearchModeEnabled(false);
       appendStreamEventLog({
         action: "run_started_command",
         detail: { runId: runResponse.runId },
@@ -5867,6 +5875,9 @@ export function AgentConsole({
     : skillIndexStatus === "loading"
       ? "正在加载本地能力列表"
       : "当前未发现 slides skill";
+  const researchModeButtonTitle = isResearchModeEnabled
+    ? "本次发送已启用研究校验：开启 research 信号校验与完整性打回"
+    : "本次发送启用研究校验";
   const toggleActiveSkill = (name: string, enabled: boolean) => {
     setSettings((current) => {
       const nextNames = new Set(current.activeSkills);
@@ -6135,23 +6146,41 @@ export function AgentConsole({
                       }
                     }}
                   />
-                  <button
-                    aria-pressed={isSlidesComposerSkillEnabled}
-                    className={`${styles.composerSkillToggle} ${
-                      isSlidesComposerSkillEnabled
-                        ? styles.composerSkillToggleActive
-                        : ""
-                    }`}
-                    disabled={slidesComposerButtonDisabled}
-                    title={slidesComposerButtonTitle}
-                    type="button"
-                    onClick={() =>
-                      setIsSlidesComposerSkillEnabled((current) => !current)
-                    }
-                  >
-                    <Sparkles size={14} aria-hidden="true" />
-                    <span>幻灯片</span>
-                  </button>
+                  <div className={styles.composerSkillToolbar}>
+                    <button
+                      aria-pressed={isSlidesComposerSkillEnabled}
+                      className={`${styles.composerSkillToggle} ${
+                        isSlidesComposerSkillEnabled
+                          ? styles.composerSkillToggleActive
+                          : ""
+                      }`}
+                      disabled={slidesComposerButtonDisabled}
+                      title={slidesComposerButtonTitle}
+                      type="button"
+                      onClick={() =>
+                        setIsSlidesComposerSkillEnabled((current) => !current)
+                      }
+                    >
+                      <Sparkles size={14} aria-hidden="true" />
+                      <span>幻灯片</span>
+                    </button>
+                    <button
+                      aria-pressed={isResearchModeEnabled}
+                      className={`${styles.composerSkillToggle} ${
+                        isResearchModeEnabled
+                          ? styles.composerSkillToggleActive
+                          : ""
+                      }`}
+                      title={researchModeButtonTitle}
+                      type="button"
+                      onClick={() =>
+                        setIsResearchModeEnabled((current) => !current)
+                      }
+                    >
+                      <Search size={14} aria-hidden="true" />
+                      <span>研究校验</span>
+                    </button>
+                  </div>
                   <button
                     className={styles.submitButton}
                     disabled={
@@ -6760,23 +6789,40 @@ export function AgentConsole({
                     }
                   }}
                 />
-                <button
-                  aria-pressed={isSlidesComposerSkillEnabled}
-                  className={`${styles.composerSkillToggle} ${
-                    isSlidesComposerSkillEnabled
-                      ? styles.composerSkillToggleActive
-                      : ""
-                  }`}
-                  disabled={slidesComposerButtonDisabled || currentSessionIsRunning}
-                  title={slidesComposerButtonTitle}
-                  type="button"
-                  onClick={() =>
-                    setIsSlidesComposerSkillEnabled((current) => !current)
-                  }
-                >
-                  <Sparkles size={14} aria-hidden="true" />
-                  <span>幻灯片</span>
-                </button>
+                <div className={styles.composerSkillToolbar}>
+                  <button
+                    aria-pressed={isSlidesComposerSkillEnabled}
+                    className={`${styles.composerSkillToggle} ${
+                      isSlidesComposerSkillEnabled
+                        ? styles.composerSkillToggleActive
+                        : ""
+                    }`}
+                    disabled={slidesComposerButtonDisabled || currentSessionIsRunning}
+                    title={slidesComposerButtonTitle}
+                    type="button"
+                    onClick={() =>
+                      setIsSlidesComposerSkillEnabled((current) => !current)
+                    }
+                  >
+                    <Sparkles size={14} aria-hidden="true" />
+                    <span>幻灯片</span>
+                  </button>
+                  <button
+                    aria-pressed={isResearchModeEnabled}
+                    className={`${styles.composerSkillToggle} ${
+                      isResearchModeEnabled ? styles.composerSkillToggleActive : ""
+                    }`}
+                    disabled={currentSessionIsRunning}
+                    title={researchModeButtonTitle}
+                    type="button"
+                    onClick={() =>
+                      setIsResearchModeEnabled((current) => !current)
+                    }
+                  >
+                    <Search size={14} aria-hidden="true" />
+                    <span>研究校验</span>
+                  </button>
+                </div>
                 {currentSessionIsRunning ? (
                   <button
                     className={`${styles.submitButton} ${styles.stopButton}`}

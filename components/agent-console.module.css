@@ -1440,10 +1440,18 @@
   color: var(--ranni-input-placeholder);
 }
 
-.composerSkillToggle {
+.composerSkillToolbar {
   position: absolute;
   left: 8px;
   bottom: 8px;
+  display: flex;
+  max-width: calc(100% - 120px);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.composerSkillToggle {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
@@ -2999,8 +3007,9 @@
     width: calc(100% - 16px);
   }
 
-  .composerSkillToggle {
+  .composerSkillToolbar {
     bottom: 52px;
+    max-width: calc(100% - 16px);
   }
 
   .settingsModal {

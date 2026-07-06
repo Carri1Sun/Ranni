@@ -76,6 +76,7 @@
 | 回到底部按钮 | Scroll To Bottom | 消息流未到底部时出现。 |
 | 底部输入区 | Composer | 已创建 session 的输入区。 |
 | 输入能力开关 | Composer Skill Toggle | 输入框内的临时能力开关，例如“幻灯片”；只影响下一次发送。 |
+| 研究校验开关 | Composer Research Guard Toggle | 输入框内的临时研究校验开关，启用后本次发送开启 research 信号校验与完整性打回；默认关闭。 |
 | 发送按钮 | Send Button | 提交当前输入。 |
 | 停止按钮 | Stop Button | 运行中替换发送按钮。 |
 
