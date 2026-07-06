@@ -1,0 +1,23 @@
+{
+  "name": "default",
+  "aspect": "16:9",
+  "margins": {
+    "x": 0.6,
+    "y": 0.48
+  },
+  "gap": 0.38,
+  "titleSize": 28,
+  "bodySize": 18,
+  "captionSize": 12,
+  "fontFace": "Aptos",
+  "colors": {
+    "title": "172033",
+    "body": "334155",
+    "muted": "64748B",
+    "accent": "2563EB",
+    "accentSoft": "DBEAFE",
+    "background": "FFFFFF",
+    "sectionBackground": "172033",
+    "sectionTitle": "FFFFFF"
+  }
+}

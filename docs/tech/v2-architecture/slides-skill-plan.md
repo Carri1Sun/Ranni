@@ -204,18 +204,18 @@ body（第二层，按需加载）覆盖：
     render_review/         # （P1）
 ```
 
-仿 `save_research_checkpoint` 的 workspace 落盘范式；目录建议放在 `.next-agent/decks/` 下（与现有 `.next-agent/research/` 一致，已被 git ignore）。
+仿 `save_research_checkpoint` 的 workspace 落盘范式。当前实现把默认运行产物放在 `.ranni/decks/` 下，沿用项目已忽略的本地运行目录，避免 deck workspace 污染 git 状态。
 
 ## 9. 分阶段任务
 
 ### P0 — 可编辑 pptx 主干跑通
 
-- [ ] `skills/slides/SKILL.md`（description + keep editable + 简化流水线正文）
-- [ ] `skills/slides/tools.ts`：`generate_pptx` + `init_deck_workspace`
-- [ ] `skills/slides/scripts/layout-helpers.mjs`：基础 layout 坐标计算
-- [ ] `skills/slides/templates/default.theme.json`
-- [ ] 新增依赖：`pptxgenjs`
-- [ ] 交付物：agent 能从结构化输入产出可在 PowerPoint/Keynote 编辑的 `.pptx`
+- [x] `skills/slides/SKILL.md`（description + keep editable + 简化流水线正文）
+- [x] `skills/slides/tools.ts`：`generate_pptx` + `init_deck_workspace`
+- [x] P0 内联基础 layout 坐标计算（P1 再拆 `scripts/layout-helpers.mjs`）
+- [x] `skills/slides/templates/default.theme.json`
+- [x] 新增依赖：`pptxgenjs`
+- [x] 交付物：agent 能从结构化输入产出可在 PowerPoint/Keynote 编辑的 `.pptx`
 
 ### P1 — deck 编译流水线 + 结构自检
 
@@ -272,3 +272,12 @@ P0 只新增 `pptxgenjs`，依赖增量最小。
 - [pptxgenjs – NPM](https://www.npmjs.com/package/pptxgenjs)
 - 本仓库 `document-generation-research.md`（业界调研与选型推理）
 - 本仓库 `skill-dynamic-loading-plan.md`（skill 动态加载机制）
+
+## 14. 当前实现状态
+
+- 已新增 `skills/slides/` skill 包，`SKILL.md` 进入动态 skill 索引，激活后正文注入 system prompt。
+- 已新增 `init_deck_workspace` 和 `generate_pptx` 两个 skill 专属工具，随 `slides` 激活后进入工具列表。
+- `generate_pptx` 使用 PptxGenJS 生成 native editable `.pptx`，支持 `title`、`title-bullets`、`title-content`、`two-col`、`section`、`blank` 基础 layout，支持文本、图片和 `bar` / `line` / `pie` native chart。
+- 前端输入框新增“幻灯片”开关，只影响下一次发送，会把 `slides` 合并进本次 `/api/runs` 的 `toolSettings.activeSkills`。
+- 默认建议 deck workspace 使用 `.ranni/decks/<deck-slug>/`，最终文件放 `final/<deck-slug>.pptx`。
+- 已完成 smoke 验证：调用 `init_deck_workspace` + `generate_pptx` 生成 3 页 PPTX；解压 `slide1.xml` 可见 `<a:t>` 文本节点；native chart smoke 可生成。

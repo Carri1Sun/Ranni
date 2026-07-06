@@ -119,10 +119,13 @@ Agent 可用工具主要分为七类：
 - Research notebook 工具：`plan_research`、`record_research_finding`、`review_research_state`、`save_research_checkpoint`。
 - Task state 工具：`update_task_state`。
 - Durable memory 工具：`init_task_memory`、`read_task_memory`、`update_task_memory`、`record_task_evidence`、`save_task_checkpoint`。
+- 动态 skill 工具：`load_skill` 可按需激活本地 skill。当前 `slides` skill 激活后会提供 `init_deck_workspace` 和 `generate_pptx`，用于生成可编辑 native `.pptx`。
 
 文件、终端和运行产物受 session workspace 边界限制。`operate_computer` 会控制用户实际 macOS 桌面，只应在用户明确要求桌面操作时使用，并在支付、登录、敏感信息或破坏性确认前停止。
 
 Deep research 任务会额外强调动态研究地图、正文核验、证据记录、coverage audit 和 thesis-driven synthesis。来源或 claim 较多时，agent 可把 `source_ledger`、`claim_ledger`、`coverage_matrix`、`synthesis_brief`、`negative_results` 写入 `.ranni/runs/<runId>/`，并在最终综合前读回。
+
+幻灯片任务可通过输入框内的“幻灯片”开关临时启用 `slides` skill，或在设置页的能力设置中设为默认强制加载。生成 deck 时，运行产物建议放在 `.ranni/decks/<deck-slug>/`，最终 PPTX 放在 `final/` 子目录。
 
 ## 过程展示规范
 

@@ -87,7 +87,7 @@ description: Use when the user wants to create or edit PowerPoint decks (.pptx) 
 
 ## 边界
 - 不依赖屏幕操作类工具。视觉复核靠脚本检测 + 人工看预览图。
-- 产物落 workspace 的 .next-agent/decks/ 下（与 .next-agent/research/ 一致，已被 git ignore）。
+- 产物落 workspace 的 `.ranni/decks/` 下，沿用项目已忽略的本地运行目录。
 ```
 
 > 注意：`description` 进第一层 prompt 索引，必须写清"何时用"。正文（第二层）只在 skill 激活时加载，深度内容（完整 contract 字段、layout 配方表）留到 P1 的 `references/`，正文保持精炼控 token。
@@ -351,7 +351,7 @@ P0 仅此一个新依赖。`pptxgenjs` 是纯 JS，无 native 依赖。
 
 - [ ] `npm run typecheck && npm run lint && npm run build` 全绿。
 - [ ] `grep -rn "operate_computer\|computer-use" skills/slides/` 无输出（无屏幕操作依赖）。
-- [ ] 激活 slides skill（UI 开关或 `load_skill`）后，agent 依次调 `init_deck_workspace` + `generate_pptx`，产出 `.pptx` 落到 workspace 的 `.next-agent/decks/` 下。
+- [ ] 激活 slides skill（输入框“幻灯片”开关、设置页能力开关或 `load_skill`）后，agent 依次调 `init_deck_workspace` + `generate_pptx`，产出 `.pptx` 落到 workspace 的 `.ranni/decks/` 下。
 - [ ] 用 PowerPoint / Keynote / WPS 打开产物：文字可点击编辑、布局正常、chart 是可编辑 native chart（非图片）。
 - [ ] **keep editable 校验**：`unzip -p <产物>.pptx ppt/slides/slide1.xml | grep "<a:t>"` 能命中文本节点（title/bullets 是真文本，不是图片）。
 - [ ] 未激活 slides 时，trace 里 system prompt 不含 slides 正文（对比激活前后 `systemPromptChars` 有明显差值）。

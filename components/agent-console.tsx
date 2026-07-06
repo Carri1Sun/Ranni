@@ -2355,9 +2355,22 @@ function buildModelSettings(
   };
 }
 
-function buildToolSettings(settings: AppSettings) {
+function buildToolSettings(
+  settings: AppSettings,
+  extraActiveSkills: string[] = [],
+) {
+  const activeSkills = new Set(settings.activeSkills);
+
+  for (const skillName of extraActiveSkills) {
+    const trimmed = skillName.trim();
+
+    if (trimmed) {
+      activeSkills.add(trimmed);
+    }
+  }
+
   return {
-    activeSkills: settings.activeSkills,
+    activeSkills: [...activeSkills],
     computerUseApiKey:
       settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
     computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
@@ -3193,6 +3206,8 @@ export function AgentConsole({
   >([]);
   const [workspacePickerSelectedPath, setWorkspacePickerSelectedPath] =
     useState("");
+  const [isSlidesComposerSkillEnabled, setIsSlidesComposerSkillEnabled] =
+    useState(false);
   const [workspacePickerStatus, setWorkspacePickerStatus] = useState<
     "error" | "idle" | "loading"
   >("idle");
@@ -5477,6 +5492,7 @@ export function AgentConsole({
         generateSessionTitleInBackground(sessionId, trimmed);
       }
 
+      const extraActiveSkills = isSlidesComposerSkillEnabled ? ["slides"] : [];
       const response = await fetch(`${apiBaseUrl}/api/runs`, {
         method: "POST",
         headers: {
@@ -5485,7 +5501,7 @@ export function AgentConsole({
         body: JSON.stringify({
           messages: history,
           modelSettings: buildModelSettings(settings),
-          toolSettings: buildToolSettings(settings),
+          toolSettings: buildToolSettings(settings, extraActiveSkills),
           workspaceRoot: sessionForRun.workspaceRoot,
           sessionId,
         }),
@@ -5507,6 +5523,7 @@ export function AgentConsole({
 
       const runResponse = (await response.json()) as { runId?: string };
       activeRequest.runId = runResponse.runId;
+      setIsSlidesComposerSkillEnabled(false);
       appendStreamEventLog({
         action: "run_started_command",
         detail: { runId: runResponse.runId },
@@ -5812,33 +5829,44 @@ export function AgentConsole({
   const selectedSkillNames = settings.activeSkills.filter((name) =>
     availableSkillNames.has(name),
   );
-  const activatedSkillsInSession = (() => {
+  const activatedSkillsInSelectedRun = (() => {
     const names = new Set<string>();
-    for (const run of activeSession?.runs ?? []) {
-      for (const step of run.steps ?? []) {
-        for (const call of step.toolCalls ?? []) {
-          if (call.name !== "load_skill") continue;
-          const skillName = (
-            call.arguments as { name?: unknown } | undefined
-          )?.name;
-          if (typeof skillName === "string" && skillName.trim()) {
-            names.add(skillName.trim());
-          }
+
+    for (const step of selectedRun?.steps ?? []) {
+      for (const call of step.toolCalls ?? []) {
+        if (call.name !== "load_skill") {
+          continue;
+        }
+
+        const skillName = (call.arguments as { name?: unknown } | undefined)
+          ?.name;
+
+        if (typeof skillName === "string" && skillName.trim()) {
+          names.add(skillName.trim());
         }
       }
     }
+
     return [...names];
   })();
-  const liveSkillNames = (() => {
-    const ordered = new Set<string>();
-    for (const name of selectedSkillNames) ordered.add(name);
-    for (const name of activatedSkillsInSession) ordered.add(name);
-    return [...ordered];
-  })();
-  const liveSkillSummary =
-    liveSkillNames.length > 0
-      ? `${liveSkillNames.length} 个能力运行中`
-      : "无能力运行中";
+  const activeSkillNameSet = new Set(activatedSkillsInSelectedRun);
+  const selectedSkillNameSet = new Set(selectedSkillNames);
+  const skillStatusSummary =
+    selectedSkillNames.length > 0 || activatedSkillsInSelectedRun.length > 0
+      ? `已选 ${selectedSkillNames.length} · 已激活 ${activatedSkillsInSelectedRun.length}`
+      : "自动路由";
+  const slidesSkillAvailable = skillIndices.some(
+    (skill) => skill.name === "slides",
+  );
+  const slidesComposerButtonDisabled =
+    skillIndexStatus === "loading" || !slidesSkillAvailable;
+  const slidesComposerButtonTitle = slidesSkillAvailable
+    ? isSlidesComposerSkillEnabled
+      ? "本次发送会强制加载 slides skill"
+      : "本次发送启用 slides skill"
+    : skillIndexStatus === "loading"
+      ? "正在加载本地能力列表"
+      : "当前未发现 slides skill";
   const toggleActiveSkill = (name: string, enabled: boolean) => {
     setSettings((current) => {
       const nextNames = new Set(current.activeSkills);
@@ -6107,6 +6135,23 @@ export function AgentConsole({
                       }
                     }}
                   />
+                  <button
+                    aria-pressed={isSlidesComposerSkillEnabled}
+                    className={`${styles.composerSkillToggle} ${
+                      isSlidesComposerSkillEnabled
+                        ? styles.composerSkillToggleActive
+                        : ""
+                    }`}
+                    disabled={slidesComposerButtonDisabled}
+                    title={slidesComposerButtonTitle}
+                    type="button"
+                    onClick={() =>
+                      setIsSlidesComposerSkillEnabled((current) => !current)
+                    }
+                  >
+                    <Sparkles size={14} aria-hidden="true" />
+                    <span>幻灯片</span>
+                  </button>
                   <button
                     className={styles.submitButton}
                     disabled={
@@ -6715,6 +6760,23 @@ export function AgentConsole({
                     }
                   }}
                 />
+                <button
+                  aria-pressed={isSlidesComposerSkillEnabled}
+                  className={`${styles.composerSkillToggle} ${
+                    isSlidesComposerSkillEnabled
+                      ? styles.composerSkillToggleActive
+                      : ""
+                  }`}
+                  disabled={slidesComposerButtonDisabled || currentSessionIsRunning}
+                  title={slidesComposerButtonTitle}
+                  type="button"
+                  onClick={() =>
+                    setIsSlidesComposerSkillEnabled((current) => !current)
+                  }
+                >
+                  <Sparkles size={14} aria-hidden="true" />
+                  <span>幻灯片</span>
+                </button>
                 {currentSessionIsRunning ? (
                   <button
                     className={`${styles.submitButton} ${styles.stopButton}`}
@@ -7216,11 +7278,11 @@ export function AgentConsole({
                   <section className={styles.settingsSection}>
                     <div className={styles.settingsSectionHeader}>
                       <h4>能力加载</h4>
-                      <span>{liveSkillSummary}</span>
+                      <span>{skillStatusSummary}</span>
                     </div>
 
                     <p className={styles.settingsHint}>
-                      开启后，新 run 会在第一步直接加载对应技能；关闭时，Agent 仍可根据能力索引调用 load_skill 自动激活。运行中已激活的能力会持续到本次 run 结束，关闭开关于下一次启动生效。
+                      开启后，新 run 会在第一步直接加载对应技能；关闭时，Agent 仍可根据能力索引调用 load_skill 自动激活。输入框里的“幻灯片”开关只影响下一次发送。
                     </p>
 
                     {skillIndexStatus === "loading" ? (
@@ -7245,8 +7307,17 @@ export function AgentConsole({
                       <label key={skill.name} className={styles.settingsToggleRow}>
                         <span>
                           <strong>{getSkillDisplayLabel(skill.name)}</strong>
-                          {liveSkillNames.includes(skill.name) ? (
-                            <span style={{ fontSize: "0.72rem", opacity: 0.65, marginLeft: "0.4rem" }}>· 运行中</span>
+                          {selectedSkillNameSet.has(skill.name) ? (
+                            <span className={styles.skillInlineBadge}>
+                              下次加载
+                            </span>
+                          ) : null}
+                          {activeSkillNameSet.has(skill.name) ? (
+                            <span
+                              className={`${styles.skillInlineBadge} ${styles.skillInlineBadgeActive}`}
+                            >
+                              已激活
+                            </span>
                           ) : null}
                           <small>{skill.description}</small>
                         </span>

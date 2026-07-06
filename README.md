@@ -15,10 +15,11 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 最多支持 3 个 agent run 并行；达到上限时会提示同时进行的任务数量已达上限。
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
+- 设置页包含能力设置；输入框内的“幻灯片”开关可在下一次发送时临时启用 slides skill。
 - 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
-- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory 等工具。
+- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，可生成可编辑 native `.pptx`。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
 - 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
@@ -35,6 +36,8 @@ lib/computer-use/  OpenAI computer tool loop 和 macOS 桌面适配器
 lib/task-state.ts  结构化任务状态
 lib/task-memory.ts .ranni 持久化任务记忆
 lib/workspace.ts   session workspace 路径边界
+lib/skills/        本地 skill 注册表
+skills/            本地动态 skill 包，例如 slides
 src/renderer/      Vite 前端入口
 src/server/        Express 后端入口和 API
 public/            favicon、logo 和静态资源
@@ -155,6 +158,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `GET /health`：健康检查。
 - `GET /api/runtime`：返回运行时信息、模型配置和默认 workspace。
+- `GET /api/skills`：返回本地动态 skill 索引。
 - `GET /api/workspaces/roots`：返回推荐执行目录。
 - `GET /api/workspaces/list`：读取目录下的子目录。
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
@@ -172,7 +176,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
 - `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis、judge rubric、claim audit、style judge、pairwise judge 和 comparison，已忽略。
-- `.ranni/`：每个 workspace 下的 agent durable task memory，已忽略。
+- `.ranni/`：每个 workspace 下的 agent durable task memory 和本地运行产物，例如 slides deck workspace，已忽略。
 - `dist/`：构建产物，已忽略。
 
 需要长期保存的资料应整理到 `docs/` 或其他受版本控制的目录。

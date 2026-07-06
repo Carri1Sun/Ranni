@@ -16,6 +16,7 @@ date: 2026-07-06
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
 | `lib/` | Agent loop、事件总线、运行注册表、EventMapper、工具、模型适配、trace、workspace、task memory |
+| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo` |
 | `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
 | `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
@@ -56,6 +57,7 @@ date: 2026-07-06
 - assistant 消息复制、导出 markdown。
 - session 级 trace 导出，包含未完成 run。
 - 首条消息异步 session 命名。
+- 输入框内的临时能力开关，例如“幻灯片”。
 
 页面结构映射：
 
@@ -268,6 +270,17 @@ Trace 类型定义。
 ### `lib/workspace.ts`
 
 Workspace 边界工具。
+
+### `lib/skills/registry.ts`
+
+本地动态 skill 注册表。
+
+主要职责：
+
+- 扫描 `skills/*/SKILL.md` 并解析 `name` / `description` / 正文。
+- 提供 system prompt 的轻量 skill 索引和已激活 skill 正文。
+- 加载已激活 skill 的 `tools.ts` 专属工具。
+- 规范化 `activeSkills`，过滤不存在的 skill。
 
 `resolveWorkspacePath` 保证文件工具只能访问当前 workspace 内的路径。
 
