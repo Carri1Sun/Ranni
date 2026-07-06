@@ -87,7 +87,7 @@ description: Use when the user wants to create or edit PowerPoint decks (.pptx) 
 
 ## 边界
 - 不依赖屏幕操作类工具。视觉复核靠脚本检测 + 人工看预览图。
-- 产物落 workspace 的 `.ranni/decks/` 下，沿用项目已忽略的本地运行目录。
+- skill 正文只描述 deck 创作方法和产物组织；执行目录和路径边界由基础 guideline 与 runtime 统一负责。
 ```
 
 > 注意：`description` 进第一层 prompt 索引，必须写清"何时用"。正文（第二层）只在 skill 激活时加载，深度内容（完整 contract 字段、layout 配方表）留到 P1 的 `references/`，正文保持精炼控 token。
@@ -210,11 +210,11 @@ export const tools: ToolDefinition[] = [
     tool: {
       name: "generate_pptx",
       description:
-        "Generate an editable native .pptx from structured slide specs. Keeps text as text and simple charts as native charts (editable in PowerPoint/Keynote). Output goes into the session workspace.",
+        "Generate an editable native .pptx from structured slide specs. Keeps text as text and simple charts as native charts (editable in PowerPoint/Keynote).",
       input_schema: {
         type: "object",
         properties: {
-          outputPath: { type: "string", description: "Workspace-relative output .pptx path." },
+          outputPath: { type: "string", description: "Output .pptx path." },
           slides: { type: "array", items: { type: "object" }, description: "Slides to render." },
           theme: { type: "string", default: "default" },
           aspect: { type: "string", enum: ["16:9", "4:3"], default: "16:9" },
@@ -270,11 +270,11 @@ export const tools: ToolDefinition[] = [
     tool: {
       name: "init_deck_workspace",
       description:
-        "Initialize a deck workspace directory with brief.md, deck_narrative.md, slide_specs.yaml, and final/preview/validation subfolders. Call this before generate_pptx for any non-trivial deck.",
+        "Initialize a deck artifact directory with brief.md, deck_narrative.md, slide_specs.yaml, and final/preview/validation subfolders. Call this before generate_pptx for any non-trivial deck.",
       input_schema: {
         type: "object",
         properties: {
-          dir: { type: "string", description: "Workspace-relative deck directory." },
+          dir: { type: "string", description: "Deck artifact directory." },
           title: { type: "string" },
           audience: { type: "string" },
           delivery: { type: "string", enum: ["self-read", "speaker-led", "forward"] },
@@ -313,7 +313,7 @@ export const tools: ToolDefinition[] = [
         "utf8",
       );
       return [
-        "已初始化 deck workspace。",
+        "已初始化 deck 产物目录。",
         `目录：${toWorkspaceRelative(baseAbs, context.workspaceRoot)}`,
         "包含：brief.md / deck_narrative.md / slide_specs.yaml / final/ / preview/ / validation/ / assets/",
       ].join("\n");
@@ -324,7 +324,7 @@ export const tools: ToolDefinition[] = [
 
 实现要点：
 
-- 复用 `resolveWorkspacePath` / `toWorkspaceRelative`（`lib/workspace.ts`）确保产物落 workspace 且防逃逸；`context.workspaceRoot` 来自 `ToolExecutionContext`。
+- 复用 `resolveWorkspacePath` / `toWorkspaceRelative`（`lib/workspace.ts`）确保路径受基础 workspace 边界约束；`context.workspaceRoot` 来自 `ToolExecutionContext`。
 - 仿 `lib/research.ts` 里 `saveCheckpoint` 的落盘范式（resolve → mkdir → writeFile → 返回相对路径）。
 - **keep editable**：title/bullets 用 `addText`，chart 用 `addChart`。验收时解压 pptx 确认文本是 `<a:t>` 节点而非图片（见第 6 节）。
 - 坐标全用英寸，参考 `canvasSize` 与 `resolveLayout`。
@@ -351,7 +351,7 @@ P0 仅此一个新依赖。`pptxgenjs` 是纯 JS，无 native 依赖。
 
 - [ ] `npm run typecheck && npm run lint && npm run build` 全绿。
 - [ ] `grep -rn "operate_computer\|computer-use" skills/slides/` 无输出（无屏幕操作依赖）。
-- [ ] 激活 slides skill（输入框“幻灯片”开关、设置页能力开关或 `load_skill`）后，agent 依次调 `init_deck_workspace` + `generate_pptx`，产出 `.pptx` 落到 workspace 的 `.ranni/decks/` 下。
+- [ ] 激活 slides skill（输入框“幻灯片”开关、设置页能力开关或 `load_skill`）后，agent 依次调 `init_deck_workspace` + `generate_pptx`，产出可编辑 `.pptx` 并保留 deck 产物目录。
 - [ ] 用 PowerPoint / Keynote / WPS 打开产物：文字可点击编辑、布局正常、chart 是可编辑 native chart（非图片）。
 - [ ] **keep editable 校验**：`unzip -p <产物>.pptx ppt/slides/slide1.xml | grep "<a:t>"` 能命中文本节点（title/bullets 是真文本，不是图片）。
 - [ ] 未激活 slides 时，trace 里 system prompt 不含 slides 正文（对比激活前后 `systemPromptChars` 有明显差值）。
@@ -359,7 +359,7 @@ P0 仅此一个新依赖。`pptxgenjs` 是纯 JS，无 native 依赖。
 
 ## 9. 常见坑
 
-- **坐标单位**：PptxGenJS 用英寸，不是像素。16:9 画布是 13.333 × 7.5。
+- **坐标单位**：PptxGenJS 用英寸。16:9 画布是 13.333 × 7.5。
 - **import 路径**：`skills/slides/tools.ts` 回 `lib` 用 `../../lib/...`；确认打包（vite/tsx watch）能解析到。若 skill 机制用动态 `import()` 加载 `tools.ts`，确认动态 import 路径正确（见 skill-dynamic-loading-plan.md Task 1）。
 - **类型 export**：`ToolDefinition` / `ToolExecutionContext` 必须从 `lib/tools.ts` export，否则 skill `tools.ts` 无法 import。
 - **theme 读取**：用 `import.meta.url` 定位 skill 包目录，读 `templates/*.theme.json`，不要硬编码绝对路径。

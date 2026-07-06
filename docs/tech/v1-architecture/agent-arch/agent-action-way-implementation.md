@@ -8,7 +8,7 @@ date: 2026-05-04
 
 这份文档记录 `effective-agent-action-way.md` 中已经落地的部分。
 
-本轮实现的重点不是增加更多普通工具，而是让 agent 拥有一套可恢复的任务现场：重要状态会写入 `.ranni/`，不会只停留在模型上下文里。
+本轮实现的重点是让 agent 拥有一套可恢复的任务现场：重要状态会写入 `.ranni/`，不会只停留在模型上下文里。
 
 ## 目标
 
@@ -24,7 +24,7 @@ agent 在执行多步任务时应该做到：
 
 ## 持久化目录
 
-每次 agent run 都会在所选执行目录下创建独立任务记忆：
+每次 agent run 都会在 session 专属执行目录下创建独立任务记忆：
 
 ```text
 .ranni/
@@ -43,9 +43,9 @@ agent 在执行多步任务时应该做到：
       checkpoints/
 ```
 
-注意：`.ranni/` 位于 session 选择的 workspace 下，不固定在 Ranni 自己的项目目录。
+注意：`.ranni/` 位于 Documents 下自动创建的 session 专属 workspace 内。产品主路径不会把 Ranni 自己的项目目录作为 session workspace。
 
-如果当前 workspace 正好是本仓库，`.gitignore` 会忽略 `.ranni/`，避免运行时记忆被误提交。
+仓库 `.gitignore` 仍会忽略 `.ranni/`，避免调试或旧 session 运行产物被误提交。
 
 ## 核心文件
 

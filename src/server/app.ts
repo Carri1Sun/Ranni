@@ -35,11 +35,10 @@ const optionalSecretSchema = z
   .trim()
   .optional()
   .transform((value) => value || undefined);
-const optionalWorkspaceRootSchema = z
+const requiredWorkspaceRootSchema = z
   .string()
   .trim()
-  .optional()
-  .transform((value) => value || undefined);
+  .min(1);
 
 const modelSettingsSchema = z
   .object({
@@ -85,7 +84,7 @@ const requestSchema = z.object({
     .min(1),
   modelSettings: modelSettingsSchema,
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
-  workspaceRoot: optionalWorkspaceRootSchema,
+  workspaceRoot: requiredWorkspaceRootSchema,
   sessionId: z.string().trim().min(1),
 });
 
@@ -133,6 +132,16 @@ async function assertDirectory(inputPath?: string) {
   }
 
   return directoryPath;
+}
+
+function isChildPath(parentPath: string, candidatePath: string) {
+  const relativePath = path.relative(parentPath, candidatePath);
+
+  return (
+    relativePath !== "" &&
+    !relativePath.startsWith("..") &&
+    !path.isAbsolute(relativePath)
+  );
 }
 
 function resolveDefaultWorkspaceBase() {
@@ -217,6 +226,25 @@ async function createAutoSessionWorkspace() {
   }
 
   return targetPath;
+}
+
+async function assertSessionWorkspaceDirectory(inputPath: string) {
+  const directoryPath = await assertDirectory(inputPath);
+  const basePath = resolveDefaultWorkspaceBase();
+  const [realBasePath, realDirectoryPath] = await Promise.all([
+    fs.promises.realpath(basePath),
+    fs.promises.realpath(directoryPath),
+  ]);
+
+  if (!isChildPath(realBasePath, realDirectoryPath)) {
+    throw new Error(`Session 工作目录必须位于 ${basePath} 下。`);
+  }
+
+  if (!path.basename(realDirectoryPath).startsWith("ranni-session-")) {
+    throw new Error("Session 工作目录必须是自动创建的 ranni-session-* 目录。");
+  }
+
+  return realDirectoryPath;
 }
 
 function getQueryPath(value: unknown) {
@@ -564,7 +592,7 @@ export function createServerApp() {
     response.json({
       hasApiKey: hasModelApiKey(),
       runtimeInfo: getModelRuntimeInfo(),
-      workspaceRoot: getWorkspaceRoot(),
+      workspaceRoot: resolveDefaultWorkspaceBase(),
     });
   });
 
@@ -610,7 +638,7 @@ export function createServerApp() {
     } catch (error) {
       response.status(400).json({
         error:
-          error instanceof Error ? error.message : "无法读取推荐目录。",
+          error instanceof Error ? error.message : "无法读取候选目录。",
         ok: false,
       });
     }
@@ -798,7 +826,7 @@ export function createServerApp() {
     }
 
     try {
-      workspacePath = await assertDirectory(payload.workspaceRoot);
+      workspacePath = await assertSessionWorkspaceDirectory(payload.workspaceRoot);
     } catch (error) {
       response.status(400).json({
         error:
@@ -861,6 +889,27 @@ export function createServerApp() {
     })();
   });
 
+  // Query 通道：前端 reconcile 的权威源。返回 session 下所有 run 的当前真实状态（基于 RunRegistry）。
+  app.get("/api/runs/status", (request, response) => {
+    const sessionId =
+      typeof request.query.sessionId === "string"
+        ? request.query.sessionId.trim()
+        : "";
+
+    if (!sessionId) {
+      response.status(400).json({ error: "sessionId 是必填参数。" });
+      return;
+    }
+
+    const runs = registry.listBySession(sessionId).map((handle) => ({
+      runId: handle.runId,
+      status: handle.status,
+      startedAt: handle.startedAt,
+    }));
+
+    response.json({ ok: true, result: { runs } });
+  });
+
   // Event 通道：SSE 单向下行广播。基于 lastSeq 回放 durable 事件 + 实时推送，支持断线续传。
   app.get("/api/events", (request, response) => {
     const streamKey =
@@ -913,7 +962,7 @@ export function createServerApp() {
         return;
       }
       try {
-        response.write(": heartbeat\n\n");
+        response.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
       } catch {
         // ignore
       }

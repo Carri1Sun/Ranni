@@ -418,6 +418,8 @@ function createSystemPrompt({
       : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
+    "- Workspace rule: this is the session-dedicated execution directory. Store task-created intermediate files, generated artifacts, and command outputs here.",
+    "- Path rule: relative file paths and terminal cwd values are resolved inside this workspace.",
     `- Current date: ${currentDate}`,
     `- Max tool steps: ${MAX_TOOL_STEPS}`,
     `- Current model: ${runtime.model}`,

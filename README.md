@@ -8,7 +8,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 
 - 多 session 对话，历史 session 保存在本机浏览器 localStorage。
 - 点击新建 session 会先进入空白草稿页，发送首条消息时才创建 session。
-- 草稿页可选择执行目录；不选择时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-YYYY-MM-DD_HH-mm-ss` 下自动创建一个独立工作目录作为执行边界，同一秒内重复创建会追加数字后缀。
+- 发送首条消息时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-YYYY-MM-DD_HH-mm-ss` 下自动创建一个 session 专属目录作为执行边界；中间文件、运行产物和终端命令默认都在该目录内，同一秒内重复创建会追加数字后缀。
 - 左侧导航栏包含新建 session、历史 session 和底部设置入口。
 - 中间会话栏包含页面顶部栏、会话 / 报告 / 运行详情、输入区和草稿页状态，支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace、并行任务数量，并支持收起。
@@ -118,8 +118,8 @@ VITE_API_BASE_URL=
 | `LLM_REASONING_EFFORT` | DeepSeek reasoning effort |
 | `LLM_PRESERVE_THINKING` | provider 是否保留 thinking |
 | `TAVILY_API_KEY` | 网页搜索能力所需 key |
-| `AGENT_WORKSPACE_ROOT` | 未传 session workspace 时的后备工作区 |
-| `RANNI_DEFAULT_WORKSPACE` | 不选择目录时自动创建 session 目录的根目录，默认 `~/Documents/Ranni-Workspace` |
+| `AGENT_WORKSPACE_ROOT` | 低层工具缺少 workspaceRoot 时的后备工作区；产品主路径不依赖它 |
+| `RANNI_DEFAULT_WORKSPACE` | 自动创建 session 专属目录的根目录，默认 `~/Documents/Ranni-Workspace` |
 | `BACKEND_HOST` | 后端监听地址，默认 `127.0.0.1` |
 | `BACKEND_PORT` | 后端端口，默认 `3001` |
 | `VITE_API_BASE_URL` | 前端 API 地址；为空时使用同源 `/api` |
@@ -157,14 +157,14 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 ## 后端 API
 
 - `GET /health`：健康检查。
-- `GET /api/runtime`：返回运行时信息、模型配置和默认 workspace。
+- `GET /api/runtime`：返回运行时信息、模型配置和默认 session 根目录。
 - `GET /api/skills`：返回本地动态 skill 索引。
-- `GET /api/workspaces/roots`：返回推荐执行目录。
+- `GET /api/workspaces/roots`：返回默认 session 根目录和本机目录候选，保留给调试/扩展入口。
 - `GET /api/workspaces/list`：读取目录下的子目录。
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
 - `POST /api/workspaces/pick`：调用系统文件夹选择器。
 - `POST /api/session/title`：根据首条消息异步生成 session 标题。
-- `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
+- `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），必须携带自动创建的 session 专属 `workspaceRoot`；服务端要求该目录位于默认 session 根目录下且名称为 `ranni-session-*`，立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
 - `GET /api/events`：Event 通道，SSE 单向下行广播三层事件（`streamKey`=session、`lastSeq` 续传）。
 - `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
 - `POST /api/runs/:runId/abort`：中断运行中的 run。
@@ -176,7 +176,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
 - `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis、judge rubric、claim audit、style judge、pairwise judge 和 comparison，已忽略。
-- `.ranni/`：每个 workspace 下的 agent durable task memory 和本地运行产物，例如 slides deck workspace，已忽略。
+- `.ranni/`：每个 session 专属目录下的 agent durable task memory 和本地运行产物，例如 slides deck 产物目录，已忽略。
 - `dist/`：构建产物，已忽略。
 
 需要长期保存的资料应整理到 `docs/` 或其他受版本控制的目录。

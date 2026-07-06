@@ -13,7 +13,7 @@ related: document-generation-research.md（业界调研与选型）、skill-dyna
 
 ## 0. 摘要
 
-为 Ranni 实现首个真实 skill——`slides`：让 agent 产出**可编辑的 native `.pptx`**，并附带 deck 编译流水线、生成后自检、workspace 产物与证据包。技术主干用 PptxGenJS（纯 JS，与 Codex 官方 slides skill 同款）；方法论骨架借鉴社区 `ppt-polished-deck-collab` 的 deck 编译系统（contract / slide_contract / asset_slot / 三阶段质量门），用 JS 重新实现并做轻量化裁剪；生成后自检靠脚本检测 pptx 的 overflow/overlap/font，加人工看预览图兜底。
+为 Ranni 实现首个真实 skill——`slides`：让 agent 产出**可编辑的 native `.pptx`**，并附带 deck 编译流水线、生成后自检、deck 产物与证据包。技术主干用 PptxGenJS（纯 JS，与 Codex 官方 slides skill 同款）；方法论骨架借鉴社区 `ppt-polished-deck-collab` 的 deck 编译系统（contract / slide_contract / asset_slot / 三阶段质量门），用 JS 重新实现并做轻量化裁剪；生成后自检靠脚本检测 pptx 的 overflow/overlap/font，加人工看预览图兜底。
 
 本方案是 `skill-dynamic-loading-plan.md` 的后续，假定 skill 机制（SkillRegistry、动态工具、两层 prompt、`load_skill`）已就绪。slides 作为 `skills/slides/` 目录下的一个 skill 包实现。
 
@@ -35,7 +35,7 @@ related: document-generation-research.md（业界调研与选型）、skill-dyna
 
 ### 1.3 与 PDF 导出的关系
 
-PDF 导出（Puppeteer，HTML→PDF）语义上属于"文档生成"而非"幻灯片生成"，建议作为独立的 `documents` skill 或常驻 `export_document` 工具实现，不在本 skill 范围。本方案仅在 workspace 产物中保留"PPT 导出 PDF"的能力位（P2）。
+PDF 导出（Puppeteer，HTML→PDF）语义上属于"文档生成"而非"幻灯片生成"，建议作为独立的 `documents` skill 或常驻 `export_document` 工具实现，不在本 skill 范围。本方案仅在 deck 产物中保留"PPT 导出 PDF"的能力位（P2）。
 
 ## 2. 前置条件
 
@@ -73,7 +73,7 @@ skills/slides/
 
 ### 4.1 deck_contract（deck 级全局合同）
 
-记录整套 deck 的约束，写在 workspace 的 `brief.md` frontmatter。P1 字段：
+记录整套 deck 的约束，写在 deck 产物目录的 `brief.md` frontmatter。P1 字段：
 
 - `audience`（目标读者）、`delivery`（自读 / 配合讲 / 讲完转发）、`editability`（默认 `editable`）
 - `aspect`（默认 `16:9`）、`theme`（指向 templates 下的 theme_tokens）
@@ -112,7 +112,7 @@ P0 简化：`generate_pptx` 工具直接接收结构化 JSON（title / bullets /
 
 ```ts
 schema: z.object({
-  outputPath: z.string(),                       // workspace 相对路径
+  outputPath: z.string(),                       // 输出 .pptx 路径
   slides: z.array(z.object({
     layout: z.enum(["title","title-bullets","title-content","section","two-col","blank"])
              .default("title-bullets"),
@@ -131,13 +131,13 @@ execute 要点：
 - 读 `templates/<theme>.theme.json` 拿 theme_tokens；调 `layout-helpers.mjs` 按 `layout` 计算每页坐标（agent 给语义，工具算坐标）。
 - **keep editable**：title/bullets 走 `addText`，chart 走 `addChart`（native），image 走 `addImage`。绝不整页栅格化。
 - `pptxgenjs.writeFile({ path })` 落盘到 `resolveWorkspacePath(outputPath)`。
-- 返回 workspace 相对路径 + 页数。
+- 返回产物路径 + 页数。
 
 #### `init_deck_workspace`
 
 ```ts
 schema: z.object({
-  dir: z.string(),                               // workspace 相对目录
+  dir: z.string(),                               // deck 产物目录
   title: z.string(),
   audience: z.string().optional(),
   delivery: z.enum(["self-read","speaker-led","forward"]).default("self-read"),
@@ -185,12 +185,12 @@ body（第二层，按需加载）覆盖：
 - `scripts/check-layout.mjs`：用 `jszip`（已在依赖）解析 pptx，读 slide XML 的 shape 坐标与文本框，几何计算 overlap + 文本估算溢出。报告 JSON + markdown。
 - `templates/default.theme.json`：`{ titleSize, bodySize, colors, margins, gap }`，作为无模板回退基线。
 
-## 8. workspace 产物结构
+## 8. deck 产物结构
 
-每次 deck 生成产出的是一个 workspace（可审查、可迭代），不只单个 pptx：
+每次 deck 生成都会维护一个可审查、可迭代的产物目录：
 
 ```
-<workspace>/<deck-dir>/
+<deck-artifact-dir>/
   brief.md                 # deck_contract
   deck_narrative.md        # 顶层叙事
   slide_specs.yaml         # 派生的逐页合同
@@ -204,7 +204,7 @@ body（第二层，按需加载）覆盖：
     render_review/         # （P1）
 ```
 
-仿 `save_research_checkpoint` 的 workspace 落盘范式。当前实现把默认运行产物放在 `.ranni/decks/` 下，沿用项目已忽略的本地运行目录，避免 deck workspace 污染 git 状态。
+工具执行仍通过 `resolveWorkspacePath` 受基础 workspace 边界约束；skill 正文只描述 deck 创作方法和产物组织，不规定执行目录或 session 目录。
 
 ## 9. 分阶段任务
 
@@ -224,7 +224,7 @@ body（第二层，按需加载）覆盖：
 - [ ] 三阶段质量门落 `validation/`
 - [ ] 渲染后端探测（LibreOffice/PowerPoint）
 - [ ] SKILL.md 正文补全完整方法论
-- [ ] 交付物：deck workspace（含 specs / preview / validation 证据包）
+- [ ] 交付物：deck 产物目录（含 specs / preview / validation 证据包）
 
 ### P2 — 复杂资产 + 预览旁路
 
@@ -254,7 +254,7 @@ P0 只新增 `pptxgenjs`，依赖增量最小。
 3. **keep editable 校验**：生成的 pptx 解压后，slide XML 里 title/bullets 是 `<a:t>` 文本节点而非图片；chart 是 native chart XML。
 4. **P1 自检**：故意构造溢出文本，`check_pptx_layout` 能检出并在报告标 warning/error。
 5. **token 隔离**：未激活 slides 时 system prompt 不含其正文；激活前后 `systemPromptChars` 有差值。
-6. **workspace 产物**：`generate_pptx` 后 `final/` 有 pptx、（P1）`preview/` 有逐页 PNG、`validation/` 有报告。
+6. **deck 产物**：`generate_pptx` 后 `final/` 有 pptx、（P1）`preview/` 有逐页 PNG、`validation/` 有报告。
 7. **回归**：skill 未激活时 agent 行为与现状一致。
 
 ## 12. 风险与边界
@@ -279,5 +279,5 @@ P0 只新增 `pptxgenjs`，依赖增量最小。
 - 已新增 `init_deck_workspace` 和 `generate_pptx` 两个 skill 专属工具，随 `slides` 激活后进入工具列表。
 - `generate_pptx` 使用 PptxGenJS 生成 native editable `.pptx`，支持 `title`、`title-bullets`、`title-content`、`two-col`、`section`、`blank` 基础 layout，支持文本、图片和 `bar` / `line` / `pie` native chart。
 - 前端输入框新增“幻灯片”开关，只影响下一次发送，会把 `slides` 合并进本次 `/api/runs` 的 `toolSettings.activeSkills`。
-- 默认建议 deck workspace 使用 `.ranni/decks/<deck-slug>/`，最终文件放 `final/<deck-slug>.pptx`。
+- 默认建议使用语义化 deck slug 组织产物目录，最终文件放 `final/<deck-slug>.pptx`。
 - 已完成 smoke 验证：调用 `init_deck_workspace` + `generate_pptx` 生成 3 页 PPTX；解压 `slide1.xml` 可见 `<a:t>` 文本节点；native chart smoke 可生成。

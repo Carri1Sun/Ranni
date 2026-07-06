@@ -30,8 +30,8 @@ description: Use when the user wants to create or edit PowerPoint decks (.pptx):
 - 氛围图或复杂视觉：单独图片资产。
 - 流程和架构图：后续 P1/P2 再用 native shape 与 connector 扩展。
 
-## 默认产物位置
-没有用户指定输出路径时，把 deck workspace 放在当前 session workspace 的 `.ranni/decks/<deck-slug>/` 下，最终 PPTX 放在 `final/<deck-slug>.pptx`。`.ranni/` 是本地运行产物目录，已被仓库忽略。
+## 默认产物组织
+没有用户指定文件名时，使用语义化 deck slug 命名产物目录和 PPTX 文件。产物目录保留 `brief.md`、`deck_narrative.md`、`slide_specs.yaml`、`assets/`、`preview/`、`validation/` 和 `final/`；最终 PPTX 放在 `final/<deck-slug>.pptx`。
 
 ## 边界
 - 当前 P0 支持基础版式、文字、图片和简单 native chart。

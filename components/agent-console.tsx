@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   BookOpenText,
@@ -59,7 +59,6 @@ type SettingsTab =
   | "appearance"
   | "debug"
   | "skills";
-type WorkspacePickerMode = "draftSession" | "initial";
 
 type ProcessIconId =
   | "activity"
@@ -120,11 +119,6 @@ type SessionRecord = {
   title: string;
   updatedAt: number;
   workspaceRoot: string;
-};
-
-type WorkspaceDirectoryEntry = {
-  name: string;
-  path: string;
 };
 
 type AgentConsoleProps = {
@@ -255,7 +249,6 @@ const ACTIVE_SESSION_STORAGE_KEY = "next-agent:active-session";
 const SIDEBAR_STORAGE_KEY = "next-agent:sidebar-collapsed";
 const INSPECTOR_STORAGE_KEY = "next-agent:inspector-collapsed";
 const SETTINGS_STORAGE_KEY = "ranni:settings";
-const WORKSPACE_DIRECTORIES_STORAGE_KEY = "next-agent:workspace-directories";
 const INSPECTOR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const SIDEBAR_OVERLAY_MEDIA_QUERY = "(max-width: 1279px)";
 const PANEL_TRANSITION_MS = 220;
@@ -1654,10 +1647,10 @@ function sanitizeRuns(raw: unknown): TraceRun[] {
         status:
           run.status === "completed" ||
           run.status === "failed" ||
-          run.status === "running" ||
-          run.status === "cancelled"
+          run.status === "cancelled" ||
+          run.status === "interrupted"
             ? run.status
-            : "completed",
+            : "interrupted",
         steps,
         taskState: sanitizeTaskState(run.taskState),
         totalSteps:
@@ -2189,70 +2182,6 @@ function createWorkspaceLabel(workspaceRoot: string) {
   return parts.at(-1) ?? workspaceRoot;
 }
 
-function createWorkspaceDirectoryEntry(workspacePath: string) {
-  const path = workspacePath.trim();
-
-  return {
-    name: createWorkspaceLabel(path),
-    path,
-  };
-}
-
-function mergeWorkspaceDirectories(entries: WorkspaceDirectoryEntry[]) {
-  const seen = new Set<string>();
-  const merged: WorkspaceDirectoryEntry[] = [];
-
-  for (const entry of entries) {
-    const entryPath = entry.path.trim();
-
-    if (!entryPath || seen.has(entryPath)) {
-      continue;
-    }
-
-    seen.add(entryPath);
-    merged.push({
-      name: entry.name.trim() || createWorkspaceLabel(entryPath),
-      path: entryPath,
-    });
-  }
-
-  return merged;
-}
-
-function sanitizeWorkspaceDirectories(raw: unknown) {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-
-  return mergeWorkspaceDirectories(
-    raw
-      .map((entry) => {
-        if (typeof entry === "string") {
-          return createWorkspaceDirectoryEntry(entry);
-        }
-
-        if (typeof entry !== "object" || entry === null) {
-          return null;
-        }
-
-        const candidate = entry as Partial<WorkspaceDirectoryEntry>;
-
-        if (typeof candidate.path !== "string" || !candidate.path.trim()) {
-          return null;
-        }
-
-        return {
-          name:
-            typeof candidate.name === "string" && candidate.name.trim()
-              ? candidate.name.trim()
-              : createWorkspaceLabel(candidate.path),
-          path: candidate.path.trim(),
-        };
-      })
-      .filter(Boolean) as WorkspaceDirectoryEntry[],
-  );
-}
-
 function getProviderOption(provider: ProviderId) {
   return (
     PROVIDER_OPTIONS.find((option) => option.id === provider) ??
@@ -2428,6 +2357,10 @@ function getStatusLabel(status?: string) {
     return "已终止";
   }
 
+  if (status === "interrupted") {
+    return "已中断";
+  }
+
   return "空闲";
 }
 
@@ -2538,6 +2471,7 @@ function summarizeRunStatuses(runs: TraceRun[]) {
     cancelled: 0,
     completed: 0,
     failed: 0,
+    interrupted: 0,
     running: 0,
   };
 
@@ -3181,7 +3115,6 @@ export function AgentConsole({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWorkspacePickerOpen, setIsWorkspacePickerOpen] = useState(false);
   const [isDraftSessionActive, setIsDraftSessionActive] = useState(false);
-  const [draftWorkspaceRoot, setDraftWorkspaceRoot] = useState("");
   const [draftSessionError, setDraftSessionError] = useState("");
   const [activityDebugTarget, setActivityDebugTarget] =
     useState<ActivityDebugTarget | null>(null);
@@ -3198,16 +3131,6 @@ export function AgentConsole({
     "error" | "idle" | "loading" | "success"
   >("idle");
   const [skillIndexError, setSkillIndexError] = useState("");
-  const [workspacePickerMode, setWorkspacePickerMode] =
-    useState<WorkspacePickerMode>("initial");
-  const [workspacePickerDirectories, setWorkspacePickerDirectories] = useState<
-    WorkspaceDirectoryEntry[]
-  >([]);
-  const [workspacePickerRoots, setWorkspacePickerRoots] = useState<
-    WorkspaceDirectoryEntry[]
-  >([]);
-  const [workspacePickerSelectedPath, setWorkspacePickerSelectedPath] =
-    useState("");
   const [isSlidesComposerSkillEnabled, setIsSlidesComposerSkillEnabled] =
     useState(false);
   const [isResearchModeEnabled, setIsResearchModeEnabled] = useState(false);
@@ -3215,7 +3138,7 @@ export function AgentConsole({
     "error" | "idle" | "loading"
   >("idle");
   const [workspacePickerError, setWorkspacePickerError] = useState("");
-  const [defaultWorkspaceBase, setDefaultWorkspaceBase] = useState("");
+  const [defaultWorkspaceBase, setDefaultWorkspaceBase] = useState(workspaceRoot);
   const [expandedProviderId, setExpandedProviderId] = useState<ProviderId | "">(
     DEFAULT_SETTINGS.provider,
   );
@@ -3273,7 +3196,10 @@ export function AgentConsole({
     null,
   );
   const activeSessionIdRef = useRef(activeSessionId);
+  const activeViewRef = useRef(activeView);
   const isDraftSessionActiveRef = useRef(isDraftSessionActive);
+  const isFeedAtBottomRef = useRef(true);
+  const feedFollowScrollFrameRef = useRef<number | null>(null);
   const thinkingStreamActivityIdsRef = useRef<Map<string, string>>(new Map());
   const thinkingStreamRuntimeRef = useRef<Record<string, ThinkingStreamRuntime>>(
     {},
@@ -3288,6 +3214,11 @@ export function AgentConsole({
   const isNearBottom = (node: HTMLDivElement) =>
     node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
 
+  const setFeedAtBottom = (value: boolean) => {
+    isFeedAtBottomRef.current = value;
+    setIsFeedAtBottom(value);
+  };
+
   const scrollFeedToBottom = (behavior: ScrollBehavior = "smooth") => {
     const node = feedRef.current;
 
@@ -3299,31 +3230,52 @@ export function AgentConsole({
       top: node.scrollHeight,
       behavior,
     });
-    setIsFeedAtBottom(true);
+    setFeedAtBottom(true);
+  };
+
+  const scheduleFeedFollowScroll = (sessionId?: string) => {
+    if (
+      activeViewRef.current !== "chat" ||
+      !isFeedAtBottomRef.current ||
+      (sessionId && sessionId !== activeSessionIdRef.current)
+    ) {
+      return;
+    }
+
+    if (feedFollowScrollFrameRef.current !== null) {
+      return;
+    }
+
+    feedFollowScrollFrameRef.current = window.requestAnimationFrame(() => {
+      feedFollowScrollFrameRef.current = null;
+
+      const node = feedRef.current;
+
+      if (
+        !node ||
+        activeViewRef.current !== "chat" ||
+        !isFeedAtBottomRef.current ||
+        (sessionId && sessionId !== activeSessionIdRef.current)
+      ) {
+        return;
+      }
+
+      node.scrollTo({
+        top: node.scrollHeight,
+        behavior: "auto",
+      });
+      setFeedAtBottom(true);
+    });
   };
 
   useEffect(() => {
     try {
       const storedSessions = localStorage.getItem(SESSIONS_STORAGE_KEY);
-      const storedWorkspaceDirectories = localStorage.getItem(
-        WORKSPACE_DIRECTORIES_STORAGE_KEY,
-      );
       const parsedSessions = sanitizeSessions(
         storedSessions ? JSON.parse(storedSessions) : [],
         workspaceRoot,
       );
       const initialSessions = parsedSessions;
-      const sessionDirectories = initialSessions.map((session) =>
-        createWorkspaceDirectoryEntry(session.workspaceRoot),
-      );
-      const initialWorkspaceDirectories = mergeWorkspaceDirectories([
-        ...sanitizeWorkspaceDirectories(
-          storedWorkspaceDirectories
-            ? JSON.parse(storedWorkspaceDirectories)
-            : [],
-        ),
-        ...sessionDirectories,
-      ]);
       const storedActiveSessionId =
         localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY) ?? "";
       const activeSessionExists = initialSessions.some(
@@ -3349,17 +3301,6 @@ export function AgentConsole({
       setIsInspectorCollapsed(storedInspectorCollapsed || shouldUseInspectorOverlay);
       setIsSidebarOverlayMode(shouldUseSidebarOverlay);
       setIsInspectorOverlayMode(shouldUseInspectorOverlay);
-      setWorkspacePickerDirectories(initialWorkspaceDirectories);
-      setWorkspacePickerSelectedPath(
-        initialSessions[0]?.workspaceRoot ??
-          initialWorkspaceDirectories[0]?.path ??
-          "",
-      );
-
-      if (initialSessions.length === 0) {
-        setWorkspacePickerMode("initial");
-        setIsWorkspacePickerOpen(true);
-      }
 
       const nextSettings = sanitizeSettings(
         storedSettings ? JSON.parse(storedSettings) : null,
@@ -3370,10 +3311,7 @@ export function AgentConsole({
     } catch {
       setSessions([]);
       setActiveSessionId("");
-      setWorkspacePickerMode("initial");
-      setWorkspacePickerDirectories([]);
-      setWorkspacePickerSelectedPath("");
-      setIsWorkspacePickerOpen(true);
+      setIsWorkspacePickerOpen(false);
       setSettings(DEFAULT_SETTINGS);
       setExpandedProviderId(DEFAULT_SETTINGS.provider);
     } finally {
@@ -3482,65 +3420,6 @@ export function AgentConsole({
   }, [apiBaseUrl]);
 
   useEffect(() => {
-    if (!isHydrated) {
-      return;
-    }
-
-    localStorage.setItem(
-      WORKSPACE_DIRECTORIES_STORAGE_KEY,
-      JSON.stringify(workspacePickerDirectories),
-    );
-  }, [isHydrated, workspacePickerDirectories]);
-
-  useEffect(() => {
-    if (!isWorkspacePickerOpen) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    setWorkspacePickerStatus("loading");
-    setWorkspacePickerError("");
-
-    void fetch(`${apiBaseUrl}/api/workspaces/roots`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const payload = (await response.json()) as {
-          error?: string;
-          ok?: boolean;
-          result?: {
-            defaultWorkspaceBase?: string;
-            roots?: WorkspaceDirectoryEntry[];
-          };
-        };
-
-        if (!response.ok || payload.ok === false) {
-          throw new Error(payload.error || "无法读取推荐目录。");
-        }
-
-        setWorkspacePickerRoots(payload.result?.roots ?? []);
-        setDefaultWorkspaceBase(payload.result?.defaultWorkspaceBase ?? "");
-        setWorkspacePickerStatus("idle");
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setWorkspacePickerRoots([]);
-        setWorkspacePickerStatus("error");
-        setWorkspacePickerError(
-          error instanceof Error ? error.message : "无法读取推荐目录。",
-        );
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [apiBaseUrl, isWorkspacePickerOpen]);
-
-  useEffect(() => {
     const applyTheme = () => {
       const resolvedTheme =
         settings.theme === "system"
@@ -3594,6 +3473,10 @@ export function AgentConsole({
   }, [activeSessionId]);
 
   useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
     isDraftSessionActiveRef.current = isDraftSessionActive;
   }, [isDraftSessionActive]);
 
@@ -3613,7 +3496,7 @@ export function AgentConsole({
     }
 
     const updateScrollState = () => {
-      setIsFeedAtBottom(isNearBottom(node));
+      setFeedAtBottom(isNearBottom(node));
     };
 
     updateScrollState();
@@ -3636,7 +3519,7 @@ export function AgentConsole({
       return;
     }
 
-    setIsFeedAtBottom(isNearBottom(node));
+    setFeedAtBottom(isNearBottom(node));
   }, [activeSession?.feed.length, activeView, isFeedAtBottom]);
 
   useEffect(() => {
@@ -3659,6 +3542,11 @@ export function AgentConsole({
 
       if (settingsToastTimerRef.current) {
         clearTimeout(settingsToastTimerRef.current);
+      }
+
+      if (feedFollowScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(feedFollowScrollFrameRef.current);
+        feedFollowScrollFrameRef.current = null;
       }
 
       if (sidebarTransitionTimerRef.current) {
@@ -3846,14 +3734,7 @@ export function AgentConsole({
     flashSettingsToast(`模型 provider 已更新为 ${provider.label}`);
   };
 
-  const openWorkspacePicker = (mode: WorkspacePickerMode) => {
-    const initialPath =
-      mode === "draftSession"
-        ? draftWorkspaceRoot || activeSession?.workspaceRoot || workspaceRoot
-        : activeSession?.workspaceRoot || workspaceRoot;
-
-    setWorkspacePickerMode(mode);
-    setWorkspacePickerSelectedPath(initialPath);
+  const openWorkspacePicker = () => {
     setWorkspacePickerError("");
     setWorkspacePickerStatus("idle");
     setIsWorkspacePickerOpen(true);
@@ -3861,22 +3742,6 @@ export function AgentConsole({
 
   const closeWorkspacePicker = () => {
     setIsWorkspacePickerOpen(false);
-  };
-
-  const addWorkspaceDirectory = (workspacePath: string) => {
-    const trimmed = workspacePath.trim();
-
-    if (!trimmed) {
-      return;
-    }
-
-    setWorkspacePickerDirectories((current) =>
-      mergeWorkspaceDirectories([
-        createWorkspaceDirectoryEntry(trimmed),
-        ...current,
-      ]),
-    );
-    setWorkspacePickerSelectedPath(trimmed);
   };
 
   const startSessionWithWorkspace = (
@@ -3888,73 +3753,14 @@ export function AgentConsole({
       workspaceRoot: workspacePath,
     });
 
-    addWorkspaceDirectory(workspacePath);
-    setSessions((current) =>
-      workspacePickerMode === "initial" && current.length === 0
-        ? [nextSession]
-        : [nextSession, ...current],
-    );
+    setSessions((current) => [nextSession, ...current]);
     setActiveSessionId(nextSession.id);
     setSelectedRunId("");
     setSelectedStepId("");
     setInput("");
     setActiveView("chat");
-    setWorkspacePickerSelectedPath(workspacePath);
     setWorkspacePickerStatus("idle");
     setIsWorkspacePickerOpen(false);
-  };
-
-  const confirmWorkspaceSelection = async () => {
-    const nextPath = workspacePickerSelectedPath.trim();
-
-    if (!nextPath) {
-      setWorkspacePickerStatus("error");
-      setWorkspacePickerError("请先选择一个执行目录。");
-      return;
-    }
-
-    setWorkspacePickerStatus("loading");
-    setWorkspacePickerError("");
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/workspaces/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          path: nextPath,
-        }),
-      });
-      const payload = (await response.json()) as {
-        error?: string;
-        ok?: boolean;
-        result?: {
-          path?: string;
-        };
-      };
-
-      if (!response.ok || payload.ok === false || !payload.result?.path) {
-        throw new Error(payload.error || "目标目录不可用。");
-      }
-
-      if (workspacePickerMode === "draftSession") {
-        addWorkspaceDirectory(payload.result.path);
-        setDraftWorkspaceRoot(payload.result.path);
-        setDraftSessionError("");
-        setWorkspacePickerSelectedPath(payload.result.path);
-        setWorkspacePickerStatus("idle");
-        setIsWorkspacePickerOpen(false);
-        return;
-      }
-
-      startSessionWithWorkspace(payload.result.path);
-    } catch (error) {
-      setWorkspacePickerStatus("error");
-      setWorkspacePickerError(
-        error instanceof Error ? error.message : "目标目录不可用。",
-      );
-    }
   };
 
   const createAutoWorkspaceSession = async () => {
@@ -3981,7 +3787,7 @@ export function AgentConsole({
       };
 
       if (!response.ok || payload.ok === false || !payload.result?.path) {
-        throw new Error(payload.error || "无法创建默认工作目录。");
+        throw new Error(payload.error || "无法创建 session 专属目录。");
       }
 
       if (payload.result.base) {
@@ -3992,96 +3798,56 @@ export function AgentConsole({
     } catch (error) {
       setWorkspacePickerStatus("error");
       setWorkspacePickerError(
-        error instanceof Error ? error.message : "无法创建默认工作目录。",
+        error instanceof Error ? error.message : "无法创建 session 专属目录。",
       );
     }
   };
 
-  const useDefaultWorkspaceForDraft = () => {
-    setDraftWorkspaceRoot("");
-    setDraftSessionError("");
-    setWorkspacePickerSelectedPath("");
-    setWorkspacePickerStatus("idle");
-    setIsWorkspacePickerOpen(false);
-  };
-
   const createDraftSessionForSend = async () => {
     const sessionId = createId();
-    const selectedWorkspace = draftWorkspaceRoot.trim();
 
     setDraftSessionError("");
     setWorkspacePickerStatus("loading");
     setWorkspacePickerError("");
 
     try {
-      let nextWorkspaceRoot = selectedWorkspace;
-
-      if (nextWorkspaceRoot) {
-        const response = await fetch(`${apiBaseUrl}/api/workspaces/validate`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            path: nextWorkspaceRoot,
-          }),
-        });
-        const payload = (await response.json()) as {
-          error?: string;
-          ok?: boolean;
-          result?: {
-            path?: string;
-          };
+      const response = await fetch(`${apiBaseUrl}/api/workspaces/auto-create`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          base?: string;
+          path?: string;
         };
+      };
 
-        if (!response.ok || payload.ok === false || !payload.result?.path) {
-          throw new Error(payload.error || "目标目录不可用。");
-        }
-
-        nextWorkspaceRoot = payload.result.path;
-      } else {
-        const response = await fetch(`${apiBaseUrl}/api/workspaces/auto-create`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ sessionId }),
-        });
-        const payload = (await response.json()) as {
-          error?: string;
-          ok?: boolean;
-          result?: {
-            base?: string;
-            path?: string;
-          };
-        };
-
-        if (!response.ok || payload.ok === false || !payload.result?.path) {
-          throw new Error(payload.error || "无法创建默认工作目录。");
-        }
-
-        if (payload.result.base) {
-          setDefaultWorkspaceBase(payload.result.base);
-        }
-
-        nextWorkspaceRoot = payload.result.path;
+      if (!response.ok || payload.ok === false || !payload.result?.path) {
+        throw new Error(payload.error || "无法创建 session 专属目录。");
       }
 
+      if (payload.result.base) {
+        setDefaultWorkspaceBase(payload.result.base);
+      }
+
+      const nextWorkspaceRoot = payload.result.path;
       const nextSession = createSession({
         id: sessionId,
         includeInitialAssistantMessage: false,
         workspaceRoot: nextWorkspaceRoot,
       });
 
-      addWorkspaceDirectory(nextWorkspaceRoot);
       setSessions((current) => [nextSession, ...current]);
       setActiveSessionId(nextSession.id);
       setSelectedRunId("");
       setSelectedStepId("");
       setActiveView("chat");
       setIsDraftSessionActive(false);
-      setDraftWorkspaceRoot("");
-      setWorkspacePickerSelectedPath(nextWorkspaceRoot);
       setWorkspacePickerStatus("idle");
 
       return nextSession;
@@ -4093,42 +3859,6 @@ export function AgentConsole({
       setWorkspacePickerStatus("error");
       setWorkspacePickerError(message);
       return null;
-    }
-  };
-
-  const pickWorkspaceWithSystemDialog = async () => {
-    setWorkspacePickerStatus("loading");
-    setWorkspacePickerError("");
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/workspaces/pick`, {
-        method: "POST",
-      });
-      const payload = (await response.json()) as {
-        cancelled?: boolean;
-        error?: string;
-        ok?: boolean;
-        result?: {
-          path?: string;
-        };
-      };
-
-      if (payload.cancelled) {
-        setWorkspacePickerStatus("idle");
-        return;
-      }
-
-      if (!response.ok || payload.ok === false || !payload.result?.path) {
-        throw new Error(payload.error || "无法打开系统目录选择器。");
-      }
-
-      addWorkspaceDirectory(payload.result.path);
-      setWorkspacePickerStatus("idle");
-    } catch (error) {
-      setWorkspacePickerStatus("error");
-      setWorkspacePickerError(
-        error instanceof Error ? error.message : "无法打开系统目录选择器。",
-      );
     }
   };
 
@@ -4310,6 +4040,7 @@ export function AgentConsole({
     display?: ActivityDisplay;
     sessionId: string;
   }) => {
+    scheduleFeedFollowScroll(sessionId);
     updateSession(sessionId, (session) => ({
       ...session,
       updatedAt: Date.now(),
@@ -4326,6 +4057,7 @@ export function AgentConsole({
   };
 
   const upsertFeedMessage = (sessionId: string, nextMessage: ChatMessage) => {
+    scheduleFeedFollowScroll(sessionId);
     updateSession(sessionId, (session) => {
       const messageExists = session.messages.some(
         (message) => message.id === nextMessage.id,
@@ -4431,6 +4163,76 @@ export function AgentConsole({
     });
   };
 
+  // 以后端 RunRegistry 为权威源，对齐本地 session.runs：在跑则保留、已结束则修正、查不到则标 interrupted。
+  // 同时清理 activeAgentRuns / activeAgentRequestsRef —— 它们只作 UI 缓存，不能当长期事实来源。
+  const reconcileSessionRuns = useCallback(
+    async (sessionId: string) => {
+      let backend = new Map<string, string>();
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/runs/status?sessionId=${encodeURIComponent(sessionId)}`,
+        );
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as {
+          ok: boolean;
+          result?: { runs: { runId: string; status: string }[] };
+        };
+        backend = new Map(
+          (payload.result?.runs ?? []).map((run) => [run.runId, run.status]),
+        );
+      } catch (error) {
+        console.warn("Failed to reconcile runs.", error);
+        return;
+      }
+
+      setSessions((current) =>
+        current.map((session) => {
+          if (session.id !== sessionId) {
+            return session;
+          }
+          return {
+            ...session,
+            runs: session.runs.map((run) => {
+              if (run.status !== "running" && run.status !== "interrupted") {
+                return run;
+              }
+              const backendStatus = backend.get(run.id);
+              if (backendStatus === "running") {
+                return run;
+              }
+              if (
+                backendStatus === "completed" ||
+                backendStatus === "failed" ||
+                backendStatus === "cancelled"
+              ) {
+                return { ...run, status: backendStatus };
+              }
+              return { ...run, status: "interrupted" };
+            }),
+          };
+        }),
+      );
+
+      const sessionStillRunning = [...backend.values()].some(
+        (status) => status === "running",
+      );
+      if (!sessionStillRunning) {
+        setActiveAgentRuns((current) => {
+          if (!current[sessionId]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
+        activeAgentRequestsRef.current.delete(sessionId);
+      }
+    },
+    [apiBaseUrl],
+  );
+
   function removeThinkingStreamSnapshot(key: string) {
     const nextRef = { ...thinkingStreamsRef.current };
     delete nextRef[key];
@@ -4450,6 +4252,7 @@ export function AgentConsole({
     key: string,
     stream: ThinkingStreamRuntime,
   ) {
+    scheduleFeedFollowScroll(stream.sessionId);
     setThinkingStreams((current) => {
       const next = {
         ...current,
@@ -4616,6 +4419,7 @@ export function AgentConsole({
       const existing = thinkingStreamsRef.current[key];
       const nextContent = `${existing?.content ?? ""}${content}`;
 
+      scheduleFeedFollowScroll(sessionId);
       setThinkingStreams((current) => {
         const next = {
           ...current,
@@ -4849,6 +4653,7 @@ export function AgentConsole({
   // ---- v2 事件订阅：session 级 SSE + 只读渲染 ----
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventLastSeqRef = useRef<Record<string, number>>({});
+  const lastEventAtRef = useRef<Record<string, number>>({});
   const assistantStreamsRef = useRef<
     Map<string, { messageId: string; content: string }>
   >(new Map());
@@ -4999,9 +4804,16 @@ export function AgentConsole({
     )}&lastSeq=${lastSeq}`;
     const eventSource = new EventSource(url);
 
+    lastEventAtRef.current[sessionId] = Date.now();
+    void reconcileSessionRuns(sessionId);
+
     eventSource.onmessage = (messageEvent) => {
+      lastEventAtRef.current[sessionId] = Date.now();
       try {
         const event = JSON.parse(messageEvent.data) as V2Event;
+        if ((event as { type?: string }).type === "heartbeat") {
+          return;
+        }
         if (messageEvent.lastEventId) {
           const seq = Number(messageEvent.lastEventId);
           eventLastSeqRef.current[sessionId] = seq;
@@ -5021,7 +4833,37 @@ export function AgentConsole({
         eventSourceRef.current = null;
       }
     };
-  }, [activeSession?.id, apiBaseUrl]);
+  }, [activeSession?.id, apiBaseUrl, reconcileSessionRuns]);
+
+  // 切回标签页时对当前 session 补一次 reconcile。
+  useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+    const sessionId = activeSession.id;
+    const handler = () => {
+      if (document.visibilityState === "visible") {
+        void reconcileSessionRuns(sessionId);
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [activeSession?.id, reconcileSessionRuns]);
+
+  // 心跳判活：长时间无 SSE 事件（含 heartbeat）则疑似断连，触发 reconcile。
+  useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+    const sessionId = activeSession.id;
+    const timer = setInterval(() => {
+      const lastAt = lastEventAtRef.current[sessionId] ?? Date.now();
+      if (Date.now() - lastAt > 60000) {
+        void reconcileSessionRuns(sessionId);
+      }
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [activeSession?.id, reconcileSessionRuns]);
 
   const expandSidebar = () => {
     if (sidebarTransitionTimerRef.current) {
@@ -5101,7 +4943,6 @@ export function AgentConsole({
 
   const createNewSession = () => {
     setIsDraftSessionActive(true);
-    setDraftWorkspaceRoot("");
     setDraftSessionError("");
     setInput("");
     setSelectedRunId("");
@@ -5561,11 +5402,10 @@ export function AgentConsole({
     }
   };
 
-  const isDraftWorkspacePicker = workspacePickerMode === "draftSession";
   const workspacePickerModal = isWorkspacePickerOpen ? (
     <>
       <button
-        aria-label="关闭目录选择"
+        aria-label="关闭工作目录说明"
         className={styles.modalBackdrop}
         type="button"
         onClick={closeWorkspacePicker}
@@ -5580,7 +5420,7 @@ export function AgentConsole({
         <header className={styles.settingsHeader}>
           <div>
             <p>Workspace</p>
-            <h3 id="workspace-picker-title">选择执行目录</h3>
+            <h3 id="workspace-picker-title">Session 专属目录</h3>
           </div>
           <button
             className={styles.secondarySettingsButton}
@@ -5593,23 +5433,17 @@ export function AgentConsole({
 
         <div className={styles.workspacePickerBody}>
           <p className={styles.workspacePickerSubtitle}>
-            Agent 会以所选目录作为环境运行任务，可能会编辑该目录下的文件，并在该目录中执行命令。
+            每个 session 都会在 Documents 下创建一个独立目录。Agent 的中间文件、运行产物和终端命令都会限制在这个目录内。
           </p>
 
           <section className={`${styles.workspacePickerSection} ${styles.workspaceAutoSection}`}>
             <div className={styles.workspaceAutoCard}>
               <div className={styles.workspaceAutoText}>
-                <strong>
-                  {isDraftWorkspacePicker
-                    ? "使用默认执行目录"
-                    : "不想选目录？直接开始"}
-                </strong>
+                <strong>自动创建 session 专属目录</strong>
                 <small>
-                  {isDraftWorkspacePicker
-                    ? "发送消息后会自动创建默认工作目录"
-                    : defaultWorkspaceBase
+                  {defaultWorkspaceBase
                     ? `将在 ${defaultWorkspaceBase}/ranni-session-<session> 下自动创建`
-                    : "将在默认位置自动创建 ranni-session-<session> 工作目录"}
+                    : "将在默认 Documents/Ranni-Workspace 下自动创建 ranni-session-<session> 目录"}
                 </small>
               </div>
               <button
@@ -5617,90 +5451,17 @@ export function AgentConsole({
                 disabled={workspacePickerStatus === "loading"}
                 type="button"
                 onClick={() => {
-                  if (isDraftWorkspacePicker) {
-                    useDefaultWorkspaceForDraft();
-                    return;
-                  }
-
                   void createAutoWorkspaceSession();
                 }}
               >
-                {isDraftWorkspacePicker ? "使用默认" : "自动开始"}
+                自动创建并开始
               </button>
             </div>
           </section>
 
-          <section className={styles.workspacePickerSection}>
-            <div className={styles.settingsSectionHeader}>
-              <h4>已添加的目录</h4>
-              <span>{workspacePickerDirectories.length}</span>
-            </div>
-            <div className={styles.workspaceDirectoryGrid}>
-              <button
-                className={styles.workspaceAddDirectoryButton}
-                disabled={workspacePickerStatus === "loading"}
-                type="button"
-                onClick={() => {
-                  void pickWorkspaceWithSystemDialog();
-                }}
-              >
-                <span>添加项目</span>
-                <small>打开系统选择文件夹</small>
-              </button>
-              {workspacePickerDirectories.map((directory) => {
-                const isSelected =
-                  workspacePickerSelectedPath === directory.path;
-
-                return (
-                  <button
-                    key={directory.path}
-                    className={`${styles.workspaceDirectoryCard} ${
-                      isSelected ? styles.workspaceDirectoryCardActive : ""
-                    }`}
-                    type="button"
-                    onClick={() => setWorkspacePickerSelectedPath(directory.path)}
-                  >
-                    <span>{directory.name}</span>
-                    <small>{directory.path}</small>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className={styles.workspacePickerSection}>
-            <div className={styles.settingsSectionHeader}>
-              <h4>推荐目录</h4>
-              <span>{workspacePickerRoots.length}</span>
-            </div>
-            <div className={styles.workspaceDirectoryGrid}>
-              {workspacePickerRoots.length > 0 ? (
-                workspacePickerRoots.map((root) => {
-                  const isSelected = workspacePickerSelectedPath === root.path;
-
-                  return (
-                    <button
-                      key={root.path}
-                      className={`${styles.workspaceDirectoryCard} ${
-                        isSelected ? styles.workspaceDirectoryCardActive : ""
-                      }`}
-                      type="button"
-                      onClick={() => setWorkspacePickerSelectedPath(root.path)}
-                    >
-                      <span>{root.name}</span>
-                      <small>{root.path}</small>
-                    </button>
-                  );
-                })
-              ) : (
-                <p className={styles.settingsHint}>
-                  {workspacePickerStatus === "loading"
-                    ? "正在读取推荐目录..."
-                    : "暂无推荐目录。"}
-                </p>
-              )}
-            </div>
-          </section>
+          <p className={styles.settingsHint}>
+            项目文件、资料和最终交付物需要先放入或生成到该 session 目录。后续工具命令默认在这个目录执行。
+          </p>
 
           {workspacePickerStatus === "error" ? (
             <p
@@ -5710,30 +5471,6 @@ export function AgentConsole({
             </p>
           ) : null}
         </div>
-
-        <footer className={styles.workspacePickerFooter}>
-          <div>
-            <span>
-              {isDraftWorkspacePicker
-                ? "将作为发送后的执行目录"
-                : "将作为新 session 的执行目录"}
-            </span>
-            <strong>{workspacePickerSelectedPath || "未选择"}</strong>
-          </div>
-          <button
-            className={styles.primarySettingsButton}
-            type="button"
-            disabled={
-              workspacePickerStatus === "loading" ||
-              !workspacePickerSelectedPath
-            }
-            onClick={() => {
-              void confirmWorkspaceSelection();
-            }}
-          >
-            确定
-          </button>
-        </footer>
       </section>
     </>
   ) : null;
@@ -5745,7 +5482,7 @@ export function AgentConsole({
           {isHydrated ? (
             <div className={styles.workspaceEmptyState}>
               <strong>还没有 session</strong>
-              <span>选择一个执行目录，或让 Ranni 自动创建一个工作目录后直接开始。</span>
+              <span>Ranni 会先在 Documents 下创建一个 session 专属目录，再让 agent 在其中执行任务。</span>
               <div className={styles.workspaceEmptyActions}>
                 <button
                   className={styles.primarySettingsButton}
@@ -5760,9 +5497,9 @@ export function AgentConsole({
                 <button
                   className={styles.secondarySettingsButton}
                   type="button"
-                  onClick={() => openWorkspacePicker("initial")}
+                  onClick={openWorkspacePicker}
                 >
-                  选择执行目录
+                  查看目录规则
                 </button>
               </div>
             </div>
@@ -5790,18 +5527,14 @@ export function AgentConsole({
   const latestStatusMessage =
     selectedStep?.statusMessages[selectedStep.statusMessages.length - 1];
   const activeWorkspaceRoot = isDraftSessionActive
-    ? draftWorkspaceRoot || "发送后自动创建默认执行目录"
+    ? "发送后自动创建 session 专属目录"
     : activeSession.workspaceRoot;
   const workspaceLabel = isDraftSessionActive
-    ? draftWorkspaceRoot
-      ? createWorkspaceLabel(draftWorkspaceRoot)
-      : "默认目录"
+    ? "专属目录"
     : createWorkspaceLabel(activeWorkspaceRoot);
-  const draftWorkspaceDetail = draftWorkspaceRoot
-    ? draftWorkspaceRoot
-    : defaultWorkspaceBase
-      ? `${defaultWorkspaceBase}/ranni-session-<session>`
-      : "发送后自动创建默认执行目录";
+  const draftWorkspaceDetail = defaultWorkspaceBase
+    ? `${defaultWorkspaceBase}/ranni-session-<session>`
+    : "发送后自动创建 session 专属目录";
   const selectedProvider = getProviderOption(settings.provider);
   const selectedProviderApiKey = getProviderApiKey(settings);
   const selectedProviderBaseUrl = getProviderBaseUrl(settings);
@@ -6194,15 +5927,12 @@ export function AgentConsole({
                   </button>
                 </div>
 
-                <button
+                <div
                   className={styles.draftWorkspaceButton}
-                  type="button"
-                  disabled={workspacePickerStatus === "loading"}
-                  onClick={() => openWorkspacePicker("draftSession")}
                 >
-                  <span>执行目录</span>
+                  <span>Session 专属目录</span>
                   <strong>{draftWorkspaceDetail}</strong>
-                </button>
+                </div>
 
                 {draftSessionError ? (
                   <p
@@ -6447,7 +6177,7 @@ export function AgentConsole({
                           >
                             <div className={styles.runCardTop}>
                               <strong>{createRunTitle(run)}</strong>
-                              <span>{run.status}</span>
+                              <span>{getStatusLabel(run.status)}</span>
                             </div>
                             <div className={styles.runCardMeta}>
                               <span>{formatSessionTime(run.startedAt)}</span>

@@ -510,7 +510,7 @@ async function initDeckWorkspace(
   );
 
   return [
-    "已初始化 deck workspace。",
+    "已初始化 deck 产物目录。",
     `目录：${toWorkspaceRelative(baseAbsolutePath, context.workspaceRoot)}`,
     "包含：brief.md / deck_narrative.md / slide_specs.yaml / assets/ / final/ / preview/ / validation/",
   ].join("\n");
@@ -522,7 +522,7 @@ export const tools: ToolDefinition[] = [
     tool: {
       name: "init_deck_workspace",
       description:
-        "Initialize a deck workspace with brief.md, deck_narrative.md, slide_specs.yaml, assets/, final/, preview/, and validation/. Use before generate_pptx for non-trivial presentation work.",
+        "Initialize a deck artifact directory with brief.md, deck_narrative.md, slide_specs.yaml, assets/, final/, preview/, and validation/. Use before generate_pptx for non-trivial presentation work.",
       input_schema: {
         type: "object",
         properties: {
@@ -537,8 +537,7 @@ export const tools: ToolDefinition[] = [
           },
           dir: {
             type: "string",
-            description:
-              "Workspace-relative deck directory, preferably .ranni/decks/<deck-slug>.",
+            description: "Deck artifact directory.",
           },
           title: {
             type: "string",
@@ -566,7 +565,7 @@ export const tools: ToolDefinition[] = [
           },
           outputPath: {
             type: "string",
-            description: "Workspace-relative output .pptx path.",
+            description: "Output .pptx path.",
           },
           slides: {
             type: "array",

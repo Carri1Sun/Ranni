@@ -6,15 +6,15 @@ date: 2026-06-29
 
 # Project Overview
 
-Ranni 是一个本地优先的 AI Agent 网页工作台。它的目标不是做一个普通聊天界面，而是让用户选择本机一个项目目录，然后让 agent 在这个目录内理解任务、调用工具、编辑文件、运行命令、记录证据并交付结果。
+Ranni 是一个本地优先的 AI Agent 网页工作台。它为每个 session 创建独立执行目录，让 agent 在这个目录内理解任务、调用工具、编辑文件、运行命令、记录证据并交付结果。
 
 ## 产品模型
 
 Ranni 的当前产品模型可以概括为五件事：
 
 1. 点击新建 session 后进入空白草稿页。
-2. 在草稿页输入任务，可选择执行目录；不选择时发送首条消息会自动创建默认执行目录。
-3. 发送首条消息后创建 session，并让 agent 在该 session 的 workspace 内执行任务。
+2. 在草稿页输入任务，发送首条消息时自动创建 session 专属执行目录。
+3. 发送首条消息后创建 session，并让 agent 在该 session 的专属 workspace 内执行任务。
 4. Agent 通过模型、工具、文件系统、终端、搜索和 durable memory 完成任务。
 5. 用户通过会话、报告、运行详情和 trace 审查结果。
 
@@ -43,7 +43,7 @@ Ranni 的当前产品模型可以概括为五件事：
 
 - 顶部提供会话标题、页面导航和左右栏折叠按钮。
 - 展示用户消息、assistant 回复和运行活动。
-- 在草稿页状态下展示新 session 输入和执行目录选择。
+- 在草稿页状态下展示新 session 输入和即将自动创建的专属目录提示。
 - 在会话 / 报告 / 运行详情之间切换。
 - 运行活动以轻量过程展示，覆盖 run 生命周期、异常 step、task state、工具调用、工具结果、research state 和错误。Run 生命周期只显示一行弱提示。
 - 模型 thinking 以正文形式流式展示；agent 会等待 thinking delta 发完后再发送后续过程事件，完整 thinking 在模型输出完成后进入 session trace。
@@ -121,11 +121,11 @@ Agent 可用工具主要分为七类：
 - Durable memory 工具：`init_task_memory`、`read_task_memory`、`update_task_memory`、`record_task_evidence`、`save_task_checkpoint`。
 - 动态 skill 工具：`load_skill` 可按需激活本地 skill。当前 `slides` skill 激活后会提供 `init_deck_workspace` 和 `generate_pptx`，用于生成可编辑 native `.pptx`。
 
-文件、终端和运行产物受 session workspace 边界限制。`operate_computer` 会控制用户实际 macOS 桌面，只应在用户明确要求桌面操作时使用，并在支付、登录、敏感信息或破坏性确认前停止。
+文件、终端和运行产物受 session 专属 workspace 边界限制。`operate_computer` 会控制用户实际 macOS 桌面，只应在用户明确要求桌面操作时使用，并在支付、登录、敏感信息或破坏性确认前停止。
 
 Deep research 任务会额外强调动态研究地图、正文核验、证据记录、coverage audit 和 thesis-driven synthesis。来源或 claim 较多时，agent 可把 `source_ledger`、`claim_ledger`、`coverage_matrix`、`synthesis_brief`、`negative_results` 写入 `.ranni/runs/<runId>/`，并在最终综合前读回。
 
-幻灯片任务可通过输入框内的“幻灯片”开关临时启用 `slides` skill，或在设置页的能力设置中设为默认强制加载。生成 deck 时，运行产物建议放在 `.ranni/decks/<deck-slug>/`，最终 PPTX 放在 `final/` 子目录。
+幻灯片任务可通过输入框内的“幻灯片”开关临时启用 `slides` skill，或在设置页的能力设置中设为默认强制加载。`slides` skill 只规定 deck 创作方法和产物目录结构，最终 PPTX 放在 `final/` 子目录；具体落点遵守 session workspace 边界。
 
 ## 过程展示规范
 
@@ -162,6 +162,6 @@ Trace 导出挂在 session 上，不再依赖某条 assistant 回复。点击顶
 ## 当前边界
 
 - Ranni 是本地优先应用，设置密钥保存在 localStorage，不适合作为多用户远端服务直接部署。
-- 目录选择依赖本机系统能力；Linux 需要 `zenity` 或 `kdialog`。草稿页不选择目录时，发送首条消息会由后端在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` 目录，同一秒内重复创建会追加数字后缀。
+- 草稿页发送首条消息时，后端会在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` session 专属目录，同一秒内重复创建会追加数字后缀。
 - `write_file` 是全文件写入工具，适合小文件或完整重写，不适合盲目局部 patch。
 - `.ranni` 是 agent 任务记忆，不是用户文档归档区。

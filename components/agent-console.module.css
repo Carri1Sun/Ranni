@@ -1791,8 +1791,6 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
-.draftWorkspaceButton:hover,
-.draftWorkspaceButton:focus-visible,
 .scrollToBottomButton:hover,
 .scrollToBottomButton:focus-visible,
 .activityInfoButton:hover,
@@ -1830,8 +1828,6 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
-.draftWorkspaceButton:hover,
-.draftWorkspaceButton:focus-visible,
 .activityInfoButton:hover,
 .activityInfoButton:focus-visible {
   border-color: rgba(143, 167, 255, 0.32);
@@ -1852,7 +1848,6 @@
 .floatingInfoButton:active,
 .headerTraceButton:active,
 .messageActionButton:active,
-.draftWorkspaceButton:active,
 .scrollToBottomButton:active,
 .activityInfoButton:active,
 .inspectorStep:active {
