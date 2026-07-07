@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 520" width="640" height="520" role="img" aria-label="产品增长示意插画">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef2ff"/>
+      <stop offset="1" stop-color="#ecfeff"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="520" rx="24" fill="url(#bg)"/>
+
+  <!-- 卡片底板 -->
+  <rect x="48" y="56" width="544" height="408" rx="20" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="80" y="108" font-family="-apple-system, Segoe UI, sans-serif" font-size="22" font-weight="700" fill="#0f172a">季度增长</text>
+  <text x="80" y="134" font-family="-apple-system, Segoe UI, sans-serif" font-size="14" fill="#64748b">2025 Q1 - Q4</text>
+
+  <!-- 柱状图 -->
+  <g>
+    <rect x="96"  y="300" width="56" height="120" rx="8" fill="url(#bar)"/>
+    <rect x="184" y="256" width="56" height="164" rx="8" fill="url(#bar)"/>
+    <rect x="272" y="212" width="56" height="208" rx="8" fill="url(#bar)"/>
+    <rect x="360" y="168" width="56" height="252" rx="8" fill="url(#bar)"/>
+    <text x="124" y="442" font-family="-apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">Q1</text>
+    <text x="212" y="442" font-family="-apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">Q2</text>
+    <text x="300" y="442" font-family="-apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">Q3</text>
+    <text x="388" y="442" font-family="-apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">Q4</text>
+  </g>
+
+  <!-- 右侧环形指标 -->
+  <g transform="translate(496,256)">
+    <circle r="64" fill="none" stroke="#e2e8f0" stroke-width="16"/>
+    <circle r="64" fill="none" stroke="url(#ring)" stroke-width="16" stroke-linecap="round"
+            stroke-dasharray="332" stroke-dashoffset="86" transform="rotate(-90)"/>
+    <text y="6" font-family="-apple-system, sans-serif" font-size="22" font-weight="800" fill="#0f172a" text-anchor="middle">74%</text>
+    <text y="92" font-family="-apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle">完成度</text>
+  </g>
+</svg>

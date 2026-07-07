@@ -11,6 +11,8 @@ related: document-generation-research.md（业界调研与选型）、skill-dyna
 
 # Ranni slides skill 实现方案（native editable PPT）
 
+> **状态（2026-07-07 更新）**：本文描述的 native PptxGenJS 路线（`init_deck_workspace` / `generate_pptx`）**已下线**，slides skill 现仅保留 HTML-to-PPTX 路线。下文 native 相关内容保留为历史设计参考，现状以 `html-to-pptx-spike-report.md` 为准。
+
 ## 0. 摘要
 
 为 Ranni 实现首个真实 skill——`slides`：让 agent 产出**可编辑的 native `.pptx`**，并附带 deck 编译流水线、生成后自检、deck 产物与证据包。技术主干用 PptxGenJS（纯 JS，与 Codex 官方 slides skill 同款）；方法论骨架借鉴社区 `ppt-polished-deck-collab` 的 deck 编译系统（contract / slide_contract / asset_slot / 三阶段质量门），用 JS 重新实现并做轻量化裁剪；生成后自检靠脚本检测 pptx 的 overflow/overlap/font，加人工看预览图兜底。
@@ -281,3 +283,6 @@ P0 只新增 `pptxgenjs`，依赖增量最小。
 - 前端输入框新增“幻灯片”开关，只影响下一次发送，会把 `slides` 合并进本次 `/api/runs` 的 `toolSettings.activeSkills`。
 - 默认建议使用语义化 deck slug 组织产物目录，最终文件放 `final/<deck-slug>.pptx`。
 - 已完成 smoke 验证：调用 `init_deck_workspace` + `generate_pptx` 生成 3 页 PPTX；解压 `slide1.xml` 可见 `<a:t>` 文本节点；native chart smoke 可生成。
+- 已新增 HTML-to-PPTX spike 路线，与 native 路线并存、互不干扰：四步工具 `init_slide_html_workspace` / `prepare_slide_html_for_pptx` / `export_html_to_pptx` / `validate_html_pptx_export`，底层脚本在 `skills/slides/scripts/html-pptx/`，受限 slide HTML 模板与 8 页示例 deck 在 `skills/slides/templates/slide-html/`。
+- HTML 路线用 Playwright 做渲染/测量/`data-pptx-raster` 截图回退，用 dom-to-pptx 做 DOM 到 PPTX 映射；spike 端到端跑通 8 页示例 deck，79 个可编辑元素全部保留为 `<a:t>` 文本，1 个复杂图表走截图回退。新增依赖 `playwright` 与 `dom-to-pptx`。
+- HTML 路线的落地细节、验证数据与已知限制见 `html-to-pptx-spike-report.md`，设计依据见 `html-to-pptx-export-guide.md`。

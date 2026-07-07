@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ranni HTML-to-PPTX Spike 示例 Deck</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="deck" data-pptx-deck>
+      <!-- 1. 封面 -->
+      <section class="slide cover" data-slide-id="cover">
+        <div class="cover-inner">
+          <span class="cover-badge" data-pptx-editable>● Ranni · Spike Deck</span>
+          <h1 class="cover-title" data-pptx-editable>HTML 到可编辑 PPTX 的工程验证</h1>
+          <p class="cover-sub" data-pptx-editable>
+            受限 slide HTML + dom-to-pptx + Playwright 截图回退，验证能否稳定产出有限可编辑的 .pptx。
+          </p>
+          <div class="cover-meta">
+            <span><b>路线</b>　HTML-to-PPTX Spike</span>
+            <span><b>画布</b>　1280 × 720（16:9）</span>
+            <span><b>日期</b>　2026-07-07</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 目录 -->
+      <section class="slide" data-slide-id="toc">
+        <div class="slide-pad">
+          <p class="slide-eyebrow" data-pptx-editable>Contents</p>
+          <h2 class="slide-title" data-pptx-editable>本次验证包含的内容</h2>
+          <div class="toc-grid">
+            <div class="toc-item">
+              <span class="toc-num">01</span>
+              <span class="toc-text" data-pptx-editable>封面与定位</span>
+              <span class="toc-page">P1</span>
+            </div>
+            <div class="toc-item">
+              <span class="toc-num">02</span>
+              <span class="toc-text" data-pptx-editable>文本与引用排版</span>
+              <span class="toc-page">P3</span>
+            </div>
+            <div class="toc-item">
+              <span class="toc-num">03</span>
+              <span class="toc-text" data-pptx-editable>双栏图文页</span>
+              <span class="toc-page">P4</span>
+            </div>
+            <div class="toc-item">
+              <span class="toc-num">04</span>
+              <span class="toc-text" data-pptx-editable>数据指标与表格</span>
+              <span class="toc-page">P5</span>
+            </div>
+            <div class="toc-item">
+              <span class="toc-num">05</span>
+              <span class="toc-text" data-pptx-editable>复杂图表截图回退</span>
+              <span class="toc-page">P6</span>
+            </div>
+            <div class="toc-item">
+              <span class="toc-num">06</span>
+              <span class="toc-text" data-pptx-editable>时间线与总结</span>
+              <span class="toc-page">P7-8</span>
+            </div>
+          </div>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>02 / 08</span>
+        </div>
+      </section>
+
+      <!-- 3. 文本页 -->
+      <section class="slide" data-slide-id="text">
+        <div class="slide-pad">
+          <p class="slide-eyebrow" data-pptx-editable>Why HTML route</p>
+          <h2 class="slide-title" data-pptx-editable>为什么需要 HTML-to-PPTX 路线</h2>
+          <p class="slide-lede" data-pptx-editable>
+            native PptxGenJS 路线编辑性强、结构可控，HTML 路线创作快、视觉表达强、预览直接。
+          </p>
+          <ul class="bullets">
+            <li data-pptx-editable>保留 HTML/CSS 的创作效率与逐页预览体验。</li>
+            <li data-pptx-editable>主要文本、图片、基础形状、表格保持 PPTX 可编辑。</li>
+            <li data-pptx-editable>复杂图表与复杂装饰用 data-pptx-raster 做局部截图回退。</li>
+            <li data-pptx-editable>所有产物与中间文件都落在当前 session workspace。</li>
+          </ul>
+          <blockquote class="quote" data-pptx-editable>
+            重要文本优先保留为可编辑文本，复杂视觉优先局部截图，避免整页栅格化。
+          </blockquote>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>03 / 08</span>
+        </div>
+      </section>
+
+      <!-- 4. 双栏图文页 -->
+      <section class="slide" data-slide-id="two-col">
+        <div class="slide-pad">
+          <div class="two-col">
+            <div class="col-text">
+              <p class="slide-eyebrow" data-pptx-editable>Two column</p>
+              <h2 class="slide-title" data-pptx-editable>左文右图：叙事 + 数据插画</h2>
+              <p class="slide-lede" data-pptx-editable>
+                左侧承载结论性叙事，右侧放置本地化的 SVG 插画资产，验证图片资源的本地化与裁切。
+              </p>
+              <ul class="bullets">
+                <li data-pptx-editable>插画资产已下载到 assets/，使用相对路径引用。</li>
+                <li data-pptx-editable>图片以独立资产放置，不承载整页文字。</li>
+              </ul>
+            </div>
+            <div class="col-media">
+              <div class="media-frame">
+                <img src="assets/illustration.svg" alt="季度增长示意插画" data-pptx-editable />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>04 / 08</span>
+        </div>
+      </section>
+
+      <!-- 5. 数据 / 表格页 -->
+      <section class="slide" data-slide-id="data">
+        <div class="slide-pad">
+          <p class="slide-eyebrow" data-pptx-editable>Metrics &amp; table</p>
+          <h2 class="slide-title" data-pptx-editable>关键指标与结构化对比</h2>
+          <div class="metrics">
+            <div class="metric">
+              <div class="metric-value" data-pptx-editable>¥ 1.28M</div>
+              <div class="metric-label" data-pptx-editable>季度营收</div>
+              <div class="metric-delta delta-up" data-pptx-editable>▲ 14.5% 环比</div>
+            </div>
+            <div class="metric">
+              <div class="metric-value" data-pptx-editable>45.2k</div>
+              <div class="metric-label" data-pptx-editable>活跃用户</div>
+              <div class="metric-delta delta-up" data-pptx-editable>▲ 8.1% 环比</div>
+            </div>
+            <div class="metric">
+              <div class="metric-value" data-pptx-editable>3.9%</div>
+              <div class="metric-label" data-pptx-editable>流失率</div>
+              <div class="metric-delta delta-down" data-pptx-editable>▼ 0.6pt 同比</div>
+            </div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th data-pptx-editable>渠道</th>
+                <th data-pptx-editable>占比</th>
+                <th data-pptx-editable>营收</th>
+                <th data-pptx-editable>趋势</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-pptx-editable>自然搜索</td>
+                <td data-pptx-editable>42%</td>
+                <td class="num" data-pptx-editable>¥ 537k</td>
+                <td data-pptx-editable>上升</td>
+              </tr>
+              <tr>
+                <td data-pptx-editable>付费投放</td>
+                <td data-pptx-editable>31%</td>
+                <td class="num" data-pptx-editable>¥ 396k</td>
+                <td data-pptx-editable>持平</td>
+              </tr>
+              <tr>
+                <td data-pptx-editable>口碑 referral</td>
+                <td data-pptx-editable>27%</td>
+                <td class="num" data-pptx-editable>¥ 347k</td>
+                <td data-pptx-editable>上升</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>05 / 08</span>
+        </div>
+      </section>
+
+      <!-- 6. 复杂图表截图回退页 -->
+      <section class="slide" data-slide-id="chart">
+        <div class="slide-pad">
+          <p class="slide-eyebrow" data-pptx-editable>Raster fallback</p>
+          <h2 class="slide-title" data-pptx-editable>复杂图表：转换前截图回退</h2>
+          <p class="slide-lede" data-pptx-editable>
+            下方图表块带有 data-pptx-raster，预处理阶段会被截图保存到 fallback-assets/，并替换为等尺寸 img。
+          </p>
+          <div
+            class="raster-block"
+            data-pptx-raster
+            data-pptx-alt="季度营收柱状图截图回退"
+          >
+            <div class="bar-group">
+              <div class="bar" style="height: 46%"></div>
+              <div class="bar-label">Q1</div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="height: 62%"></div>
+              <div class="bar-label">Q2</div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="height: 78%"></div>
+              <div class="bar-label">Q3</div>
+            </div>
+            <div class="bar-group">
+              <div class="bar" style="height: 96%"></div>
+              <div class="bar-label">Q4</div>
+            </div>
+          </div>
+          <p class="raster-caption" data-pptx-editable>截图分辨率按 2x device scale factor 生成，保证清晰度。</p>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>06 / 08</span>
+        </div>
+      </section>
+
+      <!-- 7. 时间线页 -->
+      <section class="slide" data-slide-id="timeline">
+        <div class="slide-pad">
+          <p class="slide-eyebrow" data-pptx-editable>Timeline</p>
+          <h2 class="slide-title" data-pptx-editable>产品交付节奏</h2>
+          <div class="timeline">
+            <div class="tl-rail"></div>
+            <div class="tl-nodes">
+              <div class="tl-node">
+                <div class="tl-dot"></div>
+                <div class="tl-date" data-pptx-editable>W1</div>
+                <div class="tl-title" data-pptx-editable>立项</div>
+                <div class="tl-desc" data-pptx-editable>确定 spike 范围与验收维度。</div>
+              </div>
+              <div class="tl-node">
+                <div class="tl-dot"></div>
+                <div class="tl-date" data-pptx-editable>W2</div>
+                <div class="tl-title" data-pptx-editable>接入</div>
+                <div class="tl-desc" data-pptx-editable>Playwright 测量与截图回退脚本。</div>
+              </div>
+              <div class="tl-node">
+                <div class="tl-dot"></div>
+                <div class="tl-date" data-pptx-editable>W3</div>
+                <div class="tl-title" data-pptx-editable>导出</div>
+                <div class="tl-desc" data-pptx-editable>dom-to-pptx 生成有限可编辑 pptx。</div>
+              </div>
+              <div class="tl-node">
+                <div class="tl-dot"></div>
+                <div class="tl-date" data-pptx-editable>W4</div>
+                <div class="tl-title" data-pptx-editable>复核</div>
+                <div class="tl-desc" data-pptx-editable>qa-report 与多端兼容性核对。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="slide-footer">
+          <span>Ranni Spike Deck</span>
+          <span data-pptx-ignore>07 / 08</span>
+        </div>
+      </section>
+
+      <!-- 8. 总结页 -->
+      <section class="slide summary" data-slide-id="summary">
+        <div class="summary-inner">
+          <p class="slide-eyebrow" style="color: #c7d2fe" data-pptx-editable>Summary</p>
+          <h2 class="summary-title" data-pptx-editable>三条结论</h2>
+          <div class="summary-grid">
+            <div class="sum-card">
+              <h4 data-pptx-editable>可编辑子集成立</h4>
+              <p data-pptx-editable>标题、正文、列表、表格能保持为 PPTX 文本对象。</p>
+            </div>
+            <div class="sum-card">
+              <h4 data-pptx-editable>截图回退兜底</h4>
+              <p data-pptx-editable>复杂图表用局部截图保留视觉，避免整页栅格化。</p>
+            </div>
+            <div class="sum-card">
+              <h4 data-pptx-editable>产物可追溯</h4>
+              <p data-pptx-editable>prepared.html、measurements、qa-report 全部落 workspace。</p>
+            </div>
+          </div>
+          <span class="cta" data-pptx-editable>→ 进入 P1 产品化接入</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -21,7 +21,7 @@ related: slides-skill-plan.md、slides-skill-developer-guide.md、document-gener
 - 对复杂图表、复杂 CSS 装饰、canvas/SVG 组合视觉做局部截图回退。
 - 所有产物、中间文件、预览、诊断报告都落在当前 session workspace。
 
-本方案先做 spike 验证表现，再进入产品化接入。当前已实现的 native PptxGenJS 生成路径仍可保留，作为编辑性更强的基线路线。
+本方案已落地为 slides skill 的唯一生成路线。native PptxGenJS 路线已于 2026-07-07 下线，HTML-to-PPTX 为唯一路线。
 
 ## 1. 方案摘要
 
@@ -363,7 +363,7 @@ slides-html-pptx-spike/
 
 - 在 slides skill 中增加“HTML export route”。
 - 前端入口允许用户选择 HTML-to-PPTX 路线。
-- agent 激活 slides skill 后，可按任务选择 native 路线或 HTML 路线。
+- agent 激活 slides skill 后走 HTML 路线（自 2026-07-07 起为唯一路线，native 已下线）。
 - 所有导出产物进入 session workspace。
 
 ### P2：质量门
@@ -393,7 +393,7 @@ computed style + DOM box
 
 | 路线 | 优势 | 适用场景 |
 |---|---|---|
-| native PptxGenJS | 编辑性强、结构可控 | 商务汇报、模板跟随、需要后续大量修改 |
+| ~~native PptxGenJS~~ | 已于 2026-07-07 下线 | 由 HTML 路线统一承担 |
 | HTML-to-PPTX | 创作快、视觉表达强、预览直接 | 创意型 deck、复杂版式、图文叙事 |
 
 最终由 slides skill 根据用户需求、模板、可编辑性要求和视觉复杂度选择路线。
@@ -408,7 +408,7 @@ computed style + DOM box
 | 图片资源丢失 | PPTX 中空白或断图 | 所有资源本地化到 `assets/` |
 | 文件体积过大 | 回退截图过多 | 控制截图分辨率，照片使用 JPEG |
 | 层级错误 | 截图遮挡可编辑文本 | 回退块尽量只包复杂视觉，不包关键文本 |
-| 工具成熟度不足 | CLI 失败或输出不稳定 | 先 spike，保留 native 路线兜底 |
+| 工具成熟度不足 | CLI 失败或输出不稳定 | 已端到端验证（e2e 18/18），靠 qa-report 与像素 diff 兜底 |
 
 ## 11. 推荐实现顺序
 
@@ -421,3 +421,20 @@ computed style + DOM box
 7. 将成功子集写回 slides skill 规范。
 
 完成 P0 后，再决定是否进入 P1 skill 工具化。验收标准以“Ranni 能稳定交付有限可编辑且视觉可靠的 PPTX”为准。
+
+## 12. 当前实现状态（2026-07-07 spike 已落地）
+
+P0 spike 已实现并端到端跑通，详细数据与已知限制见 `html-to-pptx-spike-report.md`。本节只列落地的工具与脚本位置。
+
+已新增四步工具（定义在 `skills/slides/tools.ts`，随 `slides` skill 激活注册）：
+
+- `init_slide_html_workspace`：拷贝受限 slide HTML 模板（含 8 页 spike 示例 deck）到 session workspace，建立产物子目录。
+- `prepare_slide_html_for_pptx`：Playwright 测量 + `[data-pptx-raster]` 截图回退 + 原位替换 + 本地图片 data URI 内联，输出 `deck.prepared.html` 与 `measurements.json`。
+- `export_html_to_pptx`：Playwright 注入 dom-to-pptx bundle，把 `deck.prepared.html` 转成 `final/<deck>.pptx`。
+- `validate_html_pptx_export`：preview-html 截图、LibreOffice 预览探测、pptx slide 计数比对、回退资源检查，写 `qa-report.json`。
+
+执行脚本位于 `skills/slides/scripts/html-pptx/`（`lib.mjs` / `prepare.mjs` / `export.mjs` / `validate.mjs` / `e2e.mjs`），由工具以子进程方式启动，`cwd` 为 session workspace，playwright 与 dom-to-pptx 仅在子进程内引入。
+
+新增依赖：`playwright`（渲染、测量、截图回退）、`dom-to-pptx`（DOM 到 PPTX 映射）、`pixelmatch` + `pngjs`（HTML 与 PPTX 预览的像素差异检测）。系统侧依赖 LibreOffice（pptx→pdf）与 poppler（pdftoppm，pdf→png），缺失时 validate 显式降级告警。native PptxGenJS 路线已于 2026-07-07 下线，HTML-to-PPTX 为 slides skill 的唯一路线。
+
+spike 已端到端跑通并自动验证：示例 deck 逐页像素差异 0.78%–4.5%、关键文本保留为可编辑 `<a:t>`、`@font-face` 字体可自动嵌入、复杂背景光栅化被自动告警；`node skills/slides/scripts/html-pptx/e2e.mjs` 跑"prompt → 受限 slide HTML → prepare → export → validate → 断言"全链路（18/18 通过）。细节见 `html-to-pptx-spike-report.md`。
