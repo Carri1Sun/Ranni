@@ -6,7 +6,7 @@ subject: Ranni slides skill 实现方案（HTML-to-PPTX）
 audience: 执行该能力的 coding agent
 baseline: HTML-to-PPTX spike 已接入
 prerequisites: skill 动态加载机制已落地（见 skill-dynamic-loading-plan.md）
-related: html-to-pptx-export-guide.md、slides-skill-developer-guide.md、skill-dynamic-loading-plan.md
+related: html-to-pptx-export-guide.md、slides-skill-developer-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
 ---
 
 # Ranni slides skill 实现方案（HTML-to-PPTX）
@@ -24,6 +24,7 @@ Ranni `slides` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 sl
 - 让复杂图表、复杂装饰、canvas/SVG 组合视觉通过局部截图回退稳定呈现。
 - 让所有输入输出落在当前 session workspace 内。
 - 让每次导出都保留 HTML、prepared HTML、预览、测量数据和 QA 报告，便于调试与复现。
+- 让设计合规保留视觉质量：移除不稳定网页效果时，用 PPTX 友好的色带、边框、背景几何、轨道节点和留白节奏补偿层次。
 
 ## 2. 架构流程
 
@@ -44,6 +45,7 @@ Ranni `slides` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 sl
 - `skills/slides/tools.ts` 提供四个 HTML-to-PPTX 工具。
 - `skills/slides/html-spike-template.ts` 提供 8 页 spike 示例模板。
 - `scripts/slides-html-pptx-spike.ts` 提供端到端本地验收入口。
+- `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md` 提供审美、布局、排版和兼容性硬性准则。
 
 ## 3. 工具接口
 
@@ -100,11 +102,15 @@ html-generation-report.json
 - `rasterFallbacks`
 - `warnings`
 - `generatedPptxPath`
+- `preparedHtmlImages`
 - `pptxInspection`
 - `htmlPreviewPaths`
 - `pptxPreview`
+- `designGuidelines`
 
 warning 用于记录转换边界。遇到 `dom-to-pptx` 覆盖不足时，应缩小 HTML 子集、增加局部截图回退或写入 warning，避免临时扩大能力承诺。
+
+设计准则 warning 使用 `design-*` 类型，覆盖动画、hover、padding-bottom、box-shadow、大圆角、主内容绝对定位、标题字号、正文行高、图片尺寸和 DOM 嵌套深度等检查项。`designGuidelines.status` 为 `passed` 时表示当前 HTML 通过设计合规检查。
 
 ## 7. 验收
 

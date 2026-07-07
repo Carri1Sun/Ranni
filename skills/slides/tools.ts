@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { JSDOM } from "jsdom";
 import JSZip from "jszip";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { z } from "zod";
@@ -71,6 +72,7 @@ type RasterFallbackMeasurement = {
   height: number;
   index: number;
   left: number;
+  position: string;
   slideId: string;
   top: number;
   width: number;
@@ -97,6 +99,14 @@ type HtmlPptxMeasurements = {
   slideWidth: number;
   sourceHtml: string;
   warnings: HtmlPptxWarning[];
+};
+
+type PreparedHtmlImageInspection = {
+  dataUriImages: number;
+  fallbackImages: number;
+  images: number;
+  localImages: number;
+  remoteImages: number;
 };
 
 function sanitizePathSegment(value: string) {
@@ -137,6 +147,491 @@ async function fileExists(filePath: string) {
   } catch {
     return false;
   }
+}
+
+function isRemoteReference(value: string) {
+  return /^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file:");
+}
+
+function isRemoteOrDataImageSource(value: string) {
+  return /^(?:https?:|data:)/i.test(value);
+}
+
+function getImageMimeType(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+
+  if (extension === ".svg") {
+    return "image/svg+xml";
+  }
+
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+
+  return "image/png";
+}
+
+function isInsideWorkspace(filePath: string, workspaceRoot: string) {
+  const relativePath = path.relative(workspaceRoot, filePath);
+
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
+
+async function imageFileToDataUri(filePath: string) {
+  const content = await fs.readFile(filePath);
+
+  return `data:${getImageMimeType(filePath)};base64,${content.toString("base64")}`;
+}
+
+function resolveLocalImageSource(
+  source: string,
+  htmlAbsolutePath: string,
+  workspaceRoot: string,
+) {
+  if (!source || isRemoteOrDataImageSource(source)) {
+    return undefined;
+  }
+
+  try {
+    const fileUrl = new URL(source, pathToFileURL(htmlAbsolutePath).href);
+
+    if (fileUrl.protocol !== "file:") {
+      return undefined;
+    }
+
+    const filePath = decodeURIComponent(fileUrl.pathname);
+
+    if (!isInsideWorkspace(filePath, workspaceRoot)) {
+      return undefined;
+    }
+
+    return filePath;
+  } catch {
+    return undefined;
+  }
+}
+
+async function inlineLocalImagesForDomToPptx(
+  browserContext: BrowserContext,
+  htmlAbsolutePath: string,
+  workspaceRoot: string,
+) {
+  const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+
+  try {
+    const images = await page.evaluate(() =>
+      Array.from(document.images).map((image, index) => ({
+        index,
+        source:
+          image.getAttribute("src") ||
+          image.currentSrc ||
+          image.src ||
+          "",
+      })),
+    );
+    let inlined = 0;
+
+    for (const image of images) {
+      const imagePath = resolveLocalImageSource(
+        image.source,
+        htmlAbsolutePath,
+        workspaceRoot,
+      );
+
+      if (!imagePath || !(await fileExists(imagePath))) {
+        continue;
+      }
+
+      const dataUri = await imageFileToDataUri(imagePath);
+
+      await page.evaluate(
+        ({ dataUri: nextSource, index }) => {
+          const image = document.images[index];
+
+          if (!image) {
+            return;
+          }
+
+          image.setAttribute("data-pptx-inline-source", image.getAttribute("src") || "");
+          image.src = nextSource;
+        },
+        { dataUri, index: image.index },
+      );
+      inlined += 1;
+    }
+
+    await page.evaluate(async () => {
+      await Promise.all(
+        Array.from(document.images).map(
+          (image) =>
+            image.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  image.addEventListener("load", () => resolve(), { once: true });
+                  image.addEventListener("error", () => resolve(), { once: true });
+                }),
+        ),
+      );
+    });
+
+    return { inlined, page };
+  } catch (error) {
+    await page.close();
+    throw error;
+  }
+}
+
+async function readSlideHtmlDesignSources(htmlAbsolutePath: string) {
+  const html = await fs.readFile(htmlAbsolutePath, "utf8");
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+  const htmlDirectory = path.dirname(htmlAbsolutePath);
+  const cssTexts = Array.from(document.querySelectorAll("style"))
+    .map((style) => style.textContent ?? "")
+    .filter(Boolean);
+  const stylesheetHrefs = Array.from(
+    document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),
+  ).map((link) => link.getAttribute("href") ?? "");
+
+  for (const href of stylesheetHrefs) {
+    if (!href || isRemoteReference(href) || href.startsWith("#")) {
+      continue;
+    }
+
+    const cssPath = resolveWorkspacePath(
+      path.join(path.dirname(htmlAbsolutePath), href),
+      htmlDirectory,
+    );
+
+    if (await fileExists(cssPath)) {
+      cssTexts.push(await fs.readFile(cssPath, "utf8"));
+    }
+  }
+
+  return {
+    css: cssTexts.join("\n"),
+    html,
+  };
+}
+
+function extractCssDeclarationValues(css: string, property: string) {
+  const values: string[] = [];
+  const pattern = new RegExp(`${property}\\s*:\\s*([^;{}]+)`, "gi");
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(css))) {
+    values.push(match[1]?.trim() ?? "");
+  }
+
+  return values;
+}
+
+async function collectSourceDesignWarnings(
+  htmlAbsolutePath: string,
+): Promise<HtmlPptxWarning[]> {
+  const warnings: HtmlPptxWarning[] = [];
+  const { css } = await readSlideHtmlDesignSources(htmlAbsolutePath);
+  const source = css.toLowerCase();
+
+  if (/\bpadding-bottom\s*:/i.test(css)) {
+    warnings.push({
+      message: "设计规范禁止在主要内容流中使用 padding-bottom。",
+      type: "design-padding-bottom",
+    });
+  }
+
+  if (/@keyframes\b|\banimation(?:-[a-z]+)?\s*:/i.test(css)) {
+    warnings.push({
+      message: "设计规范禁止 CSS 动画和 @keyframes。",
+      type: "design-animation",
+    });
+  }
+
+  if (/\btransition(?:-[a-z]+)?\s*:/i.test(css)) {
+    warnings.push({
+      message: "设计规范禁止 transition。",
+      type: "design-transition",
+    });
+  }
+
+  if (/:hover\b/i.test(css)) {
+    warnings.push({
+      message: "设计规范禁止 :hover 伪类。",
+      type: "design-hover",
+    });
+  }
+
+  if (/\bbox-shadow\s*:/i.test(css)) {
+    warnings.push({
+      message: "设计规范禁止使用卡片阴影，避免网页 UI 感和 PPTX 映射偏差。",
+      type: "design-box-shadow",
+    });
+  }
+
+  const contentValues = extractCssDeclarationValues(css, "content");
+  const injectedTextValues = contentValues.filter((value) => {
+    const normalized = value.trim();
+
+    return (
+      /^["']/.test(normalized) &&
+      !/^["']\s*["']$/.test(normalized) &&
+      !/^["']\\?[a-z0-9-]*["']$/i.test(normalized)
+    );
+  });
+
+  if (injectedTextValues.length) {
+    warnings.push({
+      message: "设计规范禁止用 CSS 伪元素 content 注入关键文字。",
+      type: "design-pseudo-content-text",
+    });
+  }
+
+  const borderRadiusValues = extractCssDeclarationValues(css, "border-radius");
+  const largeRadius = borderRadiusValues.find((value) =>
+    Array.from(value.matchAll(/([\d.]+)px/gi)).some(
+      (match) => Number(match[1]) > 8,
+    ),
+  );
+
+  if (largeRadius) {
+    warnings.push({
+      message: `设计规范要求 UI 圆角不超过 8px，检测到 ${largeRadius}。`,
+      type: "design-large-radius",
+    });
+  }
+
+  const fontFamilyCount = new Set(
+    extractCssDeclarationValues(source, "font-family").map((value) =>
+      value.replace(/\s+/g, " ").trim(),
+    ),
+  ).size;
+
+  if (fontFamilyCount > 2) {
+    warnings.push({
+      message: `设计规范要求每套 deck 最多使用 2 种字体，检测到 ${fontFamilyCount} 种 font-family 声明。`,
+      type: "design-too-many-fonts",
+    });
+  }
+
+  return warnings;
+}
+
+async function collectRuntimeDesignWarnings(
+  browserContext: BrowserContext,
+  htmlAbsolutePath: string,
+  slideSelector: string,
+): Promise<HtmlPptxWarning[]> {
+  const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+
+  try {
+    return await page.evaluate((selector) => {
+      const warnings: HtmlPptxWarning[] = [];
+      const slides = Array.from(document.querySelectorAll<HTMLElement>(selector));
+      const textSelector = [
+        "[data-pptx-editable]",
+        "h1",
+        "h2",
+        "h3",
+        "p",
+        "li",
+        "blockquote",
+        "td",
+        "th",
+        "figcaption",
+      ].join(",");
+
+      for (const slide of slides) {
+        const slideId = slide.dataset.slideId || "unknown";
+        const slideStyle = window.getComputedStyle(slide);
+
+        if (slideStyle.boxSizing !== "border-box") {
+          warnings.push({
+            message: "设计规范要求 slide 使用 box-sizing: border-box。",
+            slideId,
+            type: "design-slide-box-sizing",
+          });
+        }
+
+        if (slideStyle.overflow !== "hidden") {
+          warnings.push({
+            message: "设计规范要求 slide 使用 overflow: hidden。",
+            slideId,
+            type: "design-slide-overflow",
+          });
+        }
+
+        const textElements = Array.from(
+          slide.querySelectorAll<HTMLElement>(textSelector),
+        ).filter((element) => {
+          const text = element.textContent?.trim();
+
+          return (
+            Boolean(text) &&
+            !element.closest("[data-pptx-raster]") &&
+            !element.closest("[data-pptx-ignore]") &&
+            !element.hasAttribute("data-pptx-fallback")
+          );
+        });
+        const absoluteTextCount = textElements.filter((element) => {
+          const position = window.getComputedStyle(element).position;
+
+          return position === "absolute" || position === "fixed";
+        }).length;
+
+        if (absoluteTextCount) {
+          warnings.push({
+            message: `设计规范禁止主内容文本使用绝对定位，检测到 ${absoluteTextCount} 个文本节点。`,
+            slideId,
+            type: "design-main-text-absolute",
+          });
+        }
+
+        const denseParagraphs = Array.from(slide.querySelectorAll("p")).filter(
+          (paragraph) =>
+            paragraph.textContent &&
+            paragraph.textContent.trim().length > 170 &&
+            !paragraph.closest("[data-pptx-raster]"),
+        ).length;
+
+        if (denseParagraphs) {
+          warnings.push({
+            message: `设计规范要求长文本提炼为列表或小标题块，检测到 ${denseParagraphs} 个过长段落。`,
+            slideId,
+            type: "design-long-paragraph",
+          });
+        }
+
+        const paragraphCount = Array.from(slide.querySelectorAll("p")).filter(
+          (paragraph) =>
+            paragraph.textContent?.trim() &&
+            !paragraph.closest("[data-pptx-raster]"),
+        ).length;
+
+        if (paragraphCount > 3) {
+          warnings.push({
+            message: `设计规范要求每页正文段落不超过 3 段，检测到 ${paragraphCount} 段。`,
+            slideId,
+            type: "design-too-many-paragraphs",
+          });
+        }
+
+        const bodyTextElements = Array.from(
+          slide.querySelectorAll<HTMLElement>(
+            "p, li, blockquote, td, th, figcaption, em",
+          ),
+        ).filter(
+          (element) =>
+            element.textContent?.trim() &&
+            !element.closest("[data-pptx-raster]") &&
+            !element.closest("[data-pptx-ignore]"),
+        );
+        const lowLineHeightCount = bodyTextElements.filter((element) => {
+          const style = window.getComputedStyle(element);
+          const fontSize = Number.parseFloat(style.fontSize);
+          const lineHeight = Number.parseFloat(style.lineHeight);
+
+          return fontSize > 0 && lineHeight > 0 && lineHeight / fontSize < 1.38;
+        }).length;
+
+        if (lowLineHeightCount) {
+          warnings.push({
+            message: `设计规范要求正文 line-height 接近 1.5 到 1.6，检测到 ${lowLineHeightCount} 个文本节点行高偏紧。`,
+            slideId,
+            type: "design-tight-line-height",
+          });
+        }
+
+        const h2 = slide.querySelector<HTMLElement>("h2");
+
+        if (h2 && !h2.classList.contains("summary-title")) {
+          const fontSize = Number.parseFloat(window.getComputedStyle(h2).fontSize);
+
+          if (fontSize < 30 || fontSize > 36) {
+            warnings.push({
+              message: `设计规范要求内容页标题约 32px，当前为 ${fontSize}px。`,
+              slideId,
+              type: "design-content-heading-size",
+            });
+          }
+        }
+
+        const deepEditableCount = textElements.filter((element) => {
+          let depth = 0;
+          let current: HTMLElement | null = element;
+
+          while (current && current !== slide) {
+            depth += 1;
+            current = current.parentElement;
+          }
+
+          return depth > 5;
+        }).length;
+
+        if (deepEditableCount) {
+          warnings.push({
+            message: `设计规范要求 DOM 结构扁平，检测到 ${deepEditableCount} 个关键文本节点嵌套过深。`,
+            slideId,
+            type: "design-deep-text-nesting",
+          });
+        }
+      }
+
+      const images = Array.from(document.querySelectorAll<HTMLImageElement>("img"))
+        .filter(
+          (image) =>
+            !image.closest("[data-pptx-ignore]") &&
+            !image.hasAttribute("data-pptx-fallback"),
+        );
+
+      for (const image of images) {
+        const rect = image.getBoundingClientRect();
+        const style = window.getComputedStyle(image);
+        const slide = image.closest<HTMLElement>(selector);
+        const slideId = slide?.dataset.slideId || "unknown";
+
+        if (rect.width <= 0 || rect.height <= 0) {
+          warnings.push({
+            message: "设计规范要求图片具有明确像素尺寸。",
+            slideId,
+            type: "design-image-size",
+          });
+        }
+
+        if (style.objectFit === "fill") {
+          warnings.push({
+            message: "设计规范要求图片设置 object-fit，避免 PPTX 坐标和裁切不稳定。",
+            slideId,
+            type: "design-image-object-fit",
+          });
+        }
+      }
+
+      return warnings;
+    }, slideSelector);
+  } finally {
+    await page.close();
+  }
+}
+
+async function collectDesignGuidelineWarnings(
+  browserContext: BrowserContext,
+  htmlAbsolutePath: string,
+  slideSelector: string,
+) {
+  const [sourceWarnings, runtimeWarnings] = await Promise.all([
+    collectSourceDesignWarnings(htmlAbsolutePath),
+    collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, slideSelector),
+  ]);
+
+  return [...sourceWarnings, ...runtimeWarnings];
 }
 
 async function writeTextFileIfAllowed(
@@ -405,20 +900,13 @@ async function collectHtmlMeasurements(
             });
           }
 
-          if (computedStyle.position === "static") {
-            warnings.push({
-              message: "截图回退节点使用 static 布局，替换为绝对定位图片后可能影响周边流式布局。",
-              slideId,
-              type: "raster-static-position",
-            });
-          }
-
           return {
             alt,
             borderRadius: computedStyle.borderRadius,
             height: rect.height,
             index,
             left: slideRect ? rect.left - slideRect.left : rect.left,
+            position: computedStyle.position,
             slideId,
             top: slideRect ? rect.top - slideRect.top : rect.top,
             width: rect.width,
@@ -572,20 +1060,13 @@ async function prepareSlideHtmlForPptx(
             });
           }
 
-          if (computedStyle.position === "static") {
-            warnings.push({
-              message: "截图回退节点使用 static 布局，替换为绝对定位图片后可能影响周边流式布局。",
-              slideId,
-              type: "raster-static-position",
-            });
-          }
-
           return {
             alt,
             borderRadius: computedStyle.borderRadius,
             height: rect.height,
             index,
             left: slideRect ? rect.left - slideRect.left : rect.left,
+            position: computedStyle.position,
             slideId,
             top: slideRect ? rect.top - slideRect.top : rect.top,
             width: rect.width,
@@ -622,7 +1103,12 @@ async function prepareSlideHtmlForPptx(
         selector: args.slideSelector,
       },
     );
-    const warnings = [...state.warnings];
+    const designWarnings = await collectDesignGuidelineWarnings(
+      browserContext,
+      htmlAbsolutePath,
+      args.slideSelector,
+    );
+    const warnings = [...state.warnings, ...designWarnings];
     const replacements: Array<{
       alt: string;
       asset: string;
@@ -630,6 +1116,7 @@ async function prepareSlideHtmlForPptx(
       height: number;
       index: number;
       left: number;
+      position: string;
       slideId: string;
       src: string;
       top: number;
@@ -672,6 +1159,7 @@ async function prepareSlideHtmlForPptx(
         height: rasterElement.height,
         index: rasterElement.index,
         left: rasterElement.left,
+        position: rasterElement.position,
         slideId: rasterElement.slideId,
         src: toPortableRelativePath(path.dirname(outHtmlAbsolutePath), assetAbsolutePath),
         top: rasterElement.top,
@@ -698,9 +1186,6 @@ async function prepareSlideHtmlForPptx(
           image.alt = replacement.alt;
           image.setAttribute("data-pptx-alt", replacement.alt);
           image.setAttribute("data-pptx-fallback", "true");
-          image.style.position = "absolute";
-          image.style.left = `${replacement.left}px`;
-          image.style.top = `${replacement.top}px`;
           image.style.width = `${replacement.width}px`;
           image.style.height = `${replacement.height}px`;
           image.style.objectFit = "contain";
@@ -709,6 +1194,19 @@ async function prepareSlideHtmlForPptx(
           image.style.zIndex =
             replacement.zIndex === "auto" ? "0" : replacement.zIndex;
           image.style.borderRadius = replacement.borderRadius;
+
+          if (
+            replacement.position === "static" ||
+            replacement.position === "relative"
+          ) {
+            image.style.position = replacement.position;
+            original.replaceWith(image);
+            continue;
+          }
+
+          image.style.position = "absolute";
+          image.style.left = `${replacement.left}px`;
+          image.style.top = `${replacement.top}px`;
           slide.appendChild(image);
           original.remove();
         }
@@ -730,6 +1228,7 @@ async function prepareSlideHtmlForPptx(
         height: Math.round(replacement.height * 100) / 100,
         index: replacement.index,
         left: Math.round(replacement.left * 100) / 100,
+        position: replacement.position,
         slideId: replacement.slideId,
         top: Math.round(replacement.top * 100) / 100,
         width: Math.round(replacement.width * 100) / 100,
@@ -781,7 +1280,11 @@ async function exportHtmlToPptx(
   const { browser, browserContext } = await launchHtmlPptxBrowser();
 
   try {
-    const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+    const { inlined, page } = await inlineLocalImagesForDomToPptx(
+      browserContext,
+      htmlAbsolutePath,
+      workspaceRoot,
+    );
     const bundlePath = resolveDomToPptxBundlePath();
 
     await page.addScriptTag({ path: bundlePath });
@@ -849,6 +1352,7 @@ async function exportHtmlToPptx(
       "已通过 dom-to-pptx 导出 PPTX。",
       `路径：${toWorkspaceRelative(outPptxAbsolutePath, workspaceRoot)}`,
       `HTML：${toWorkspaceRelative(htmlAbsolutePath, workspaceRoot)}`,
+      `内联本地图片：${inlined}`,
     ].join("\n");
   } finally {
     await closeBrowser(browser, browserContext);
@@ -903,6 +1407,9 @@ async function inspectPptxFile(pptxAbsolutePath: string) {
   const slideFiles = Object.keys(zip.files)
     .filter((fileName) => /^ppt\/slides\/slide\d+\.xml$/.test(fileName))
     .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const mediaFiles = Object.keys(zip.files).filter(
+    (fileName) => /^ppt\/media\/.+/.test(fileName) && !zip.files[fileName]?.dir,
+  );
   let textRuns = 0;
   let pictureCount = 0;
 
@@ -918,9 +1425,45 @@ async function inspectPptxFile(pptxAbsolutePath: string) {
   }
 
   return {
+    mediaFiles: mediaFiles.length,
     pictureCount,
     slideFiles: slideFiles.length,
     textRuns,
+  };
+}
+
+async function inspectPreparedHtmlImages(
+  preparedHtmlAbsolutePath: string,
+): Promise<PreparedHtmlImageInspection> {
+  if (!(await fileExists(preparedHtmlAbsolutePath))) {
+    return {
+      dataUriImages: 0,
+      fallbackImages: 0,
+      images: 0,
+      localImages: 0,
+      remoteImages: 0,
+    };
+  }
+
+  const html = await fs.readFile(preparedHtmlAbsolutePath, "utf8");
+  const dom = new JSDOM(html);
+  const images = Array.from(dom.window.document.querySelectorAll("img")).filter(
+    (image) => !image.closest("[data-pptx-ignore]"),
+  );
+  const sourceValues = images.map((image) => image.getAttribute("src") ?? "");
+
+  return {
+    dataUriImages: sourceValues.filter((source) => source.startsWith("data:"))
+      .length,
+    fallbackImages: images.filter((image) =>
+      image.hasAttribute("data-pptx-fallback"),
+    ).length,
+    images: images.length,
+    localImages: sourceValues.filter(
+      (source) => source && !isRemoteOrDataImageSource(source),
+    ).length,
+    remoteImages: sourceValues.filter((source) => /^https?:/i.test(source))
+      .length,
   };
 }
 
@@ -1258,6 +1801,12 @@ async function validateHtmlPptxExport(
         args.slideSelector,
       );
 
+      const designWarnings = await collectDesignGuidelineWarnings(
+        browserContext,
+        htmlAbsolutePath,
+        args.slideSelector,
+      );
+
       measurements = {
         editableElements: measured.editableElements,
         ignoredElements: measured.ignoredElements,
@@ -1268,28 +1817,30 @@ async function validateHtmlPptxExport(
         slides: measured.slideMeasurements,
         slideWidth: SLIDE_WIDTH_PX,
         sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-        warnings: measured.warnings,
+        warnings: [...measured.warnings, ...designWarnings],
       };
     }
   } finally {
     await closeBrowser(browser, browserContext);
   }
 
-  const [htmlPreviews, pptxInspection, pptxPreview] = await Promise.all([
-    renderHtmlPreviews(
-      htmlAbsolutePath,
-      previewHtmlDirectory,
-      args.slideSelector,
-      workspaceRoot,
-    ),
-    inspectPptxFile(pptxAbsolutePath),
-    renderPptxPreview(
-      pptxAbsolutePath,
-      previewPptxDirectory,
-      workspaceRoot,
-      context.signal,
-    ),
-  ]);
+  const [htmlPreviews, preparedHtmlImages, pptxInspection, pptxPreview] =
+    await Promise.all([
+      renderHtmlPreviews(
+        htmlAbsolutePath,
+        previewHtmlDirectory,
+        args.slideSelector,
+        workspaceRoot,
+      ),
+      inspectPreparedHtmlImages(preparedHtmlAbsolutePath),
+      inspectPptxFile(pptxAbsolutePath),
+      renderPptxPreview(
+        pptxAbsolutePath,
+        previewPptxDirectory,
+        workspaceRoot,
+        context.signal,
+      ),
+    ]);
   const pptxPreviewStatusPath = path.join(
     previewPptxDirectory,
     "render-status.json",
@@ -1326,13 +1877,33 @@ async function validateHtmlPptxExport(
     });
   }
 
+  if (
+    preparedHtmlImages.images > 0 &&
+    pptxInspection.pictureCount < preparedHtmlImages.images
+  ) {
+    warnings.push({
+      message: `PPTX 图片对象数 ${pptxInspection.pictureCount} 少于 prepared HTML 图片数 ${preparedHtmlImages.images}，可能存在视觉资产丢失。`,
+      type: "pptx-image-count-mismatch",
+    });
+  }
+
+  const designWarnings = warnings.filter((warning) =>
+    warning.type.startsWith("design-"),
+  );
   const report = {
     deck: toWorkspaceRelative(pptxAbsolutePath, workspaceRoot),
+    designGuidelines: {
+      reference:
+        "docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md",
+      status: designWarnings.length ? "violations" : "passed",
+      warnings: designWarnings,
+    },
     editableElements: measurements.editableElements,
     generatedPptxPath: toWorkspaceRelative(pptxAbsolutePath, workspaceRoot),
     htmlPreviewPaths: htmlPreviews,
     ignoredElements: measurements.ignoredElements,
     measurementsPath: toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot),
+    preparedHtmlImages,
     preparedHtml: toWorkspaceRelative(preparedHtmlAbsolutePath, workspaceRoot),
     pptxInspection,
     pptxPreview,

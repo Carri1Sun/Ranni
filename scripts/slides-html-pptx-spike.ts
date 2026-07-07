@@ -138,6 +138,14 @@ async function verifyE2EArtifacts(
     path.join(workspaceRoot, dir, "deck.prepared.html"),
     "utf8",
   );
+  const sourceHtml = await fs.readFile(
+    path.join(workspaceRoot, dir, "deck.html"),
+    "utf8",
+  );
+  const sourceCss = await fs.readFile(
+    path.join(workspaceRoot, dir, "styles.css"),
+    "utf8",
+  );
 
   assertCondition(
     preparedHtml.includes('data-pptx-fallback="true"'),
@@ -147,6 +155,15 @@ async function verifyE2EArtifacts(
     !/<[^>]+\sdata-pptx-raster(?:[=>\s]|$)/.test(preparedHtml),
     "prepared HTML 仍残留 data-pptx-raster 节点。",
   );
+  assertCondition(
+    sourceHtml.includes("timeline-rail") &&
+      sourceHtml.includes("timeline-node"),
+    "时间线样例缺少 PPTX 友好的轨道或节点视觉层级。",
+  );
+  assertCondition(
+    !/\bbox-shadow\s*:/i.test(sourceCss),
+    "样例 CSS 不应依赖 box-shadow 修复视觉层级。",
+  );
 
   const pptxStats = await fs.stat(path.join(workspaceRoot, finalPptx));
 
@@ -154,6 +171,10 @@ async function verifyE2EArtifacts(
 
   const qaPath = path.join(workspaceRoot, dir, "qa-report.json");
   const qa = JSON.parse(await fs.readFile(qaPath, "utf8")) as {
+    designGuidelines?: {
+      status: string;
+      warnings: unknown[];
+    };
     editableElements: number;
     generatedPptxPath: string;
     htmlPreviewPaths: string[];
@@ -196,6 +217,10 @@ async function verifyE2EArtifacts(
   assertCondition(
     qa.warnings.length === 0,
     `qa-report 仍有 warning：${JSON.stringify(qa.warnings)}`,
+  );
+  assertCondition(
+    qa.designGuidelines?.status === "passed",
+    `设计准则检查未通过：${JSON.stringify(qa.designGuidelines)}`,
   );
   assertCondition(
     qa.pptxInspection.slideFiles === qa.slides,

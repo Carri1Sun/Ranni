@@ -5,7 +5,7 @@ date: 2026-07-07
 subject: Ranni slides skill 开发执行指南（HTML-to-PPTX）
 audience: 实现 slides skill 的 coding agent
 prerequisites: skill 动态加载机制已落地（skill-dynamic-loading-plan.md Task 1–6 完成）
-related: slides-skill-plan.md、html-to-pptx-export-guide.md、skill-dynamic-loading-plan.md
+related: slides-skill-plan.md、html-to-pptx-export-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
 ---
 
 # Ranni slides skill 开发执行指南
@@ -43,6 +43,9 @@ skills/slides/
 
 scripts/
   slides-html-pptx-spike.ts
+
+docs/tech/v2-architecture/slides-skill-design/
+  HTML-to-PPTX-Agent-Design-Guidelines.md
 ```
 
 `SKILL.md` 是 agent 选择路线的主要提示来源，必须保持为 HTML-to-PPTX 单一路线说明。
@@ -63,13 +66,15 @@ scripts/
 - 等待字体和首帧渲染完成。
 - 校验每个 `.slide` 的尺寸、滚动状态和 `data-slide-id`。
 - 统计 `data-pptx-editable` 与 `data-pptx-ignore`。
+- 检查设计准则：动画、hover、padding-bottom、box-shadow、大圆角、主内容绝对定位、标题字号、正文行高、图片尺寸和 DOM 嵌套深度。
 - 在转换前截图每个 `data-pptx-raster` 节点，保存到 `fallback-assets/`。
-- 用同尺寸 `<img>` 替换截图回退节点，写出 `deck.prepared.html`。
+- 用同尺寸 `<img>` 替换截图回退节点；普通流和 `position: relative` 节点原地替换，绝对定位装饰按 slide 坐标回放。
 - 写出 `measurements.json`，包含 slide 测量、截图回退、warning。
 
 ### `export_html_to_pptx`
 
 - 用 Playwright 打开 `deck.prepared.html`。
+- 将 workspace 内本地 `<img>` 内联为 data URI，避免 `dom-to-pptx` 跳过相对路径或 `file://` 图片。
 - 注入 `dom-to-pptx` browser bundle。
 - 只把 `.slide` 节点作为导出页。
 - 设置 16:9 宽高、标题、作者。
@@ -80,7 +85,7 @@ scripts/
 - 清理并重建 `preview-html/` 与 `preview-pptx/`。
 - 用 Playwright 输出 HTML 逐页 PNG。
 - 尝试用 LibreOffice 转 PDF，再用 Poppler 输出 PPTX 逐页 PNG。
-- 用 `jszip` 检查 PPTX slide XML、文本 run 和图片对象数量。
+- 用 `jszip` 检查 PPTX slide XML、文本 run 和图片对象数量，并与 prepared HTML 图片数量对齐。
 - 写出 `qa-report.json`。
 
 ## 4. 受限 HTML 编写规则
@@ -93,6 +98,8 @@ scripts/
 - 辅助节点加 `data-pptx-ignore`。
 - 使用本地 `assets/` 内资源。
 - 避免动画、CDN、动态布局和 viewport 字体缩放。
+- 遵守 `slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md`：主内容用 Grid/Flex 和标准文档流，文本不使用绝对定位，正文行高保持 1.5 到 1.6，内容块间距至少 30px，卡片圆角不超过 8px，不使用卡片阴影。
+- 移除阴影、hover、复杂渐变或绝对定位文本后，必须使用 PPTX 友好的视觉补偿：色带、细边框、分区底色、背景几何块、时间线轨道、节点圆环和页码锚点。
 
 ## 5. Spike 示例 deck
 
@@ -128,6 +135,9 @@ npm run slides:html-spike
 - 核心产物存在。
 - prepared HTML 已把截图回退节点替换为图片。
 - `qa-report.json` 无 warning。
+- `qa-report.json.designGuidelines.status` 为 `passed`。
+- `qa-report.json.preparedHtmlImages.images` 不高于 `qa-report.json.pptxInspection.pictureCount`。
+- 样例时间线保留轨道和节点等可映射视觉层级，避免合规后变成平铺卡片。
 - slide 数为 8。
 - 可编辑元素数量达到样例下限。
 - 截图回退数量至少为 1。

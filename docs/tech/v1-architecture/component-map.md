@@ -312,6 +312,16 @@ HTML-to-PPTX spike 示例模板。
 - 生成受限 `deck.html` 与 `styles.css`。
 - 提供本地 SVG 资产内容。
 - 覆盖封面、目录、文本、双栏图文、数据表格、复杂图表截图回退、时间线和总结页。
+- 遵守 slides skill 设计指南中的画布、排版、留白、低圆角、静态输出和 PPTX 兼容性规则。
+
+### `docs/tech/v2-architecture/slides-skill-design/`
+
+slides skill 设计规范目录。
+
+主要职责：
+
+- 保存 HTML-to-PPTX agent 创作时必须遵守的审美、布局、排版和兼容性准则。
+- 为 `SKILL.md` 和 HTML-to-PPTX QA 检查提供规则来源。
 
 ## 模型 Provider
 
