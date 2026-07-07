@@ -16,10 +16,10 @@ date: 2026-07-06
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
 | `lib/` | Agent loop、事件总线、运行注册表、EventMapper、工具、模型适配、trace、workspace、task memory |
-| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo` |
+| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo`；`slides` 包含 HTML-to-PPTX 工具 |
 | `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
-| `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
+| `scripts/` | 维护脚本，例如 logo 资产生成、research eval、slides HTML-to-PPTX spike runner |
 
 ## 根目录文件
 
@@ -261,6 +261,16 @@ Research notebook 运行期记录。
 - 支持最终产物 judge：`--judge-run <run>`、`--judge-pair <a> <b>`、`--judge`。
 - 输出 `judge-rubric.json`、`judge-rubric.md`、`claim-audit.md`、`style-judge.json`、`style-judge.md` 和 pairwise judge 文件。
 
+### `scripts/slides-html-pptx-spike.ts`
+
+本地 HTML-to-PPTX spike runner。
+
+主要职责：
+
+- 创建或复用 `ranni-session-html-pptx-spike` session workspace。
+- 顺序调用 `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export`。
+- 生成 8 页受限 slide HTML 示例、局部截图回退资产、HTML 预览、PPTX 预览状态、`measurements.json`、`qa-report.json` 和最终 `.pptx`。
+
 ### `lib/trace.ts`
 
 Trace 类型定义。
@@ -283,6 +293,25 @@ Workspace 边界工具。
 - 规范化 `activeSkills`，过滤不存在的 skill。
 
 `resolveWorkspacePath` 保证文件工具只能访问当前 workspace 内的路径。
+
+### `skills/slides/tools.ts`
+
+slides skill 专属工具。
+
+主要职责：
+
+- `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export` 提供 HTML-to-PPTX 路线。
+- 所有工具输入输出通过 workspace resolver 解析。
+
+### `skills/slides/html-spike-template.ts`
+
+HTML-to-PPTX spike 示例模板。
+
+主要职责：
+
+- 生成受限 `deck.html` 与 `styles.css`。
+- 提供本地 SVG 资产内容。
+- 覆盖封面、目录、文本、双栏图文、数据表格、复杂图表截图回退、时间线和总结页。
 
 ## 模型 Provider
 

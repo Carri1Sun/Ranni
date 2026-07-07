@@ -19,7 +19,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
-- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，可生成可编辑 native `.pptx`。
+- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，使用受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
 - 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
@@ -137,12 +137,15 @@ npm run lint
 npm run build
 npm run start
 npm run assets:logo
+npm run slides:html-spike
 npm run research:eval -- --case agent-eval-landscape --label baseline
 npm run research:eval -- --suite high --label improved-v1 --repeats 3
 npm run research:eval -- --reanalyze v4-citation-guard-context
 npm run research:eval -- --judge-run v5-model-recovery-rag
 npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guard-context
 ```
+
+`slides:html-spike` 会从内置 prompt 生成受限 slide HTML，执行 Playwright 截图回退、`dom-to-pptx` 导出、PPTX XML 检查和 PPTX 逐页预览渲染；也可以通过 `-- --prompt "..."` 传入自定义 prompt。
 
 生产模式下，`npm run build` 会生成前端 `dist/client` 和后端构建产物，`npm run start` 由 Express 托管网页并提供 API。
 

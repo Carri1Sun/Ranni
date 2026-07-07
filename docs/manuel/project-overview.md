@@ -119,13 +119,13 @@ Agent 可用工具主要分为七类：
 - Research notebook 工具：`plan_research`、`record_research_finding`、`review_research_state`、`save_research_checkpoint`。
 - Task state 工具：`update_task_state`。
 - Durable memory 工具：`init_task_memory`、`read_task_memory`、`update_task_memory`、`record_task_evidence`、`save_task_checkpoint`。
-- 动态 skill 工具：`load_skill` 可按需激活本地 skill。当前 `slides` skill 激活后会提供 `init_deck_workspace` 和 `generate_pptx`，用于生成可编辑 native `.pptx`。
+- 动态 skill 工具：`load_skill` 可按需激活本地 skill。当前 `slides` skill 激活后会提供 HTML-to-PPTX 工具 `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export`，用于通过受限 slide HTML 生成有限可编辑 `.pptx`。
 
 文件、终端和运行产物受 session 专属 workspace 边界限制。`operate_computer` 会控制用户实际 macOS 桌面，只应在用户明确要求桌面操作时使用，并在支付、登录、敏感信息或破坏性确认前停止。
 
 Deep research 任务会额外强调动态研究地图、正文核验、证据记录、coverage audit 和 thesis-driven synthesis。来源或 claim 较多时，agent 可把 `source_ledger`、`claim_ledger`、`coverage_matrix`、`synthesis_brief`、`negative_results` 写入 `.ranni/runs/<runId>/`，并在最终综合前读回。
 
-幻灯片任务可通过输入框内的“幻灯片”开关临时启用 `slides` skill，或在设置页的能力设置中设为默认强制加载。`slides` skill 只规定 deck 创作方法和产物目录结构，最终 PPTX 放在 `final/` 子目录；具体落点遵守 session workspace 边界。
+幻灯片任务可通过输入框内的“幻灯片”开关临时启用 `slides` skill，或在设置页的能力设置中设为默认强制加载。`slides` skill 规定受限 slide HTML 创作方法和产物目录结构，最终 PPTX 放在 `final/` 子目录；具体落点遵守 session workspace 边界。HTML-to-PPTX 产物会保留 `prompt.txt`、`html-generation-report.json`、`deck.html`、`deck.prepared.html`、`measurements.json`、`qa-report.json`、`preview-html/` 和 `preview-pptx/`。
 
 ## 过程展示规范
 
@@ -164,4 +164,4 @@ Trace 导出挂在 session 上，不再依赖某条 assistant 回复。点击顶
 - Ranni 是本地优先应用，设置密钥保存在 localStorage，不适合作为多用户远端服务直接部署。
 - 草稿页发送首条消息时，后端会在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` session 专属目录，同一秒内重复创建会追加数字后缀。
 - `write_file` 是全文件写入工具，适合小文件或完整重写，不适合盲目局部 patch。
-- `.ranni` 是 agent 任务记忆，不是用户文档归档区。
+- `.ranni` 用于 agent 任务记忆，避免作为用户文档归档区。

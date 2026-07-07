@@ -21,7 +21,7 @@ related: slides-skill-plan.md、slides-skill-developer-guide.md、document-gener
 - 对复杂图表、复杂 CSS 装饰、canvas/SVG 组合视觉做局部截图回退。
 - 所有产物、中间文件、预览、诊断报告都落在当前 session workspace。
 
-本方案先做 spike 验证表现，再进入产品化接入。当前已实现的 native PptxGenJS 生成路径仍可保留，作为编辑性更强的基线路线。
+本方案已接入 slides skill 当前主流程。skill 当前只暴露 HTML-to-PPTX 工具链，agent 生成幻灯片时应先创作受限 slide HTML，再通过准备、导出、验证三步产出 `.pptx`。
 
 ## 1. 方案摘要
 
@@ -155,7 +155,7 @@ slides/
 - 含 `filter`、`mix-blend-mode`、`clip-path` 的节点默认回退。
 - 含动画但最终需要静态输出的节点默认回退。
 - 复杂渐变、复杂阴影、遮罩叠加区域默认回退。
-- 外部图表库渲染区域默认回退，除非已经有可转成 native chart 的数据结构。
+- 外部图表库渲染区域默认回退，除非已经有可转成 PowerPoint 可编辑图表的数据结构。
 
 预处理步骤：
 
@@ -361,9 +361,9 @@ slides-html-pptx-spike/
 
 ### P1：Skill 接入
 
-- 在 slides skill 中增加“HTML export route”。
-- 前端入口允许用户选择 HTML-to-PPTX 路线。
-- agent 激活 slides skill 后，可按任务选择 native 路线或 HTML 路线。
+- 在 slides skill 中提供 HTML-to-PPTX 工具链。
+- 前端入口通过“幻灯片”能力开关加载该路线。
+- agent 激活 slides skill 后，按受限 slide HTML 规范创作 deck。
 - 所有导出产物进入 session workspace。
 
 ### P2：质量门
@@ -380,23 +380,25 @@ slides-html-pptx-spike/
 ```text
 computed style + DOM box
 -> slide IR
--> pptxgenjs / OOXML
+-> OOXML writer
 ```
 
 自研 mapper 只覆盖 Ranni 受限 HTML 规范中长期稳定的元素集合，复杂视觉继续走截图回退。
 
-## 9. 与当前 native slides 路线的关系
+## 9. 当前 skill 路线
 
-当前 native slides 路线使用 PptxGenJS 直接生成 PPTX 原生对象，编辑能力更可控。HTML-to-PPTX 路线适合视觉创作效率更高、预览更直接的场景。
+当前 slides skill 的可调用工具只包含 HTML-to-PPTX 路线，适合视觉创作效率更高、预览更直接的场景。
 
-建议保留两条能力：
+当前工具链：
 
-| 路线 | 优势 | 适用场景 |
+| 阶段 | 工具 | 产物 |
 |---|---|---|
-| native PptxGenJS | 编辑性强、结构可控 | 商务汇报、模板跟随、需要后续大量修改 |
-| HTML-to-PPTX | 创作快、视觉表达强、预览直接 | 创意型 deck、复杂版式、图文叙事 |
+| 初始化 | `init_slide_html_workspace` | `deck.html`、`styles.css`、资产目录 |
+| 准备 | `prepare_slide_html_for_pptx` | `deck.prepared.html`、`measurements.json`、`fallback-assets/` |
+| 导出 | `export_html_to_pptx` | `final/*.pptx` |
+| 验证 | `validate_html_pptx_export` | `preview-html/`、`preview-pptx/`、`qa-report.json` |
 
-最终由 slides skill 根据用户需求、模板、可编辑性要求和视觉复杂度选择路线。
+后续如需更强结构可编辑性，应在稳定 HTML 子集上沉淀 mapper 或模板能力，并继续沿用局部截图回退策略。
 
 ## 10. 风险与缓解
 
@@ -408,16 +410,109 @@ computed style + DOM box
 | 图片资源丢失 | PPTX 中空白或断图 | 所有资源本地化到 `assets/` |
 | 文件体积过大 | 回退截图过多 | 控制截图分辨率，照片使用 JPEG |
 | 层级错误 | 截图遮挡可编辑文本 | 回退块尽量只包复杂视觉，不包关键文本 |
-| 工具成熟度不足 | CLI 失败或输出不稳定 | 先 spike，保留 native 路线兜底 |
+| 工具成熟度不足 | CLI 失败或输出不稳定 | 记录 warning，缩小受限 HTML 子集，必要时沉淀自研 mapper |
 
 ## 11. 推荐实现顺序
 
 1. 新建 spike 目录与样例 deck。
 2. 接入 Playwright 渲染与截图回退脚本。
-3. 接入 `dom-to-pptx` CLI。
+3. 接入 `dom-to-pptx` browser bundle。
 4. 生成 HTML 预览和 PPTX 预览。
 5. 记录可编辑对象统计和截图回退统计。
 6. 用 PowerPoint、Keynote、LibreOffice 做一次手动兼容检查。
 7. 将成功子集写回 slides skill 规范。
 
 完成 P0 后，再决定是否进入 P1 skill 工具化。验收标准以“Ranni 能稳定交付有限可编辑且视觉可靠的 PPTX”为准。
+
+## 12. 当前实现状态
+
+已在 `skills/slides/` 中接入 HTML-to-PPTX 路线，当前可调用工具为以下四个。
+
+新增依赖：
+
+| 依赖 | 用途 |
+|---|---|
+| `dom-to-pptx` | 在浏览器上下文中把 prepared slide DOM 转为 `.pptx` |
+| `playwright` | 渲染 HTML、测量 DOM、截图 `data-pptx-raster` 节点、输出 HTML preview |
+| `jszip` | 检查 PPTX 内 slide XML、文本 run 和图片对象数量 |
+
+新增工具：
+
+| 工具 | 作用 |
+|---|---|
+| `init_slide_html_workspace` | 创建受限 slide HTML deck 目录，可生成 8 页 spike 示例 |
+| `prepare_slide_html_for_pptx` | 执行 Playwright 测量、截图回退和 `deck.prepared.html` 写出 |
+| `export_html_to_pptx` | 注入 `dom-to-pptx` browser bundle 并导出最终 `.pptx` |
+| `validate_html_pptx_export` | 输出 HTML preview、尝试 PPTX preview、写 `qa-report.json` |
+
+本地 spike runner：
+
+```bash
+npm run slides:html-spike
+```
+
+默认会创建或复用：
+
+```text
+~/Documents/Ranni-Workspace/ranni-session-html-pptx-spike/slides-html-pptx-spike/
+```
+
+目录内保留：
+
+```text
+deck.html
+deck.prepared.html
+styles.css
+assets/
+fallback-assets/
+preview-html/
+preview-pptx/
+measurements.json
+qa-report.json
+final/slides-html-pptx-spike.pptx
+```
+
+当前样例覆盖 8 页：封面、目录、文本页、双栏图文页、数据/表格页、复杂图表截图回退页、时间线页、总结页。
+
+runner 会保存 prompt 证据：
+
+```text
+prompt.txt
+html-generation-report.json
+```
+
+`slides:html-spike` 会执行严格端到端断言：
+
+- prompt 已保存并进入 HTML 生成报告。
+- 所有核心产物存在。
+- `qa-report.json` 无 warning。
+- PPTX XML slide 数等于 HTML slide 数。
+- PPTX XML 中存在 `<a:t>` 文本 run。
+- PPTX preview 状态为 `rendered`。
+- `preview-pptx/` 中存在 8 张逐页 PNG。
+
+当前 `qa-report.json` 字段包括：
+
+- `slides`
+- `editableElements`
+- `rasterFallbacks`
+- `warnings`
+- `generatedPptxPath`
+- `pptxInspection`
+- `htmlPreviewPaths`
+- `pptxPreview`
+
+已知限制：
+
+- `dom-to-pptx` 转换能力按真实输出记录到 `qa-report.json`，当前不承诺完整 CSS 覆盖。
+- PPTX 预览依赖 LibreOffice 和 Poppler；渲染失败时会在 `preview-pptx/render-status.json` 与 `qa-report.json` 中记录原因。
+- 复杂视觉推荐只包裹局部节点并标记 `data-pptx-raster`，关键文本继续单独标记为 `data-pptx-editable`。
+- `data-pptx-raster` 当前按测量结果替换为绝对定位 `<img>`；流式布局节点会产生 warning。
+- macOS headless LibreOffice 渲染依赖 Homebrew 运行库；当前验证环境已补齐 `little-cms2` 和 `fontconfig`。
+
+后续产品化计划：
+
+1. 增加 HTML preview 与 PPTX preview 的图像差异检测。
+2. 统计 PPTX 中可编辑文本与源 HTML 标注的对应关系。
+3. 增加字体可用性与替换风险检查。
+4. 为稳定 HTML 子集沉淀自研 mapper，继续保留局部截图回退策略。
