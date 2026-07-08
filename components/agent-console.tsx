@@ -143,7 +143,6 @@ type AppSettings = {
   qwenApiKey: string;
   selectedHtmlDesignStyleId: string;
   selectedHtmlPageTemplateId: string;
-  selectedHtmlToPptxTemplateId: string;
   showThinkingInFeed: boolean;
   showProcessDetails: boolean;
   tavilyApiKey: string;
@@ -167,23 +166,6 @@ type HtmlDesignOptionIndex = {
 
 type HtmlPageTemplateIndex = HtmlDesignOptionIndex & {
   sections: string[];
-};
-
-type HtmlToPptxTemplateIndex = {
-  accentColor?: string;
-  default?: boolean;
-  description: string;
-  fontPackages: string[];
-  id: string;
-  layouts: Array<{
-    id: string;
-    name: string;
-  }>;
-  name: string;
-  preview?: string;
-  surfaceColor?: string;
-  tags: string[];
-  version: string;
 };
 
 type TestConnectionState =
@@ -359,7 +341,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   qwenApiKey: "",
   selectedHtmlDesignStyleId: "",
   selectedHtmlPageTemplateId: "",
-  selectedHtmlToPptxTemplateId: "",
   showThinkingInFeed: true,
   showProcessDetails: false,
   tavilyApiKey: "",
@@ -669,12 +650,6 @@ function sanitizeSettings(raw: unknown): AppSettings {
       typeof raw.selectedHtmlPageTemplateId === "string"
         ? raw.selectedHtmlPageTemplateId.trim()
         : DEFAULT_SETTINGS.selectedHtmlPageTemplateId,
-    selectedHtmlToPptxTemplateId:
-      typeof raw.selectedHtmlToPptxTemplateId === "string"
-        ? raw.selectedHtmlToPptxTemplateId.trim()
-        : typeof raw.selectedSlidesTemplateId === "string"
-          ? raw.selectedSlidesTemplateId.trim()
-          : DEFAULT_SETTINGS.selectedHtmlToPptxTemplateId,
     showThinkingInFeed:
       typeof raw.showThinkingInFeed === "boolean"
         ? raw.showThinkingInFeed
@@ -2372,7 +2347,6 @@ function buildToolSettings(
   selectedDesign: {
     htmlDesignStyleId?: string;
     htmlPageTemplateId?: string;
-    htmlToPptxTemplateId?: string;
   } = {},
 ) {
   const activeSkills = new Set(settings.activeSkills);
@@ -2398,10 +2372,9 @@ function buildToolSettings(
           }
         : undefined,
     htmlToPptx:
-      selectedDesign.htmlToPptxTemplateId || selectedDesign.htmlDesignStyleId
+      selectedDesign.htmlDesignStyleId
         ? {
             styleId: selectedDesign.htmlDesignStyleId,
-            templateId: selectedDesign.htmlToPptxTemplateId,
           }
         : undefined,
     researchMode,
@@ -3241,13 +3214,6 @@ export function AgentConsole({
     "error" | "idle" | "loading" | "success"
   >("idle");
   const [htmlDesignError, setHtmlDesignError] = useState("");
-  const [htmlToPptxTemplates, setHtmlToPptxTemplates] = useState<
-    HtmlToPptxTemplateIndex[]
-  >([]);
-  const [htmlToPptxTemplateStatus, setHtmlToPptxTemplateStatus] = useState<
-    "error" | "idle" | "loading" | "success"
-  >("idle");
-  const [htmlToPptxTemplateError, setHtmlToPptxTemplateError] = useState("");
   const [isHtmlComposerSkillEnabled, setIsHtmlComposerSkillEnabled] =
     useState(false);
   const [isHtmlToPptxComposerSkillEnabled, setIsHtmlToPptxComposerSkillEnabled] =
@@ -3595,58 +3561,6 @@ export function AgentConsole({
         setHtmlDesignStatus("error");
         setHtmlDesignError(
           error instanceof Error ? error.message : "无法加载 HTML 设计选项。",
-        );
-      }
-    })();
-
-    return () => {
-      controller.abort();
-    };
-  }, [apiBaseUrl]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    setHtmlToPptxTemplateStatus("loading");
-    setHtmlToPptxTemplateError("");
-
-    void (async () => {
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/html-to-pptx/templates`, {
-          signal: controller.signal,
-        });
-        const payload = (await response.json()) as {
-          error?: string;
-          ok?: boolean;
-          result?: {
-            templates?: HtmlToPptxTemplateIndex[];
-          };
-        };
-
-        if (!response.ok || payload.ok === false) {
-          throw new Error(payload.error || "无法加载 PPTX 模板。");
-        }
-
-        const templates = Array.isArray(payload.result?.templates)
-          ? payload.result.templates.filter(
-              (template): template is HtmlToPptxTemplateIndex =>
-                typeof template.id === "string" &&
-                typeof template.name === "string" &&
-                typeof template.description === "string",
-            )
-          : [];
-
-        setHtmlToPptxTemplates(templates);
-        setHtmlToPptxTemplateStatus("success");
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setHtmlToPptxTemplates([]);
-        setHtmlToPptxTemplateStatus("error");
-        setHtmlToPptxTemplateError(
-          error instanceof Error ? error.message : "无法加载 PPTX 模板。",
         );
       }
     })();
@@ -5597,9 +5511,6 @@ export function AgentConsole({
               htmlPageTemplateId: isHtmlComposerSkillEnabled
                 ? effectiveHtmlPageTemplateId
                 : "",
-              htmlToPptxTemplateId: isHtmlToPptxComposerSkillEnabled
-                ? effectiveHtmlToPptxTemplateId
-                : "",
             },
           ),
           workspaceRoot: sessionForRun.workspaceRoot,
@@ -5867,21 +5778,10 @@ export function AgentConsole({
   const effectiveHtmlPageTemplate =
     configuredHtmlPageTemplate ?? defaultHtmlPageTemplate;
   const effectiveHtmlPageTemplateId = effectiveHtmlPageTemplate?.id ?? "";
-  const defaultHtmlToPptxTemplate =
-    htmlToPptxTemplates.find((template) => template.default) ??
-    htmlToPptxTemplates[0];
-  const configuredHtmlToPptxTemplate = htmlToPptxTemplates.find(
-    (template) => template.id === settings.selectedHtmlToPptxTemplateId,
-  );
-  const effectiveHtmlToPptxTemplate =
-    configuredHtmlToPptxTemplate ?? defaultHtmlToPptxTemplate;
-  const effectiveHtmlToPptxTemplateId = effectiveHtmlToPptxTemplate?.id ?? "";
   const htmlDesignUnavailable =
     htmlDesignStatus !== "success" || htmlDesignStyles.length === 0;
   const htmlPageTemplateUnavailable =
     htmlDesignStatus !== "success" || htmlPageTemplates.length === 0;
-  const htmlToPptxTemplateUnavailable =
-    htmlToPptxTemplateStatus !== "success" || htmlToPptxTemplates.length === 0;
   const htmlDesignUnavailableTitle =
     htmlDesignStatus === "error"
       ? htmlDesignError || "HTML 设计选项加载失败"
@@ -5894,18 +5794,11 @@ export function AgentConsole({
       : htmlDesignStatus === "success"
         ? "当前未发现 HTML 网页类型"
         : "正在加载 HTML 网页类型";
-  const htmlToPptxTemplateUnavailableTitle =
-    htmlToPptxTemplateStatus === "error"
-      ? htmlToPptxTemplateError || "PPTX 模板加载失败"
-      : htmlToPptxTemplateStatus === "success"
-        ? "当前未发现 PPTX 模板"
-        : "正在加载 PPTX 模板";
   const htmlSendBlocked =
     isHtmlComposerSkillEnabled &&
     (htmlDesignUnavailable || htmlPageTemplateUnavailable);
   const htmlToPptxSendBlocked =
-    isHtmlToPptxComposerSkillEnabled &&
-    (htmlDesignUnavailable || htmlToPptxTemplateUnavailable);
+    isHtmlToPptxComposerSkillEnabled && htmlDesignUnavailable;
   const composerSkillSendBlocked = htmlSendBlocked || htmlToPptxSendBlocked;
   const htmlComposerButtonDisabled =
     skillIndexStatus === "loading" ||
@@ -5915,8 +5808,7 @@ export function AgentConsole({
   const htmlToPptxComposerButtonDisabled =
     skillIndexStatus === "loading" ||
     !htmlToPptxSkillAvailable ||
-    htmlDesignUnavailable ||
-    htmlToPptxTemplateUnavailable;
+    htmlDesignUnavailable;
   let htmlComposerButtonTitle = "本次发送启用 html skill";
   let htmlToPptxComposerButtonTitle = "本次发送启用 html-to-pptx skill";
 
@@ -5938,8 +5830,6 @@ export function AgentConsole({
       htmlToPptxComposerButtonTitle = "当前未发现 html-to-pptx skill";
     } else if (htmlDesignUnavailable) {
       htmlToPptxComposerButtonTitle = htmlDesignUnavailableTitle;
-    } else if (htmlToPptxTemplateUnavailable) {
-      htmlToPptxComposerButtonTitle = htmlToPptxTemplateUnavailableTitle;
     } else if (isHtmlToPptxComposerSkillEnabled) {
       htmlToPptxComposerButtonTitle =
         "本次发送会强制加载 html-to-pptx skill";
@@ -6088,23 +5978,6 @@ export function AgentConsole({
             })
           : null}
 
-        {isHtmlToPptxComposerSkillEnabled
-          ? renderSelectionStrip({
-              activeId: effectiveHtmlToPptxTemplateId,
-              emptyText: "当前未发现 PPTX 模板",
-              errorText: htmlToPptxTemplateError || "PPTX 模板加载失败",
-              loadingText: "加载中",
-              onSelect: (id) =>
-                setSettings((current) => ({
-                  ...current,
-                  selectedHtmlToPptxTemplateId: id,
-                })),
-              options: htmlToPptxTemplates,
-              placement,
-              status: htmlToPptxTemplateStatus,
-              title: "PPTX 模板",
-            })
-          : null}
       </>
     );
   };

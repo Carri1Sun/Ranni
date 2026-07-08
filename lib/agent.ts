@@ -29,7 +29,6 @@ import {
   type SkillIndex,
 } from "./skills/registry";
 import { buildHtmlDesignRuntimeInstruction } from "./html-design/catalog";
-import { buildHtmlToPptxTemplateRuntimeInstruction } from "./html-to-pptx/templates";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -243,7 +242,6 @@ class PacedTextEmitter {
 function createSystemPrompt({
   activeSkillNames,
   htmlDesignInstruction,
-  htmlToPptxTemplateInstruction,
   researchMode,
   runtime,
   skillIndices,
@@ -254,7 +252,6 @@ function createSystemPrompt({
 }: {
   activeSkillNames: string[];
   htmlDesignInstruction: string[];
-  htmlToPptxTemplateInstruction: string[];
   researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
   skillIndices: SkillIndex[];
@@ -424,9 +421,6 @@ function createSystemPrompt({
       : []),
     ...(htmlDesignInstruction.length > 0
       ? [...htmlDesignInstruction, ""]
-      : []),
-    ...(htmlToPptxTemplateInstruction.length > 0
-      ? [...htmlToPptxTemplateInstruction, ""]
       : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
@@ -1816,13 +1810,6 @@ export async function runAgentTurn({
               })
             : []),
         ],
-        htmlToPptxTemplateInstruction:
-          activeSkillNames.includes("html-to-pptx") &&
-          toolSettings?.htmlToPptx?.templateId
-            ? buildHtmlToPptxTemplateRuntimeInstruction(
-                toolSettings.htmlToPptx.templateId,
-              )
-            : [],
         researchMode,
         runtime,
         skillIndices: listSkillIndices(),

@@ -513,6 +513,9 @@ export function buildHtmlDesignRuntimeInstruction({
   } else {
     lines.push(
       "- When creating PPTX, apply the selected design style within the restricted slide HTML rules. Do not use responsive webpage-only layout behavior inside fixed 1280x720 slides.",
+      "- Before editing slide HTML, plan the deck narrative, slide list, visual system, content density, and which complex visuals need local raster fallback.",
+      "- Create slide layouts from the user's content and the selected style. Do not rely on a fixed PPTX template package.",
+      "- A good PPTX has one clear job per slide, strong hierarchy, readable text, deliberate whitespace, consistent alignment, stable assets, and editable core text.",
     );
   }
 

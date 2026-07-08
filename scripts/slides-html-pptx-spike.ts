@@ -292,9 +292,9 @@ async function main() {
     {
       deckSlug: options.deckSlug,
       dir: options.dir,
+      exampleDeck: "spike-sample",
       overwrite: options.overwrite,
       prompt: options.prompt,
-      template: "spike-sample",
       title: options.title,
     },
     workspaceRoot,

@@ -14,8 +14,8 @@ related: slides-html-pptx-merge-construction-review.md、slides-html-pptx-cross-
 本方案中阶段一到阶段四已在当前分支落地：
 
 - 已删除旧 native theme 残留，并保留历史研究文档中的背景说明。
-- 已将 spike 示例迁移为 `skills/slides/templates/default-business/` 下的默认模板包，包含 `manifest.json`、`tokens.json`、`guidance.md`、`deck.html`、`styles.css` 和 `assets/`。
-- 已将 prepare、export、validate 的重逻辑拆入 `skills/slides/scripts/html-pptx/*.mjs`，`skills/slides/tools.ts` 保留 schema、workspace resolver、模板初始化和脚本调度。
+- 已将 spike 示例迁移为 `skills/html-to-pptx/examples/default-business/` 下的内部示例 deck，包含 `manifest.json`、`tokens.json`、`guidance.md`、`deck.html`、`styles.css` 和 `assets/`。
+- 已将 prepare、export、validate 的重逻辑拆入 `skills/html-to-pptx/scripts/html-pptx/*.mjs`，`skills/html-to-pptx/tools.ts` 保留 schema、workspace resolver、空白 workspace 初始化、内部示例 deck 初始化和脚本调度。
 - 已新增基于 `pixelmatch` 与 `pngjs` 的客观视觉 smoke check，`qa-report.json.visualSmoke` 记录空白页风险、预览页数不一致和高阈值视觉差异。
 
 阶段五字体嵌入验证仍作为后续可选能力推进。
@@ -89,22 +89,21 @@ related: slides-html-pptx-merge-construction-review.md、slides-html-pptx-cross-
 - `npm run build`
 - `git diff --check`
 
-## 4. 阶段二：真实 HTML/CSS 模板目录
+## 4. 阶段二：真实 HTML/CSS 示例目录
 
 ### 4.1 改动范围
 
-- 新增 `skills/slides/templates/default-business/`：
+- 新增 `skills/html-to-pptx/examples/default-business/`：
   - `deck.html`
   - `styles.css`
   - `assets/`
-- 保留 `init_slide_html_workspace` 的 `template` 参数。
-- 将 `template: "spike-sample"` 改为拷贝真实模板目录。
-- 保留 `template: "blank"`，生成最小可编辑工作区。
+- 用户路径下 `init_slide_html_workspace` 生成最小可编辑工作区。
+- 本地 spike 脚本通过内部 `exampleDeck: "spike-sample"` 拷贝真实示例目录。
 - 逐步移除或降级 `skills/slides/html-spike-template.ts` 的长字符串职责。
 
-### 4.2 模板原则
+### 4.2 示例原则
 
-模板必须体现设计指南：
+内部示例必须体现设计指南：
 
 - 每页 `.slide` 固定 `1280x720`。
 - 标题、正文、列表、表格文本使用 `data-pptx-editable`。
@@ -209,7 +208,7 @@ skills/slides/scripts/html-pptx/
 - 大范围视觉漂移。
 - 图片或 fallback 明显丢失。
 
-它不负责判断“是否高级”“是否更好看”“是否符合某种主观审美”。审美优化依赖设计指南、模板和人工预览。
+它不负责判断“是否高级”“是否更好看”“是否符合某种主观审美”。审美优化依赖设计指南、agent 规划和人工预览。
 
 ### 6.2 改动范围
 
@@ -280,7 +279,7 @@ skills/slides/scripts/html-pptx/
 
 建议按以下顺序施工：
 
-1. P0 和 P1 合成第一批 PR：清理残留 + 真实模板目录。
+1. P0 和 P1 合成第一批 PR：清理残留 + 真实示例目录。
 2. P2 单独作为第二批 PR：脚本化拆分，重点控制回归。
 3. P3 单独作为第三批 PR：客观视觉 smoke check。
 4. P4 作为增强 PR：字体嵌入可选验证。
@@ -291,18 +290,18 @@ skills/slides/scripts/html-pptx/
 
 | 风险 | 表现 | 回退策略 |
 |---|---|---|
-| 模板迁移导致设计 warning 增加 | `designGuidelines.status=violations` | 暂时保留 TS 模板，逐页迁移真实模板 |
+| 示例迁移导致设计 warning 增加 | `designGuidelines.status=violations` | 暂时保留 TS 示例，逐页迁移真实示例 |
 | 子进程拆分引入路径错误 | 产物写到 workspace 外或脚本找不到文件 | 回退 `tools.ts` 单文件实现，先补路径测试 |
 | pixel diff 噪声过大 | 正常页频繁 warning | 提高阈值，只保留空白页和页数类客观 warning |
 | 字体嵌入跨平台不稳定 | PPTX 体积增加或导出失败 | 默认关闭，仅本地字体测试场景开启 |
-| 真实 agent 仍生成不佳布局 | 预览可用但观感差 | 强化模板和 SKILL.md 约束，保持人工预览验收 |
+| 真实 agent 仍生成不佳布局 | 预览可用但观感差 | 强化设计准则、规划提示和 SKILL.md 约束，保持人工预览验收 |
 
 ## 10. 最终交付定义
 
 完成本方案后，slides skill 应满足：
 
 - agent 默认走 HTML-to-PPTX 路线。
-- 受限 slide HTML 创作规则清晰，模板可直接预览和复用。
+- 受限 slide HTML 创作规则清晰，内部示例可直接预览和用于验收。
 - 工具实现职责清楚，运行重依赖集中在脚本层。
 - QA 能发现客观结构、资源和渲染事故。
 - agent 自动修复有明确轮次上限，不能用审美 diff 做开放式收敛。

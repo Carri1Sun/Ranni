@@ -83,13 +83,11 @@ date: 2026-07-08
 - `event-course`
 - `data-insight`
 
-`html` skill 同时使用设计风格和网页类型模板。`html-to-pptx` skill 使用设计风格和 PPTX 模板包。agent system prompt 通过 `buildHtmlDesignRuntimeInstruction` 和 `buildHtmlToPptxTemplateRuntimeInstruction` 注入具体规则、来源和限制。
+`html` skill 同时使用设计风格和网页类型模板。`html-to-pptx` skill 只使用设计风格；agent system prompt 通过 `buildHtmlDesignRuntimeInstruction` 注入风格规则，并要求 agent 先规划 deck 叙事、页面结构和截图回退边界。
 
 ## API
 
 - `GET /api/html-design/options`：返回设计风格和网页类型模板。
-- `GET /api/html-to-pptx/templates`：返回 PPTX 模板包。
-- `GET /api/slides/templates`：保留兼容入口，返回同一组 PPTX 模板包。
 - `POST /api/runs`：接收 `toolSettings.htmlDesign` 和 `toolSettings.htmlToPptx`。
 
 ## 前端交互
@@ -97,7 +95,7 @@ date: 2026-07-08
 输入框快捷能力区提供两个互斥按钮：
 
 - `网页`：强制加载 `html` skill，展示设计风格和网页类型。
-- `PPTX`：强制加载 `html-to-pptx` skill，展示设计风格和 PPTX 模板。
+- `PPTX`：强制加载 `html-to-pptx` skill，只展示设计风格；页面结构由 agent 根据用户内容规划。
 
 选择卡片展示预览图、名称和说明。预览资源由 `npm run html-design:previews` 生成到 `public/html-design-previews/`。
 
