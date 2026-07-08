@@ -46,14 +46,20 @@ const modelSettingsSchema = z
     apiKey: optionalSecretSchema,
     baseUrl: optionalSecretSchema,
     deepseekApiKey: optionalSecretSchema,
+    minimaxTokenPlanKey: optionalSecretSchema,
     model: optionalSecretSchema,
     provider: optionalSecretSchema,
     qwenApiKey: optionalSecretSchema,
   })
   .transform((settings) => ({
-    apiKey: settings.apiKey ?? settings.deepseekApiKey ?? settings.qwenApiKey,
+    apiKey:
+      settings.apiKey ??
+      settings.deepseekApiKey ??
+      settings.qwenApiKey ??
+      settings.minimaxTokenPlanKey,
     baseUrl: settings.baseUrl,
     deepseekApiKey: settings.deepseekApiKey,
+    minimaxTokenPlanKey: settings.minimaxTokenPlanKey,
     model: settings.model,
     provider: settings.provider,
     qwenApiKey: settings.qwenApiKey,
