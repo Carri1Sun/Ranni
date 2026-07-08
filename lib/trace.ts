@@ -123,7 +123,7 @@ export type TraceRun = {
   prompt: string;
   runtime: TraceRuntimeInfo;
   startedAt: number;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
   steps: TraceStep[];
   taskState?: TaskState;
   totalSteps: number;

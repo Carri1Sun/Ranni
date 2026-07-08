@@ -252,7 +252,7 @@ const system = buildSystemPrompt({ ..., loadedSkills: [...loadedSkills] });
 
 ## 9. 后续（机制就绪后）
 
-- 填入首个真实 skill：`skills/slides/`（SKILL.md 正文用 `document-generation-research.md` 里 Codex 官方 + 社区版综合的方法论，专属工具 `generate_pptx`，scripts 放渲染/校验脚本）。
+- 填入首个真实 skill：`skills/slides/`（SKILL.md 正文描述受限 slide HTML 创作方法，专属工具覆盖 HTML workspace 初始化、准备、导出和验证，scripts 放端到端 spike runner）。
 - 第二个 skill：图片生成（可对接 gpt-image 或 manual-web 两条 backend）。
 - 视 skill 数量增长，再考虑 skill 的远程分发与版本化（当前不做）。
 

@@ -523,6 +523,135 @@
   position: relative;
 }
 
+.slidesTemplateStrip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+.slidesTemplateStripComposer {
+  margin-bottom: var(--space-2);
+  padding: 7px 8px;
+}
+
+.slidesTemplateStripDraft {
+  padding: 8px;
+}
+
+.slidesTemplateStripHeader {
+  min-width: 104px;
+  display: grid;
+  gap: 2px;
+  padding-left: 4px;
+}
+
+.slidesTemplateStripHeader span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.slidesTemplateStripHeader strong {
+  overflow: hidden;
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slidesTemplateScroller {
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 1px 1px 3px;
+  scrollbar-width: thin;
+}
+
+.slidesTemplateOption {
+  min-width: 210px;
+  max-width: 240px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--slide-template-surface) 42%, transparent);
+  color: var(--ranni-text-2);
+  text-align: left;
+  transition:
+    border-color var(--motion-fast) var(--ease-ranni),
+    background var(--motion-fast) var(--ease-ranni),
+    color var(--motion-fast) var(--ease-ranni);
+}
+
+.slidesTemplateOptionActive {
+  border-color: color-mix(in srgb, var(--slide-template-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--slide-template-accent) 18%, transparent);
+  color: var(--ranni-text-0);
+}
+
+.slidesTemplateOption > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.slidesTemplateOption strong {
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slidesTemplateOption small {
+  overflow: hidden;
+  color: var(--ranni-text-3);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slidesTemplateSwatch {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, var(--slide-template-accent) 0 50%, transparent 50%),
+    var(--slide-template-surface);
+}
+
+.slidesTemplateNotice {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 107, 122, 0.28);
+  border-radius: var(--radius-md);
+  color: var(--ranni-danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .draftTextarea {
   width: 100%;
   min-height: 150px;
@@ -1440,10 +1569,18 @@
   color: var(--ranni-input-placeholder);
 }
 
-.composerSkillToggle {
+.composerSkillToolbar {
   position: absolute;
   left: 8px;
   bottom: 8px;
+  display: flex;
+  max-width: calc(100% - 120px);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.composerSkillToggle {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
@@ -1783,8 +1920,6 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
-.draftWorkspaceButton:hover,
-.draftWorkspaceButton:focus-visible,
 .scrollToBottomButton:hover,
 .scrollToBottomButton:focus-visible,
 .activityInfoButton:hover,
@@ -1822,8 +1957,6 @@
 .headerTraceButton:focus-visible,
 .messageActionButton:hover,
 .messageActionButton:focus-visible,
-.draftWorkspaceButton:hover,
-.draftWorkspaceButton:focus-visible,
 .activityInfoButton:hover,
 .activityInfoButton:focus-visible {
   border-color: rgba(143, 167, 255, 0.32);
@@ -1844,7 +1977,6 @@
 .floatingInfoButton:active,
 .headerTraceButton:active,
 .messageActionButton:active,
-.draftWorkspaceButton:active,
 .scrollToBottomButton:active,
 .activityInfoButton:active,
 .inspectorStep:active {
@@ -2999,8 +3131,9 @@
     width: calc(100% - 16px);
   }
 
-  .composerSkillToggle {
+  .composerSkillToolbar {
     bottom: 52px;
+    max-width: calc(100% - 16px);
   }
 
   .settingsModal {

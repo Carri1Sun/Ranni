@@ -20,6 +20,7 @@ import {
   testComputerUseConnection,
   testTavilyConnection,
 } from "../../lib/tools";
+import { listSlidesTemplates } from "../../lib/slides/templates";
 import { listSkillIndices } from "../../lib/skills/registry";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
@@ -35,11 +36,10 @@ const optionalSecretSchema = z
   .trim()
   .optional()
   .transform((value) => value || undefined);
-const optionalWorkspaceRootSchema = z
+const requiredWorkspaceRootSchema = z
   .string()
   .trim()
-  .optional()
-  .transform((value) => value || undefined);
+  .min(1);
 
 const modelSettingsSchema = z
   .object({
@@ -63,12 +63,21 @@ const toolSettingsSchema = z.object({
   activeSkills: z.array(z.string().trim().min(1)).max(24).optional().default([]),
   computerUseApiKey: optionalSecretSchema,
   computerUseModel: optionalSecretSchema,
+  researchMode: z.boolean().optional().default(false),
+  slides: z
+    .object({
+      styleVariantId: optionalSecretSchema,
+      templateId: optionalSecretSchema,
+    })
+    .optional(),
   tavilyApiKey: optionalSecretSchema,
 });
 const defaultToolSettings = {
   activeSkills: [],
   computerUseApiKey: undefined,
   computerUseModel: undefined,
+  researchMode: false,
+  slides: undefined,
   tavilyApiKey: undefined,
 };
 
@@ -83,7 +92,7 @@ const requestSchema = z.object({
     .min(1),
   modelSettings: modelSettingsSchema,
   toolSettings: toolSettingsSchema.optional().default(defaultToolSettings),
-  workspaceRoot: optionalWorkspaceRootSchema,
+  workspaceRoot: requiredWorkspaceRootSchema,
   sessionId: z.string().trim().min(1),
 });
 
@@ -133,6 +142,16 @@ async function assertDirectory(inputPath?: string) {
   return directoryPath;
 }
 
+function isChildPath(parentPath: string, candidatePath: string) {
+  const relativePath = path.relative(parentPath, candidatePath);
+
+  return (
+    relativePath !== "" &&
+    !relativePath.startsWith("..") &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
 function resolveDefaultWorkspaceBase() {
   const configuredBase = process.env.RANNI_DEFAULT_WORKSPACE?.trim();
 
@@ -151,26 +170,62 @@ function resolveDefaultWorkspaceBase() {
   );
 }
 
-function sanitizeDirectoryName(value: string) {
-  // sessionId 来自 crypto.randomUUID()（仅含十六进制与连字符），这里做防御性清洗，
-  // 去掉路径分隔符等不安全字符，保证自动创建的目录名跨平台可用。
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, "");
+function padTimestampPart(value: number) {
+  return String(value).padStart(2, "0");
+}
 
+function formatWorkspaceTimestamp(date = new Date()) {
+  const datePart = [
+    date.getFullYear(),
+    padTimestampPart(date.getMonth() + 1),
+    padTimestampPart(date.getDate()),
+  ].join("-");
+  const timePart = [
+    padTimestampPart(date.getHours()),
+    padTimestampPart(date.getMinutes()),
+    padTimestampPart(date.getSeconds()),
+  ].join("-");
+
+  return `${datePart}_${timePart}`;
+}
+
+function isFileExistsError(error: unknown) {
   return (
-    normalized
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "session"
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
   );
 }
 
-async function createAutoSessionWorkspace(sessionId: string) {
-  const directoryName = `ranni-session-${sanitizeDirectoryName(sessionId)}`;
-  const targetPath = path.join(resolveDefaultWorkspaceBase(), directoryName);
+async function createUniqueDirectory(basePath: string, baseDirectoryName: string) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const directoryName =
+      attempt === 0 ? baseDirectoryName : `${baseDirectoryName}-${attempt + 1}`;
+    const targetPath = path.join(basePath, directoryName);
 
-  await fs.promises.mkdir(targetPath, { recursive: true });
+    try {
+      await fs.promises.mkdir(targetPath);
+      return targetPath;
+    } catch (error) {
+      if (isFileExistsError(error)) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("无法创建默认工作目录。");
+}
+
+async function createAutoSessionWorkspace() {
+  const basePath = resolveDefaultWorkspaceBase();
+  const directoryName = `ranni-session-${formatWorkspaceTimestamp()}`;
+
+  await fs.promises.mkdir(basePath, { recursive: true });
+
+  const targetPath = await createUniqueDirectory(basePath, directoryName);
 
   const stats = await fs.promises.stat(targetPath);
 
@@ -179,6 +234,25 @@ async function createAutoSessionWorkspace(sessionId: string) {
   }
 
   return targetPath;
+}
+
+async function assertSessionWorkspaceDirectory(inputPath: string) {
+  const directoryPath = await assertDirectory(inputPath);
+  const basePath = resolveDefaultWorkspaceBase();
+  const [realBasePath, realDirectoryPath] = await Promise.all([
+    fs.promises.realpath(basePath),
+    fs.promises.realpath(directoryPath),
+  ]);
+
+  if (!isChildPath(realBasePath, realDirectoryPath)) {
+    throw new Error(`Session 工作目录必须位于 ${basePath} 下。`);
+  }
+
+  if (!path.basename(realDirectoryPath).startsWith("ranni-session-")) {
+    throw new Error("Session 工作目录必须是自动创建的 ranni-session-* 目录。");
+  }
+
+  return realDirectoryPath;
 }
 
 function getQueryPath(value: unknown) {
@@ -526,7 +600,7 @@ export function createServerApp() {
     response.json({
       hasApiKey: hasModelApiKey(),
       runtimeInfo: getModelRuntimeInfo(),
-      workspaceRoot: getWorkspaceRoot(),
+      workspaceRoot: resolveDefaultWorkspaceBase(),
     });
   });
 
@@ -535,6 +609,28 @@ export function createServerApp() {
       ok: true,
       result: {
         skills: listSkillIndices(),
+      },
+    });
+  });
+
+  app.get("/api/slides/templates", (_request, response) => {
+    response.json({
+      ok: true,
+      result: {
+        templates: listSlidesTemplates().map((template) => ({
+          compatibility: template.compatibility,
+          accentColor: template.accentColor,
+          default: template.default ?? false,
+          description: template.description,
+          fontPackages: template.fontPackages,
+          id: template.id,
+          layouts: template.layouts,
+          name: template.name,
+          preview: template.preview,
+          surfaceColor: template.surfaceColor,
+          tags: template.tags,
+          version: template.version,
+        })),
       },
     });
   });
@@ -572,7 +668,7 @@ export function createServerApp() {
     } catch (error) {
       response.status(400).json({
         error:
-          error instanceof Error ? error.message : "无法读取推荐目录。",
+          error instanceof Error ? error.message : "无法读取候选目录。",
         ok: false,
       });
     }
@@ -610,10 +706,8 @@ export function createServerApp() {
   });
 
   app.post("/api/workspaces/auto-create", async (request, response) => {
-    let payload: z.infer<typeof autoWorkspaceSchema>;
-
     try {
-      payload = autoWorkspaceSchema.parse(request.body);
+      autoWorkspaceSchema.parse(request.body);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "请求体格式不正确";
@@ -623,7 +717,7 @@ export function createServerApp() {
     }
 
     try {
-      const workspacePath = await createAutoSessionWorkspace(payload.sessionId);
+      const workspacePath = await createAutoSessionWorkspace();
 
       response.json({
         ok: true,
@@ -762,7 +856,7 @@ export function createServerApp() {
     }
 
     try {
-      workspacePath = await assertDirectory(payload.workspaceRoot);
+      workspacePath = await assertSessionWorkspaceDirectory(payload.workspaceRoot);
     } catch (error) {
       response.status(400).json({
         error:
@@ -825,6 +919,27 @@ export function createServerApp() {
     })();
   });
 
+  // Query 通道：前端 reconcile 的权威源。返回 session 下所有 run 的当前真实状态（基于 RunRegistry）。
+  app.get("/api/runs/status", (request, response) => {
+    const sessionId =
+      typeof request.query.sessionId === "string"
+        ? request.query.sessionId.trim()
+        : "";
+
+    if (!sessionId) {
+      response.status(400).json({ error: "sessionId 是必填参数。" });
+      return;
+    }
+
+    const runs = registry.listBySession(sessionId).map((handle) => ({
+      runId: handle.runId,
+      status: handle.status,
+      startedAt: handle.startedAt,
+    }));
+
+    response.json({ ok: true, result: { runs } });
+  });
+
   // Event 通道：SSE 单向下行广播。基于 lastSeq 回放 durable 事件 + 实时推送，支持断线续传。
   app.get("/api/events", (request, response) => {
     const streamKey =
@@ -877,7 +992,7 @@ export function createServerApp() {
         return;
       }
       try {
-        response.write(": heartbeat\n\n");
+        response.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
       } catch {
         // ignore
       }

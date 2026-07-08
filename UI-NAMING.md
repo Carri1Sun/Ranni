@@ -15,7 +15,7 @@
 - [导航栏](#导航栏)
 - [会话栏子结构](#会话栏子结构)
 - [消息流展示触发类型](#消息流展示触发类型)
-- [目录选择弹窗](#目录选择弹窗)
+- [Session 专属目录弹窗](#session-专属目录弹窗)
 - [任务上限弹窗](#任务上限弹窗)
 - [报告页](#报告页)
 - [运行详情页](#运行详情页)
@@ -76,6 +76,7 @@
 | 回到底部按钮 | Scroll To Bottom | 消息流未到底部时出现。 |
 | 底部输入区 | Composer | 已创建 session 的输入区。 |
 | 输入能力开关 | Composer Skill Toggle | 输入框内的临时能力开关，例如“幻灯片”；只影响下一次发送。 |
+| 研究校验开关 | Composer Research Guard Toggle | 输入框内的临时研究校验开关，启用后本次发送开启 research 信号校验与完整性打回；默认关闭。 |
 | 发送按钮 | Send Button | 提交当前输入。 |
 | 停止按钮 | Stop Button | 运行中替换发送按钮。 |
 
@@ -149,21 +150,18 @@
 | --- | --- | --- |
 | 新会话草稿 | New Session Draft | 尚未创建 session 的空白状态。 |
 | 草稿输入框 | Draft Composer | 草稿页中间的大输入框。 |
-| 草稿目录提示 | Draft Workspace Prompt | 草稿输入框下方的目录提示按钮。 |
-| 草稿目录选择 | Draft Workspace Picker | 草稿页打开的目录选择弹窗。 |
-| 默认执行目录 | Default Workspace | 未手动选择目录时，发送后自动创建的目录。 |
+| 草稿专属目录提示 | Draft Session Workspace Prompt | 草稿输入框下方的 session 专属目录提示。 |
+| 专属目录说明 | Session Workspace Info | 草稿页打开的专属目录规则说明。 |
+| Session 专属目录 | Session Workspace | 发送首条消息时自动创建的 session 专属执行目录。 |
 
-## 目录选择弹窗
+## Session 专属目录弹窗
 
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
-| 目录选择弹窗 | Workspace Picker Modal | 选择执行目录的弹窗。 |
-| 已添加目录 | Saved Directories | 用户已经添加过的目录。 |
-| 推荐目录 | Recommended Directories | 后端返回的推荐目录。 |
-| 添加项目按钮 | Add Directory Button | 打开系统目录选择器。 |
-| 目录卡片 | Directory Card | 一个可选目录。 |
-| 使用默认按钮 | Use Default Button | 草稿模式下清空手动目录，发送后自动创建默认目录。 |
-| 确定按钮 | Confirm Workspace Button | 确认当前选择；草稿模式下只设置目录。 |
+| 专属目录弹窗 | Session Workspace Modal | 说明 session 专属目录规则并支持自动创建。 |
+| 专属目录说明区 | Session Workspace Info Section | 说明 Documents 下的自动创建位置和执行边界。 |
+| 自动创建按钮 | Auto Create Session Workspace Button | 在 Documents 下创建 session 专属目录并进入新 session。 |
+| 查看目录规则按钮 | View Workspace Rule Button | 草稿空白态打开专属目录弹窗。 |
 
 ## 任务上限弹窗
 
@@ -223,7 +221,7 @@
 ## 推荐描述格式
 
 - 导航栏 / 历史 Session 列表 / Session 条目高亮有问题。
-- 草稿页 / 草稿目录提示 / 点击后复用目录选择弹窗。
+- 草稿页 / 草稿专属目录提示 / 展示发送后自动创建的 session 专属目录规则。
 - 运行状态栏 / 窄屏浮层 / 关闭后拉宽保持收起。
 - 运行状态栏 / 会话信息 / 导出 trace 按钮在草稿态隐藏。
 - 页面顶部栏 / 页面导航 / 切换 session 默认回到会话视图。

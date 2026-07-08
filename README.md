@@ -8,7 +8,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 
 - 多 session 对话，历史 session 保存在本机浏览器 localStorage。
 - 点击新建 session 会先进入空白草稿页，发送首条消息时才创建 session。
-- 草稿页可选择执行目录；不选择时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-<sessionId>` 下自动创建一个独立工作目录作为执行边界。
+- 发送首条消息时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-YYYY-MM-DD_HH-mm-ss` 下自动创建一个 session 专属目录作为执行边界；中间文件、运行产物和终端命令默认都在该目录内，同一秒内重复创建会追加数字后缀。
 - 左侧导航栏包含新建 session、历史 session 和底部设置入口。
 - 中间会话栏包含页面顶部栏、会话 / 报告 / 运行详情、输入区和草稿页状态，支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace、并行任务数量，并支持收起。
@@ -19,7 +19,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
-- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，可生成可编辑 native `.pptx`。
+- Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，使用受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
 - 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
@@ -118,8 +118,8 @@ VITE_API_BASE_URL=
 | `LLM_REASONING_EFFORT` | DeepSeek reasoning effort |
 | `LLM_PRESERVE_THINKING` | provider 是否保留 thinking |
 | `TAVILY_API_KEY` | 网页搜索能力所需 key |
-| `AGENT_WORKSPACE_ROOT` | 未传 session workspace 时的后备工作区 |
-| `RANNI_DEFAULT_WORKSPACE` | 不选择目录时自动创建 session 目录的根目录，默认 `~/Documents/Ranni-Workspace` |
+| `AGENT_WORKSPACE_ROOT` | 低层工具缺少 workspaceRoot 时的后备工作区；产品主路径不依赖它 |
+| `RANNI_DEFAULT_WORKSPACE` | 自动创建 session 专属目录的根目录，默认 `~/Documents/Ranni-Workspace` |
 | `BACKEND_HOST` | 后端监听地址，默认 `127.0.0.1` |
 | `BACKEND_PORT` | 后端端口，默认 `3001` |
 | `VITE_API_BASE_URL` | 前端 API 地址；为空时使用同源 `/api` |
@@ -137,12 +137,15 @@ npm run lint
 npm run build
 npm run start
 npm run assets:logo
+npm run slides:html-spike
 npm run research:eval -- --case agent-eval-landscape --label baseline
 npm run research:eval -- --suite high --label improved-v1 --repeats 3
 npm run research:eval -- --reanalyze v4-citation-guard-context
 npm run research:eval -- --judge-run v5-model-recovery-rag
 npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guard-context
 ```
+
+`slides:html-spike` 会从内置 prompt 生成受限 slide HTML，执行 Playwright 截图回退、`dom-to-pptx` 导出、PPTX XML 检查和 PPTX 逐页预览渲染；也可以通过 `-- --prompt "..."` 传入自定义 prompt。
 
 生产模式下，`npm run build` 会生成前端 `dist/client` 和后端构建产物，`npm run start` 由 Express 托管网页并提供 API。
 
@@ -157,14 +160,14 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 ## 后端 API
 
 - `GET /health`：健康检查。
-- `GET /api/runtime`：返回运行时信息、模型配置和默认 workspace。
+- `GET /api/runtime`：返回运行时信息、模型配置和默认 session 根目录。
 - `GET /api/skills`：返回本地动态 skill 索引。
-- `GET /api/workspaces/roots`：返回推荐执行目录。
+- `GET /api/workspaces/roots`：返回默认 session 根目录和本机目录候选，保留给调试/扩展入口。
 - `GET /api/workspaces/list`：读取目录下的子目录。
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
 - `POST /api/workspaces/pick`：调用系统文件夹选择器。
 - `POST /api/session/title`：根据首条消息异步生成 session 标题。
-- `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
+- `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），必须携带自动创建的 session 专属 `workspaceRoot`；服务端要求该目录位于默认 session 根目录下且名称为 `ranni-session-*`，立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
 - `GET /api/events`：Event 通道，SSE 单向下行广播三层事件（`streamKey`=session、`lastSeq` 续传）。
 - `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
 - `POST /api/runs/:runId/abort`：中断运行中的 run。
@@ -176,7 +179,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
 - `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis、judge rubric、claim audit、style judge、pairwise judge 和 comparison，已忽略。
-- `.ranni/`：每个 workspace 下的 agent durable task memory 和本地运行产物，例如 slides deck workspace，已忽略。
+- `.ranni/`：每个 session 专属目录下的 agent durable task memory 和本地运行产物，例如 slides deck 产物目录，已忽略。
 - `dist/`：构建产物，已忽略。
 
 需要长期保存的资料应整理到 `docs/` 或其他受版本控制的目录。

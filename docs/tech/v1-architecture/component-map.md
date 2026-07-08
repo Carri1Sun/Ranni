@@ -16,10 +16,10 @@ date: 2026-07-06
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
 | `lib/` | Agent loop、事件总线、运行注册表、EventMapper、工具、模型适配、trace、workspace、task memory |
-| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo` |
+| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo`；`slides` 包含 HTML-to-PPTX 工具 |
 | `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
-| `scripts/` | 维护脚本，例如 logo 资产生成、research eval |
+| `scripts/` | 维护脚本，例如 logo 资产生成、research eval、slides HTML-to-PPTX spike runner |
 
 ## 根目录文件
 
@@ -261,6 +261,16 @@ Research notebook 运行期记录。
 - 支持最终产物 judge：`--judge-run <run>`、`--judge-pair <a> <b>`、`--judge`。
 - 输出 `judge-rubric.json`、`judge-rubric.md`、`claim-audit.md`、`style-judge.json`、`style-judge.md` 和 pairwise judge 文件。
 
+### `scripts/slides-html-pptx-spike.ts`
+
+本地 HTML-to-PPTX spike runner。
+
+主要职责：
+
+- 创建或复用 `ranni-session-html-pptx-spike` session workspace。
+- 顺序调用 `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export`。
+- 生成 8 页受限 slide HTML 示例、局部截图回退资产、HTML 预览、PPTX 预览状态、`measurements.json`、`qa-report.json` 和最终 `.pptx`。
+
 ### `lib/trace.ts`
 
 Trace 类型定义。
@@ -283,6 +293,64 @@ Workspace 边界工具。
 - 规范化 `activeSkills`，过滤不存在的 skill。
 
 `resolveWorkspacePath` 保证文件工具只能访问当前 workspace 内的路径。
+
+### `skills/slides/tools.ts`
+
+slides skill 专属工具。
+
+主要职责：
+
+- `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export` 提供 HTML-to-PPTX 路线的工具入口。
+- 保留 zod schema、workspace resolver、模板初始化和 `.mjs` 脚本调度。
+- 所有工具输入输出通过 workspace resolver 解析。
+
+### `skills/slides/scripts/html-pptx/`
+
+HTML-to-PPTX 脚本实现目录。
+
+主要职责：
+
+- 用 Playwright 渲染、测量和截图回退。
+- 用 `dom-to-pptx` 导出有限可编辑 PPTX。
+- 用 LibreOffice、Poppler、JSZip、pixelmatch 和 pngjs 执行预览、结构检查和客观视觉 smoke check。
+
+### `lib/slides/templates.ts`
+
+slides 模板 registry。
+
+主要职责：
+
+- 扫描 `skills/slides/templates/*/manifest.json`。
+- 为后端接口、agent system prompt 和 slides 工具提供模板元信息。
+- 读取模板 `guidance.md`，让 agent 在幻灯片创作时遵守选中模板。
+
+### `skills/slides/templates/default-business/`
+
+默认 HTML-to-PPTX 模板包。
+
+主要职责：
+
+- 提供真实 `deck.html`、`styles.css`、`manifest.json`、`tokens.json`、`guidance.md` 和本地 SVG 资产。
+- 覆盖封面、目录、文本、双栏图文、数据表格、复杂图表截图回退、时间线和总结页。
+- 遵守 slides skill 设计指南中的画布、排版、留白、低圆角、静态输出和 PPTX 兼容性规则。
+
+### `src/server/app.ts` slides templates API
+
+slides 模板列表接口。
+
+主要职责：
+
+- `GET /api/slides/templates` 返回可选模板元信息。
+- `POST /api/runs` 接收 `toolSettings.slides.templateId` 并传给 agent。
+
+### `docs/tech/v2-architecture/slides-skill-design/`
+
+slides skill 设计规范目录。
+
+主要职责：
+
+- 保存 HTML-to-PPTX agent 创作时必须遵守的审美、布局、排版和兼容性准则。
+- 为 `SKILL.md` 和 HTML-to-PPTX QA 检查提供规则来源。
 
 ## 模型 Provider
 

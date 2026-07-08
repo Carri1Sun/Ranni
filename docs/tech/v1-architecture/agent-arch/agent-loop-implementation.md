@@ -30,7 +30,7 @@ date: 2026-05-04
 
 - `lib/task-state.ts`
 
-`TaskState` 是一次 agent run 内部维护的任务状态。它不是聊天消息，也不是用户可编辑配置，而是 agent loop 用来保持工作记忆的结构化状态。
+`TaskState` 是一次 agent run 内部维护的结构化任务状态，用来保持工作记忆，独立于聊天消息和用户可编辑配置。
 
 主要字段：
 
@@ -104,7 +104,7 @@ next_action: 搜索相关文件和入口
 
 - `lib/task-memory.ts`
 
-每次 agent run 会在 session 选择的 workspace 下创建：
+每次 agent run 会在 session 专属 workspace 下创建：
 
 ```text
 .ranni/runs/<runId>/
@@ -145,7 +145,7 @@ next_action: 搜索相关文件和入口
 - `record_task_evidence`
 - `save_task_checkpoint`
 
-这些工具不是普通业务工具，而是让 agent 显式维护任务现场的 action。
+这些工具用于让 agent 显式维护任务现场，属于 loop 内部的状态 action。
 
 ### 5. 自动状态更新
 
@@ -240,7 +240,7 @@ Research finalization guard 关注“是否过早结束研究过程”，researc
 - `lib/agent.ts`
 - `lib/llm/providers/openai-compatible.ts`
 
-长程 research 的另一个故障模式是：搜索、正文抓取、evidence 和 coverage 都已经完成，但最终综合阶段的模型请求失败，例如 provider 返回 `terminated`。这不是用户取消，也不是来源失败，不能直接丢失整轮研究。
+长程 research 的另一个故障模式是：搜索、正文抓取、evidence 和 coverage 都已经完成，但最终综合阶段的模型请求失败，例如 provider 返回 `terminated`。这类失败发生在最终综合阶段，不能直接丢失整轮研究。
 
 当前处理：
 

@@ -1,660 +1,759 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import pptxgen from "pptxgenjs";
 import { z } from "zod";
 
 import type { ToolDefinition, ToolExecutionContext } from "../../lib/tools";
-import { resolveWorkspacePath, toWorkspaceRelative } from "../../lib/workspace";
+import {
+  findSlidesTemplate,
+  getDefaultSlidesTemplateId,
+  getSlidesTemplateDirectory,
+} from "../../lib/slides/templates";
+import {
+  getWorkspaceRoot,
+  resolveWorkspacePath,
+  toWorkspaceRelative,
+} from "../../lib/workspace";
 
-type Theme = {
-  aspect: "16:9" | "4:3";
-  bodySize: number;
-  captionSize: number;
-  colors: {
-    accent: string;
-    accentSoft: string;
-    background: string;
-    body: string;
-    muted: string;
-    sectionBackground: string;
-    sectionTitle: string;
-    title: string;
-  };
-  fontFace: string;
-  gap: number;
-  margins: {
-    x: number;
-    y: number;
-  };
-  name: string;
-  titleSize: number;
-};
-
-type Box = {
-  h: number;
-  w: number;
-  x: number;
-  y: number;
-};
-
-type TextBox = Box & {
-  align?: "center" | "left";
-  bold?: boolean;
-  color?: string;
-  fontSize?: number;
-  valign?: "middle" | "top";
-};
-
-type LayoutSlots = {
-  body?: TextBox;
-  image?: Box;
-  left?: TextBox;
-  right?: TextBox;
-  title?: TextBox;
-};
-
-const layoutSchema = z
-  .enum(["title", "title-bullets", "title-content", "two-col", "section", "blank"])
-  .default("title-bullets");
-
-const bulletSchema = z.union([
-  z.string(),
-  z.object({
-    level: z.number().int().min(0).max(3).default(0),
-    text: z.string().min(1),
-  }),
-]);
-
-const chartSeriesSchema = z.object({
-  labels: z.array(z.string()).min(1),
-  name: z.string().min(1),
-  values: z.array(z.number()).min(1),
+const initSlideHtmlWorkspaceSchema = z.object({
+  deckSlug: z.string().min(1),
+  dir: z.string().min(1).optional(),
+  overwrite: z.boolean().default(false),
+  prompt: z.string().min(1).optional(),
+  template: z.enum(["blank", "spike-sample"]).default("blank"),
+  templateId: z.string().min(1).optional(),
+  title: z.string().min(1).default("HTML to PPTX spike"),
 });
 
-const generatePptxSchema = z.object({
-  aspect: z.enum(["16:9", "4:3"]).default("16:9"),
-  outputPath: z.string().min(1),
-  slides: z
-    .array(
-      z.object({
-        bullets: z.array(bulletSchema).optional(),
-        chart: z
-          .object({
-            data: z.array(chartSeriesSchema).min(1),
-            title: z.string().optional(),
-            type: z.enum(["bar", "line", "pie"]),
-          })
-          .optional(),
-        image: z
-          .object({
-            path: z.string().min(1),
-            placement: z.enum(["fit", "fill"]).default("fit"),
-          })
-          .optional(),
-        layout: layoutSchema,
-        notes: z.string().optional(),
-        subtitle: z.string().optional(),
-        title: z.string().default(""),
-      }),
-    )
-    .min(1),
-  theme: z.string().default("default"),
+const prepareSlideHtmlForPptxSchema = z.object({
+  fallbackAssetsDir: z.string().min(1).optional(),
+  html: z.string().min(1),
+  measurementsPath: z.string().min(1).optional(),
+  outHtml: z.string().min(1).optional(),
+  slideSelector: z.string().min(1).default(".slide"),
 });
 
-const initDeckSchema = z.object({
-  audience: z.string().optional(),
-  delivery: z.enum(["self-read", "speaker-led", "forward"]).default("self-read"),
-  dir: z.string().min(1),
-  title: z.string().min(1),
+const exportHtmlToPptxSchema = z.object({
+  author: z.string().default("Ranni"),
+  html: z.string().min(1),
+  outPptx: z.string().min(1),
+  slideSelector: z.string().min(1).default(".slide"),
+  title: z.string().default("HTML to PPTX spike"),
 });
 
-const SKILL_DIR = __dirname;
+const validateHtmlPptxExportSchema = z.object({
+  html: z.string().min(1),
+  measurementsPath: z.string().min(1).optional(),
+  pptx: z.string().min(1),
+  preparedHtml: z.string().min(1).optional(),
+  qaReportPath: z.string().min(1).optional(),
+  slideSelector: z.string().min(1).default(".slide"),
+});
 
-function canvasSize(aspect: "16:9" | "4:3") {
-  return aspect === "4:3" ? { h: 7.5, w: 10 } : { h: 7.5, w: 13.333 };
-}
-
-async function loadTheme(name: string): Promise<Theme> {
-  const filePath = path.join(SKILL_DIR, "templates", `${name}.theme.json`);
-  const raw = await fs.readFile(filePath, "utf8");
-
-  return JSON.parse(raw) as Theme;
-}
-
-function resolveLayout(
-  layout: z.infer<typeof layoutSchema>,
-  theme: Theme,
-  aspect: "16:9" | "4:3",
-): LayoutSlots {
-  const { h: slideH, w: slideW } = canvasSize(aspect);
-  const marginX = theme.margins.x;
-  const marginY = theme.margins.y;
-  const contentW = slideW - marginX * 2;
-  const title: TextBox = {
-    x: marginX,
-    y: marginY,
-    w: contentW,
-    h: 0.8,
-    bold: true,
-    color: theme.colors.title,
-    fontSize: theme.titleSize,
-  };
-  const body: TextBox = {
-    x: marginX,
-    y: marginY + 1.1,
-    w: contentW,
-    h: slideH - marginY * 2 - 1.1,
-    color: theme.colors.body,
-    fontSize: theme.bodySize,
-  };
-
-  if (layout === "blank") {
-    return {};
-  }
-
-  if (layout === "title") {
-    return {
-      title: {
-        x: marginX,
-        y: slideH * 0.35,
-        w: contentW,
-        h: 1.1,
-        align: "center",
-        bold: true,
-        color: theme.colors.title,
-        fontSize: theme.titleSize + 8,
-        valign: "middle",
-      },
-      body: {
-        x: marginX + contentW * 0.14,
-        y: slideH * 0.52,
-        w: contentW * 0.72,
-        h: 1,
-        align: "center",
-        color: theme.colors.muted,
-        fontSize: theme.bodySize + 2,
-      },
-    };
-  }
-
-  if (layout === "section") {
-    return {
-      title: {
-        x: marginX,
-        y: slideH * 0.38,
-        w: contentW,
-        h: 1,
-        align: "center",
-        bold: true,
-        color: theme.colors.sectionTitle,
-        fontSize: theme.titleSize + 4,
-        valign: "middle",
-      },
-      body: {
-        x: marginX + contentW * 0.18,
-        y: slideH * 0.54,
-        w: contentW * 0.64,
-        h: 0.9,
-        align: "center",
-        color: theme.colors.accentSoft,
-        fontSize: theme.bodySize,
-      },
-    };
-  }
-
-  if (layout === "title-content") {
-    return {
-      title,
-      body: {
-        ...body,
-        fontSize: theme.bodySize + 2,
-      },
-      image: {
-        x: marginX,
-        y: marginY + 1.15,
-        w: contentW,
-        h: slideH - marginY * 2 - 1.2,
-      },
-    };
-  }
-
-  if (layout === "two-col") {
-    const colW = (contentW - theme.gap) / 2;
-
-    return {
-      title,
-      left: {
-        x: marginX,
-        y: marginY + 1.15,
-        w: colW,
-        h: slideH - marginY * 2 - 1.2,
-        color: theme.colors.body,
-        fontSize: theme.bodySize,
-      },
-      right: {
-        x: marginX + colW + theme.gap,
-        y: marginY + 1.15,
-        w: colW,
-        h: slideH - marginY * 2 - 1.2,
-        color: theme.colors.body,
-        fontSize: theme.bodySize,
-      },
-      image: {
-        x: marginX + colW + theme.gap,
-        y: marginY + 1.15,
-        w: colW,
-        h: slideH - marginY * 2 - 1.2,
-      },
-    };
-  }
-
-  return {
-    title,
-    body,
-  };
-}
-
-function toTextOptions(box: TextBox, theme: Theme): pptxgen.TextPropsOptions {
-  return {
-    x: box.x,
-    y: box.y,
-    w: box.w,
-    h: box.h,
-    align: box.align,
-    bold: box.bold,
-    breakLine: false,
-    color: box.color ?? theme.colors.body,
-    fit: "shrink",
-    fontFace: theme.fontFace,
-    fontSize: box.fontSize,
-    margin: 0.06,
-    valign: box.valign,
-  };
-}
-
-function normalizeBullets(bullets: z.infer<typeof bulletSchema>[]) {
-  return bullets.map((bullet) =>
-    typeof bullet === "string"
-      ? {
-          text: bullet,
-          options: {
-            bullet: { indent: 14 },
-            hanging: 4,
-          },
-        }
-      : {
-          text: bullet.text,
-          options: {
-            bullet: { indent: 14 + bullet.level * 14 },
-            hanging: 4,
-            indentLevel: bullet.level,
-          },
-        },
+function sanitizePathSegment(value: string) {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "deck"
   );
 }
 
-function splitBulletsForColumns(bullets: z.infer<typeof bulletSchema>[]) {
-  const midpoint = Math.ceil(bullets.length / 2);
-
-  return [bullets.slice(0, midpoint), bullets.slice(midpoint)] as const;
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-function chartType(type: "bar" | "line" | "pie") {
-  return type;
+function summarizePrompt(value: string | undefined, fallback: string) {
+  const normalized = (value?.trim() || fallback).replace(/\s+/g, " ");
+
+  return normalized.length > 68 ? `${normalized.slice(0, 65)}...` : normalized;
 }
 
-function addBullets(
-  slide: pptxgen.Slide,
-  bullets: z.infer<typeof bulletSchema>[] | undefined,
-  box: TextBox | undefined,
-  theme: Theme,
+function resolveDefaultWorkspaceOutput(
+  defaultAbsolutePath: string,
+  inputPath: string | undefined,
+  workspaceRoot: string,
 ) {
-  if (!bullets?.length || !box) {
-    return;
+  if (inputPath) {
+    return resolveWorkspacePath(inputPath, workspaceRoot);
   }
 
-  slide.addText(normalizeBullets(bullets), {
-    ...toTextOptions(box, theme),
-    breakLine: true,
-    fit: "shrink",
-  });
+  return resolveWorkspacePath(
+    toWorkspaceRelative(defaultAbsolutePath, workspaceRoot),
+    workspaceRoot,
+  );
 }
 
-function addImage(
-  slide: pptxgen.Slide,
-  image: { path: string; placement: "fit" | "fill" },
-  box: Box,
-  context: ToolExecutionContext,
-) {
-  const imagePath = resolveWorkspacePath(image.path, context.workspaceRoot);
-
-  slide.addImage({
-    path: imagePath,
-    x: box.x,
-    y: box.y,
-    w: box.w,
-    h: box.h,
-    sizing: {
-      type: image.placement === "fill" ? "crop" : "contain",
-      x: box.x,
-      y: box.y,
-      w: box.w,
-      h: box.h,
-    },
-  });
+async function fileExists(filePath: string) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-async function generatePptx(
-  rawArgs: unknown,
-  context: ToolExecutionContext,
+async function writeFileIfAllowed(
+  filePath: string,
+  content: Buffer | string,
+  overwrite: boolean,
 ) {
-  const args = generatePptxSchema.parse(rawArgs);
-  const theme = await loadTheme(args.theme);
-  const pres = new pptxgen();
+  if (!overwrite && (await fileExists(filePath))) {
+    return false;
+  }
 
-  pres.author = "Ranni";
-  pres.company = "Ranni";
-  pres.subject = "Generated editable presentation";
-  pres.layout = args.aspect === "4:3" ? "LAYOUT_4X3" : "LAYOUT_WIDE";
-  pres.theme = {
-    headFontFace: theme.fontFace,
-    bodyFontFace: theme.fontFace,
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content);
+
+  return true;
+}
+
+function createBlankSlideHtmlTemplate(title: string, prompt?: string) {
+  const safeTitle = escapeHtml(title);
+  const safePrompt = escapeHtml(
+    summarizePrompt(prompt, "在这里放置受限 slide HTML 内容。"),
+  );
+
+  return {
+    css: [
+      "html, body { margin: 0; padding: 0; background: #eef2f7; overflow: hidden; }",
+      "body { font-family: Inter, Arial, 'PingFang SC', sans-serif; color: #172033; }",
+      "*, *::before, *::after { box-sizing: border-box; }",
+      ".deck { width: 1280px; }",
+      ".slide { position: relative; width: 1280px; height: 720px; overflow: hidden; background: #ffffff; padding: 80px 92px 0; }",
+      ".slide-title { position: relative; z-index: 10; width: 920px; margin: 0 0 34px; color: #172033; font-size: 64px; line-height: 1.08; letter-spacing: 0; }",
+      ".slide-copy { position: relative; z-index: 10; width: 720px; margin: 0; color: #41516a; font-size: 20px; line-height: 1.55; }",
+    ].join("\n"),
+    html: [
+      "<!doctype html>",
+      '<html lang="zh-CN">',
+      "<head>",
+      '  <meta charset="utf-8" />',
+      '  <meta name="viewport" content="width=1280, initial-scale=1" />',
+      `  <title>${safeTitle}</title>`,
+      '  <link rel="stylesheet" href="./styles.css" />',
+      "</head>",
+      "<body>",
+      '  <main class="deck" data-pptx-deck>',
+      '    <section class="slide" data-slide-id="cover">',
+      `      <h1 class="slide-title" data-pptx-editable>${safeTitle}</h1>`,
+      `      <p class="slide-copy" data-pptx-editable>${safePrompt}</p>`,
+      "    </section>",
+      "  </main>",
+      "</body>",
+      "</html>",
+    ].join("\n"),
   };
+}
 
-  for (const spec of args.slides) {
-    const slots = resolveLayout(spec.layout, theme, args.aspect);
-    const slide = pres.addSlide();
+function resolveSkillPath(...segments: string[]) {
+  const sourceCandidate = path.resolve(process.cwd(), "skills", "slides", ...segments);
+  const localCandidate = path.resolve(__dirname, ...segments);
 
-    slide.background = {
-      color:
-        spec.layout === "section"
-          ? theme.colors.sectionBackground
-          : theme.colors.background,
+  return fileExists(sourceCandidate).then((exists) =>
+    exists ? sourceCandidate : localCandidate,
+  );
+}
+
+type CopyResult = {
+  skippedFiles: string[];
+  writtenFiles: string[];
+};
+
+async function copyTemplateDirectory(
+  fromDirectory: string,
+  toDirectory: string,
+  workspaceRoot: string,
+  overwrite: boolean,
+  replacements: Record<string, string>,
+): Promise<CopyResult> {
+  const writtenFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const entries = await fs.readdir(fromDirectory, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(fromDirectory, entry.name);
+    const targetPath = path.join(toDirectory, entry.name);
+
+    if (entry.isDirectory()) {
+      const nested = await copyTemplateDirectory(
+        sourcePath,
+        targetPath,
+        workspaceRoot,
+        overwrite,
+        replacements,
+      );
+
+      writtenFiles.push(...nested.writtenFiles);
+      skippedFiles.push(...nested.skippedFiles);
+      continue;
+    }
+
+    const extension = path.extname(entry.name).toLowerCase();
+    const isTextFile = [".css", ".html", ".js", ".json", ".md", ".svg", ".txt"].includes(extension);
+    const sourceContent = await fs.readFile(sourcePath);
+    const content = isTextFile
+      ? Object.entries(replacements).reduce(
+          (current, [token, value]) => current.replaceAll(token, value),
+          sourceContent.toString("utf8"),
+        )
+      : sourceContent;
+    const didWrite = await writeFileIfAllowed(targetPath, content, overwrite);
+
+    if (didWrite) {
+      writtenFiles.push(toWorkspaceRelative(targetPath, workspaceRoot));
+    } else {
+      skippedFiles.push(toWorkspaceRelative(targetPath, workspaceRoot));
+    }
+  }
+
+  return { skippedFiles, writtenFiles };
+}
+
+async function writeBlankTemplate(
+  baseAbsolutePath: string,
+  workspaceRoot: string,
+  overwrite: boolean,
+  title: string,
+  prompt: string | undefined,
+): Promise<CopyResult> {
+  const template = createBlankSlideHtmlTemplate(title, prompt);
+  const targets = [
+    {
+      content: template.html,
+      path: path.join(baseAbsolutePath, "deck.html"),
+    },
+    {
+      content: template.css,
+      path: path.join(baseAbsolutePath, "styles.css"),
+    },
+  ];
+  const writtenFiles: string[] = [];
+  const skippedFiles: string[] = [];
+
+  for (const target of targets) {
+    const didWrite = await writeFileIfAllowed(target.path, target.content, overwrite);
+
+    if (didWrite) {
+      writtenFiles.push(toWorkspaceRelative(target.path, workspaceRoot));
+    } else {
+      skippedFiles.push(toWorkspaceRelative(target.path, workspaceRoot));
+    }
+  }
+
+  return { skippedFiles, writtenFiles };
+}
+
+async function runHtmlPptxScript(
+  scriptName: "export" | "prepare" | "validate",
+  input: Record<string, unknown>,
+  workspaceRoot: string,
+  signal: AbortSignal | undefined,
+) {
+  const scriptPath = await resolveSkillPath("scripts", "html-pptx", `${scriptName}.mjs`);
+
+  if (!(await fileExists(scriptPath))) {
+    throw new Error(`未找到 HTML-to-PPTX 脚本：${scriptPath}`);
+  }
+
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const child = spawn(process.execPath, [scriptPath], {
+      cwd: workspaceRoot,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`HTML-to-PPTX 脚本超时：${scriptName}`));
+    }, 300000);
+    const abortHandler = () => {
+      child.kill("SIGTERM");
+      reject(new Error(`HTML-to-PPTX 脚本已取消：${scriptName}`));
     };
 
-    if (spec.title && slots.title) {
-      slide.addText(spec.title, toTextOptions(slots.title, theme));
+    if (signal?.aborted) {
+      abortHandler();
+      return;
     }
 
-    if (spec.subtitle && slots.body && spec.layout === "title") {
-      slide.addText(spec.subtitle, toTextOptions(slots.body, theme));
-    }
+    signal?.addEventListener("abort", abortHandler, { once: true });
 
-    if (spec.layout === "two-col" && spec.bullets?.length) {
-      const [leftBullets, rightBullets] = splitBulletsForColumns(spec.bullets);
-      addBullets(slide, leftBullets, slots.left, theme);
-      addBullets(slide, rightBullets, slots.right, theme);
-    } else {
-      addBullets(slide, spec.bullets, slots.body, theme);
-    }
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortHandler);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortHandler);
 
-    if (spec.image) {
-      addImage(slide, spec.image, slots.image ?? slots.body ?? slots.left ?? slots.title!, context);
-    }
+      if (code !== 0) {
+        reject(
+          new Error(
+            [
+              `HTML-to-PPTX 脚本失败：${scriptName}`,
+              stderr.trim(),
+              stdout.trim(),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          ),
+        );
+        return;
+      }
 
-    if (spec.chart) {
-      const chartBox = slots.image ?? slots.right ?? slots.body ?? {
-        x: 1,
-        y: 1.6,
-        w: 6,
-        h: 4,
-      };
+      const jsonLine = stdout
+        .trim()
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .at(-1);
 
-      slide.addChart(chartType(spec.chart.type), spec.chart.data, {
-        x: chartBox.x,
-        y: chartBox.y,
-        w: chartBox.w,
-        h: chartBox.h,
-        showLegend: spec.chart.type !== "pie",
-        showTitle: Boolean(spec.chart.title),
-        title: spec.chart.title,
-        valAxisLabelFontFace: theme.fontFace,
-        catAxisLabelFontFace: theme.fontFace,
-      });
-    }
+      if (!jsonLine) {
+        reject(new Error(`HTML-to-PPTX 脚本没有返回 JSON：${scriptName}`));
+        return;
+      }
 
-    if (spec.notes) {
-      slide.addNotes(spec.notes);
-    }
-  }
-
-  const outputPath = args.outputPath.endsWith(".pptx")
-    ? args.outputPath
-    : `${args.outputPath}.pptx`;
-  const outputAbsolutePath = resolveWorkspacePath(outputPath, context.workspaceRoot);
-
-  await fs.mkdir(path.dirname(outputAbsolutePath), { recursive: true });
-  await pres.writeFile({ fileName: outputAbsolutePath });
-
-  return [
-    "已生成可编辑 native PPTX。",
-    `路径：${toWorkspaceRelative(outputAbsolutePath, context.workspaceRoot)}`,
-    `页数：${args.slides.length}`,
-    "可编辑性：标题和正文使用 PowerPoint 文本对象，简单图表使用 native chart。",
-  ].join("\n");
+      try {
+        resolve(JSON.parse(jsonLine) as Record<string, unknown>);
+      } catch (error) {
+        reject(
+          new Error(
+            `HTML-to-PPTX 脚本返回 JSON 解析失败：${scriptName}\n${jsonLine}\n${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+    });
+    child.stdin.end(`${JSON.stringify(input)}\n`);
+  });
 }
 
-async function initDeckWorkspace(
+async function initSlideHtmlWorkspace(
   rawArgs: unknown,
   context: ToolExecutionContext,
 ) {
-  const args = initDeckSchema.parse(rawArgs);
-  const baseAbsolutePath = resolveWorkspacePath(args.dir, context.workspaceRoot);
-
-  for (const subDirectory of [
+  const args = initSlideHtmlWorkspaceSchema.parse(rawArgs);
+  const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
+  const deckSlug = sanitizePathSegment(args.deckSlug);
+  const baseRelativePath = args.dir ?? deckSlug;
+  const baseAbsolutePath = resolveWorkspacePath(baseRelativePath, workspaceRoot);
+  const subDirectories = [
     "assets",
+    "fallback-assets",
+    "preview-html",
+    "preview-pptx",
     "final",
-    "preview",
-    "validation",
-    "validation/package_preflight",
-    "validation/structure_precheck",
-    "validation/render_review",
-  ]) {
+  ];
+
+  for (const subDirectory of subDirectories) {
     await fs.mkdir(path.join(baseAbsolutePath, subDirectory), {
       recursive: true,
     });
   }
 
-  const brief = [
-    "---",
-    `title: ${JSON.stringify(args.title)}`,
-    `audience: ${JSON.stringify(args.audience ?? "")}`,
-    `delivery: ${args.delivery}`,
-    "editability: editable",
-    "aspect: \"16:9\"",
-    "theme: default",
-    "---",
-    "",
-    "# Deck Brief",
-    "",
-    "- 目标读者：",
-    "- 使用场景：",
-    "- 目标动作：",
-    "- 视觉方向：",
-    "- 信息密度：",
-  ].join("\n");
-  const narrative = [
-    `# ${args.title}`,
-    "",
-    "## 顶层叙事",
-    "",
-    "- 开场：",
-    "- 论证：",
-    "- 结论：",
-    "",
-    "## 每页任务",
-    "",
-    "在这里记录 reader_question、page_task、key_message 和资产路由。",
-  ].join("\n");
-  const slideSpecs = [
-    "# P0 slide specs",
-    "# slides:",
-    "#   - layout: title-bullets",
-    "#     title: 示例标题",
-    "#     bullets:",
-    "#       - 示例要点",
-    "slides: []",
-  ].join("\n");
+  const htmlPath = path.join(baseAbsolutePath, "deck.html");
+  const preparedHtmlPath = path.join(baseAbsolutePath, "deck.prepared.html");
+  const cssPath = path.join(baseAbsolutePath, "styles.css");
+  const measurementsPath = path.join(baseAbsolutePath, "measurements.json");
+  const qaReportPath = path.join(baseAbsolutePath, "qa-report.json");
+  const finalPptxPath = path.join(baseAbsolutePath, "final", `${deckSlug}.pptx`);
+  const selectedTemplateId =
+    args.templateId?.trim() || context.toolSettings?.slides?.templateId?.trim();
+  const templateId =
+    selectedTemplateId ||
+    (args.template === "spike-sample" ? getDefaultSlidesTemplateId() : "");
+  const selectedTemplate = templateId ? findSlidesTemplate(templateId) : undefined;
 
-  await fs.writeFile(path.join(baseAbsolutePath, "brief.md"), brief, "utf8");
-  await fs.writeFile(
-    path.join(baseAbsolutePath, "deck_narrative.md"),
-    narrative,
-    "utf8",
+  if (templateId && !selectedTemplate) {
+    throw new Error(`未找到 slides 模板：${templateId}`);
+  }
+
+  const safeTitle = escapeHtml(args.title);
+  const safePrompt = escapeHtml(
+    summarizePrompt(
+      args.prompt,
+      "验证受限 slide HTML、dom-to-pptx 和局部截图回退的组合边界。",
+    ),
   );
-  await fs.writeFile(
-    path.join(baseAbsolutePath, "slide_specs.yaml"),
-    slideSpecs,
-    "utf8",
+  const templateResult =
+    selectedTemplate
+      ? await copyTemplateDirectory(
+          getSlidesTemplateDirectory(selectedTemplate.id),
+          baseAbsolutePath,
+          workspaceRoot,
+          args.overwrite,
+          {
+            "{{PROMPT}}": safePrompt,
+            "{{TEMPLATE_ID}}": selectedTemplate.id,
+            "{{TEMPLATE_NAME}}": escapeHtml(selectedTemplate.name),
+            "{{TITLE}}": safeTitle,
+          },
+        )
+      : await writeBlankTemplate(
+          baseAbsolutePath,
+          workspaceRoot,
+          args.overwrite,
+          args.title,
+          args.prompt,
+        );
+  const writtenFiles = [...templateResult.writtenFiles];
+  const skippedFiles = [...templateResult.skippedFiles];
+  const trackWrite = async (filePath: string, content: string) => {
+    const didWrite = await writeFileIfAllowed(filePath, content, args.overwrite);
+    const target = didWrite ? writtenFiles : skippedFiles;
+
+    target.push(toWorkspaceRelative(filePath, workspaceRoot));
+  };
+
+  if (args.prompt) {
+    await trackWrite(path.join(baseAbsolutePath, "prompt.txt"), `${args.prompt}\n`);
+    await trackWrite(
+      path.join(baseAbsolutePath, "html-generation-report.json"),
+      `${JSON.stringify(
+        {
+          deckSlug,
+          prompt: args.prompt,
+          route: "restricted-slide-html",
+          template: args.template,
+          templateId: selectedTemplate?.id ?? "blank",
+          templateName: selectedTemplate?.name ?? "Blank",
+          templateVersion: selectedTemplate?.version ?? "local",
+          title: args.title,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
+  return [
+    "已初始化 slide HTML workspace。",
+    `目录：${toWorkspaceRelative(baseAbsolutePath, workspaceRoot)}`,
+    `HTML：${toWorkspaceRelative(htmlPath, workspaceRoot)}`,
+    `CSS：${toWorkspaceRelative(cssPath, workspaceRoot)}`,
+    `Prepared HTML：${toWorkspaceRelative(preparedHtmlPath, workspaceRoot)}`,
+    `measurements：${toWorkspaceRelative(measurementsPath, workspaceRoot)}`,
+    `QA：${toWorkspaceRelative(qaReportPath, workspaceRoot)}`,
+    `最终 PPTX：${toWorkspaceRelative(finalPptxPath, workspaceRoot)}`,
+    `模板：${selectedTemplate ? `${selectedTemplate.name} (${selectedTemplate.id})` : "Blank"}`,
+    writtenFiles.length ? `写入：${writtenFiles.join(", ")}` : "写入：无",
+    skippedFiles.length
+      ? `跳过已有文件：${skippedFiles.join(", ")}`
+      : "跳过已有文件：无",
+  ].join("\n");
+}
+
+async function prepareSlideHtmlForPptx(
+  rawArgs: unknown,
+  context: ToolExecutionContext,
+) {
+  const args = prepareSlideHtmlForPptxSchema.parse(rawArgs);
+  const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
+  const htmlAbsolutePath = resolveWorkspacePath(args.html, workspaceRoot);
+  const htmlDirectory = path.dirname(htmlAbsolutePath);
+  const outHtmlAbsolutePath = resolveDefaultWorkspaceOutput(
+    path.join(htmlDirectory, "deck.prepared.html"),
+    args.outHtml,
+    workspaceRoot,
+  );
+  const fallbackAssetsDirectory = resolveDefaultWorkspaceOutput(
+    path.join(htmlDirectory, "fallback-assets"),
+    args.fallbackAssetsDir,
+    workspaceRoot,
+  );
+  const measurementsAbsolutePath = resolveDefaultWorkspaceOutput(
+    path.join(htmlDirectory, "measurements.json"),
+    args.measurementsPath,
+    workspaceRoot,
+  );
+  const result = await runHtmlPptxScript(
+    "prepare",
+    {
+      fallbackAssetsDirectory,
+      htmlAbsolutePath,
+      measurementsAbsolutePath,
+      outHtmlAbsolutePath,
+      slideSelector: args.slideSelector,
+      workspaceRoot,
+    },
+    workspaceRoot,
+    context.signal,
   );
 
   return [
-    "已初始化 deck workspace。",
-    `目录：${toWorkspaceRelative(baseAbsolutePath, context.workspaceRoot)}`,
-    "包含：brief.md / deck_narrative.md / slide_specs.yaml / assets/ / final/ / preview/ / validation/",
+    "已准备 HTML-to-PPTX 输入。",
+    `Prepared HTML：${String(result.outHtml ?? toWorkspaceRelative(outHtmlAbsolutePath, workspaceRoot))}`,
+    `measurements：${String(result.measurementsPath ?? toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot))}`,
+    `截图回退：${Number(result.rasterFallbacks ?? 0)}`,
+    `warning：${Number(result.warnings ?? 0)}`,
+  ].join("\n");
+}
+
+async function exportHtmlToPptx(
+  rawArgs: unknown,
+  context: ToolExecutionContext,
+) {
+  const args = exportHtmlToPptxSchema.parse(rawArgs);
+  const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
+  const htmlAbsolutePath = resolveWorkspacePath(args.html, workspaceRoot);
+  const outPptxAbsolutePath = resolveWorkspacePath(args.outPptx, workspaceRoot);
+  const result = await runHtmlPptxScript(
+    "export",
+    {
+      author: args.author,
+      htmlAbsolutePath,
+      outPptxAbsolutePath,
+      slideSelector: args.slideSelector,
+      title: args.title,
+      workspaceRoot,
+    },
+    workspaceRoot,
+    context.signal,
+  );
+  const diagnosticLines = [
+    Array.isArray(result.pageErrors) && result.pageErrors.length
+      ? `page error：${result.pageErrors.join("; ")}`
+      : undefined,
+    Array.isArray(result.consoleErrors) && result.consoleErrors.length
+      ? `console error：${result.consoleErrors.join("; ")}`
+      : undefined,
+  ].filter(Boolean);
+
+  return [
+    "已通过 dom-to-pptx 导出 PPTX。",
+    `路径：${String(result.outPptx ?? toWorkspaceRelative(outPptxAbsolutePath, workspaceRoot))}`,
+    `HTML：${String(result.html ?? toWorkspaceRelative(htmlAbsolutePath, workspaceRoot))}`,
+    `内联本地图片：${Number(result.inlined ?? 0)}`,
+    ...diagnosticLines,
+  ].join("\n");
+}
+
+async function validateHtmlPptxExport(
+  rawArgs: unknown,
+  context: ToolExecutionContext,
+) {
+  const args = validateHtmlPptxExportSchema.parse(rawArgs);
+  const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
+  const htmlAbsolutePath = resolveWorkspacePath(args.html, workspaceRoot);
+  const htmlDirectory = path.dirname(htmlAbsolutePath);
+  const preparedHtmlAbsolutePath = args.preparedHtml
+    ? resolveWorkspacePath(args.preparedHtml, workspaceRoot)
+    : path.join(htmlDirectory, "deck.prepared.html");
+  const pptxAbsolutePath = resolveWorkspacePath(args.pptx, workspaceRoot);
+  const measurementsAbsolutePath = args.measurementsPath
+    ? resolveWorkspacePath(args.measurementsPath, workspaceRoot)
+    : path.join(htmlDirectory, "measurements.json");
+  const qaReportAbsolutePath = resolveDefaultWorkspaceOutput(
+    path.join(htmlDirectory, "qa-report.json"),
+    args.qaReportPath,
+    workspaceRoot,
+  );
+  const result = await runHtmlPptxScript(
+    "validate",
+    {
+      htmlAbsolutePath,
+      measurementsAbsolutePath,
+      pptxAbsolutePath,
+      preparedHtmlAbsolutePath,
+      previewHtmlDirectory: path.join(htmlDirectory, "preview-html"),
+      previewPptxDirectory: path.join(htmlDirectory, "preview-pptx"),
+      qaReportAbsolutePath,
+      expectedTemplateId: context.toolSettings?.slides?.templateId?.trim() || "",
+      slideSelector: args.slideSelector,
+      workspaceRoot,
+    },
+    workspaceRoot,
+    context.signal,
+  );
+
+  return [
+    "已验证 HTML-to-PPTX spike 产物。",
+    `QA：${String(result.qaReport ?? toWorkspaceRelative(qaReportAbsolutePath, workspaceRoot))}`,
+    `slide 数：${Number(result.slides ?? 0)}`,
+    `可编辑元素：${Number(result.editableElements ?? 0)}`,
+    `截图回退：${Number(result.rasterFallbacks ?? 0)}`,
+    `warning：${Number(result.warnings ?? 0)}`,
   ].join("\n");
 }
 
 export const tools: ToolDefinition[] = [
   {
-    schema: initDeckSchema,
+    schema: initSlideHtmlWorkspaceSchema,
     tool: {
-      name: "init_deck_workspace",
+      name: "init_slide_html_workspace",
       description:
-        "Initialize a deck workspace with brief.md, deck_narrative.md, slide_specs.yaml, assets/, final/, preview/, and validation/. Use before generate_pptx for non-trivial presentation work.",
+        "Initialize a restricted slide HTML workspace for the HTML-to-PPTX spike route. Creates deck.html, styles.css, assets/, fallback-assets/, preview-html/, preview-pptx/, measurements.json target, qa-report.json target, and final/.",
       input_schema: {
         type: "object",
         properties: {
-          audience: {
+          deckSlug: {
             type: "string",
-            description: "Audience for the deck.",
-          },
-          delivery: {
-            type: "string",
-            enum: ["self-read", "speaker-led", "forward"],
-            default: "self-read",
+            description: "Deck slug used for the directory and final PPTX name.",
           },
           dir: {
             type: "string",
             description:
-              "Workspace-relative deck directory, preferably .ranni/decks/<deck-slug>.",
+              "Optional workspace-relative directory. Defaults to deckSlug.",
+          },
+          overwrite: {
+            type: "boolean",
+            default: false,
+            description: "Overwrite existing deck.html, styles.css, and assets.",
+          },
+          prompt: {
+            type: "string",
+            description:
+              "Original user prompt to preserve and use when creating the HTML draft.",
+          },
+          template: {
+            type: "string",
+            enum: ["blank", "spike-sample"],
+            default: "blank",
+            description:
+              "Use spike-sample to copy the default 8-slide validation deck template. A selected slides templateId in tool settings also forces template package initialization.",
+          },
+          templateId: {
+            type: "string",
+            description:
+              "Optional slides template package id. Defaults to the selected run template or the default template for spike-sample.",
           },
           title: {
             type: "string",
-            description: "Deck title.",
+            default: "HTML to PPTX spike",
           },
         },
-        required: ["dir", "title"],
+        required: ["deckSlug"],
       },
     },
-    execute: initDeckWorkspace,
+    execute: initSlideHtmlWorkspace,
   },
   {
-    schema: generatePptxSchema,
+    schema: prepareSlideHtmlForPptxSchema,
     tool: {
-      name: "generate_pptx",
+      name: "prepare_slide_html_for_pptx",
       description:
-        "Generate an editable native .pptx from structured slide specs. Keeps text editable and simple charts native. Use semantic layouts instead of hand-coded coordinates.",
+        "Use Playwright to validate restricted slide HTML, screenshot data-pptx-raster nodes into fallback-assets/, replace them with same-size img elements, and write deck.prepared.html plus measurements.json before dom-to-pptx conversion.",
       input_schema: {
         type: "object",
         properties: {
-          aspect: {
+          fallbackAssetsDir: {
             type: "string",
-            enum: ["16:9", "4:3"],
-            default: "16:9",
+            description:
+              "Workspace-relative fallback asset directory. Defaults to sibling fallback-assets/.",
           },
-          outputPath: {
+          html: {
             type: "string",
-            description: "Workspace-relative output .pptx path.",
+            description: "Workspace-relative source deck.html path.",
           },
-          slides: {
-            type: "array",
-            minItems: 1,
-            description: "Structured slide specs.",
-            items: {
-              type: "object",
-              properties: {
-                bullets: {
-                  type: "array",
-                  items: {
-                    anyOf: [
-                      { type: "string" },
-                      {
-                        type: "object",
-                        properties: {
-                          level: { type: "integer", minimum: 0, maximum: 3 },
-                          text: { type: "string" },
-                        },
-                        required: ["text"],
-                      },
-                    ],
-                  },
-                },
-                chart: {
-                  type: "object",
-                  properties: {
-                    data: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          labels: {
-                            type: "array",
-                            items: { type: "string" },
-                          },
-                          name: { type: "string" },
-                          values: {
-                            type: "array",
-                            items: { type: "number" },
-                          },
-                        },
-                        required: ["name", "labels", "values"],
-                      },
-                    },
-                    title: { type: "string" },
-                    type: { type: "string", enum: ["bar", "line", "pie"] },
-                  },
-                  required: ["type", "data"],
-                },
-                image: {
-                  type: "object",
-                  properties: {
-                    path: { type: "string" },
-                    placement: {
-                      type: "string",
-                      enum: ["fit", "fill"],
-                      default: "fit",
-                    },
-                  },
-                  required: ["path"],
-                },
-                layout: {
-                  type: "string",
-                  enum: [
-                    "title",
-                    "title-bullets",
-                    "title-content",
-                    "two-col",
-                    "section",
-                    "blank",
-                  ],
-                  default: "title-bullets",
-                },
-                notes: { type: "string" },
-                subtitle: { type: "string" },
-                title: { type: "string" },
-              },
-            },
-          },
-          theme: {
+          measurementsPath: {
             type: "string",
-            default: "default",
+            description:
+              "Workspace-relative measurements.json path. Defaults to sibling measurements.json.",
+          },
+          outHtml: {
+            type: "string",
+            description:
+              "Workspace-relative prepared HTML path. Defaults to sibling deck.prepared.html.",
+          },
+          slideSelector: {
+            type: "string",
+            default: ".slide",
           },
         },
-        required: ["outputPath", "slides"],
+        required: ["html"],
       },
     },
-    execute: generatePptx,
+    execute: prepareSlideHtmlForPptx,
+  },
+  {
+    schema: exportHtmlToPptxSchema,
+    tool: {
+      name: "export_html_to_pptx",
+      description:
+        "Use dom-to-pptx inside a Playwright-rendered page to export prepared restricted slide HTML into a limited editable .pptx.",
+      input_schema: {
+        type: "object",
+        properties: {
+          author: {
+            type: "string",
+            default: "Ranni",
+          },
+          html: {
+            type: "string",
+            description: "Workspace-relative prepared HTML path.",
+          },
+          outPptx: {
+            type: "string",
+            description: "Workspace-relative final .pptx path.",
+          },
+          slideSelector: {
+            type: "string",
+            default: ".slide",
+          },
+          title: {
+            type: "string",
+            default: "HTML to PPTX spike",
+          },
+        },
+        required: ["html", "outPptx"],
+      },
+    },
+    execute: exportHtmlToPptx,
+  },
+  {
+    schema: validateHtmlPptxExportSchema,
+    tool: {
+      name: "validate_html_pptx_export",
+      description:
+        "Render HTML previews with Playwright, attempt PPTX previews via LibreOffice and Poppler, inspect PPTX structure, run objective visual smoke checks, and write qa-report.json for the HTML-to-PPTX route.",
+      input_schema: {
+        type: "object",
+        properties: {
+          html: {
+            type: "string",
+            description: "Workspace-relative source deck.html path.",
+          },
+          measurementsPath: {
+            type: "string",
+            description:
+              "Workspace-relative measurements.json path. Defaults to sibling measurements.json.",
+          },
+          pptx: {
+            type: "string",
+            description: "Workspace-relative generated .pptx path.",
+          },
+          preparedHtml: {
+            type: "string",
+            description:
+              "Workspace-relative prepared HTML path. Defaults to sibling deck.prepared.html.",
+          },
+          qaReportPath: {
+            type: "string",
+            description:
+              "Workspace-relative qa-report.json path. Defaults to sibling qa-report.json.",
+          },
+          slideSelector: {
+            type: "string",
+            default: ".slide",
+          },
+        },
+        required: ["html", "pptx"],
+      },
+    },
+    execute: validateHtmlPptxExport,
   },
 ];

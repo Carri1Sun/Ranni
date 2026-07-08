@@ -28,6 +28,7 @@ import {
   normalizeSkillNames,
   type SkillIndex,
 } from "./skills/registry";
+import { buildSlidesTemplateRuntimeInstruction } from "./slides/templates";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -240,7 +241,9 @@ class PacedTextEmitter {
 
 function createSystemPrompt({
   activeSkillNames,
+  researchMode,
   runtime,
+  slidesTemplateInstruction,
   skillIndices,
   taskMemorySummary,
   taskState,
@@ -248,7 +251,9 @@ function createSystemPrompt({
   workspaceRoot,
 }: {
   activeSkillNames: string[];
+  researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
+  slidesTemplateInstruction: string[];
   skillIndices: SkillIndex[];
   taskMemorySummary: string;
   taskState: TaskState;
@@ -414,11 +419,17 @@ function createSystemPrompt({
           }),
         ]
       : []),
+    ...(slidesTemplateInstruction.length > 0
+      ? [...slidesTemplateInstruction, ""]
+      : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
+    "- Workspace rule: this is the session-dedicated execution directory. Store task-created intermediate files, generated artifacts, and command outputs here.",
+    "- Path rule: relative file paths and terminal cwd values are resolved inside this workspace.",
     `- Current date: ${currentDate}`,
     `- Max tool steps: ${MAX_TOOL_STEPS}`,
     `- Current model: ${runtime.model}`,
+    `- Research validation mode: ${researchMode ? "on" : "off"}`,
     `- Available tools: ${toolNames.join(", ")}`,
     "",
     "Current task state:",
@@ -1118,11 +1129,17 @@ function isNonTrivialResearchRequest(prompt: string, taskState: TaskState) {
 
 function getResearchFinalizationGuardPolicy({
   latestUserPrompt,
+  researchMode,
   taskState,
 }: {
   latestUserPrompt: string;
+  researchMode: boolean;
   taskState: TaskState;
 }): ResearchFinalizationGuardPolicy {
+  if (!researchMode) {
+    return "off";
+  }
+
   const prompt = latestUserPrompt.trim();
   const stateText = [
     taskState.deliverable,
@@ -1369,16 +1386,22 @@ function getResearchReadabilityIssues(visibleContent: string) {
 function shouldRunResearchAnswerQualityGuard({
   guardCount,
   latestUserPrompt,
+  researchMode,
   signals,
   taskState,
   visibleContent,
 }: {
   guardCount: number;
   latestUserPrompt: string;
+  researchMode: boolean;
   signals: ResearchSignals;
   taskState: TaskState;
   visibleContent: string;
 }) {
+  if (!researchMode) {
+    return false;
+  }
+
   if (guardCount >= MAX_RESEARCH_ANSWER_QUALITY_REPAIR_ATTEMPTS) {
     return false;
   }
@@ -1618,6 +1641,7 @@ export async function runAgentTurn({
   let researchAnswerQualityRepairCount = 0;
   let researchFinalizationGuardCount = 0;
   let unsafeToolCallRepairCount = 0;
+  const researchMode = toolSettings?.researchMode ?? false;
   const researchSignals = createInitialResearchSignals();
   const researchNotebook = createResearchNotebook({
     latestUserPrompt,
@@ -1770,7 +1794,14 @@ export async function runAgentTurn({
       const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
       const system = createSystemPrompt({
         activeSkillNames,
+        researchMode,
         runtime,
+        slidesTemplateInstruction:
+          activeSkillNames.includes("slides") && toolSettings?.slides?.templateId
+            ? buildSlidesTemplateRuntimeInstruction(
+                toolSettings.slides.templateId,
+              )
+            : [],
         skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
         taskState,
@@ -2176,6 +2207,7 @@ export async function runAgentTurn({
         const researchFinalizationGuardPolicy =
           getResearchFinalizationGuardPolicy({
             latestUserPrompt,
+            researchMode,
             taskState,
           });
 
@@ -2234,6 +2266,7 @@ export async function runAgentTurn({
           shouldRunResearchAnswerQualityGuard({
             guardCount: researchAnswerQualityRepairCount,
             latestUserPrompt,
+            researchMode,
             signals: researchSignals,
             taskState,
             visibleContent: candidateFinalMessage,
