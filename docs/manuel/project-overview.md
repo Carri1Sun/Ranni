@@ -128,7 +128,7 @@ Deep research 任务会额外强调动态研究地图、正文核验、证据记
 
 网页任务可通过输入框内的“网页”开关临时启用 `html` skill，并选择设计风格和网页类型。产物会保留 `index.html`、`styles.css`、`assets/`、`preview/`、`qa-report.json` 和生成报告。
 
-PPTX 任务可通过输入框内的“PPTX”开关临时启用 `html-to-pptx` skill，并选择设计风格和 PPTX 模板。`html-to-pptx` skill 规定受限 slide HTML 创作方法和产物目录结构，最终 PPTX 放在 `final/` 子目录；具体落点遵守 session workspace 边界。HTML-to-PPTX 产物会保留 `prompt.txt`、`html-generation-report.json`、`deck.html`、`deck.prepared.html`、`measurements.json`、`qa-report.json`、`preview-html/` 和 `preview-pptx/`。
+PPTX 任务可通过输入框内的“PPTX”开关临时启用 `html-to-pptx` skill，并选择设计风格。`html-to-pptx` skill 会要求 agent 先规划 deck 叙事、页面结构和截图回退边界，再创作受限 slide HTML；最终 PPTX 放在 `final/` 子目录，具体落点遵守 session workspace 边界。HTML-to-PPTX 产物会保留 `prompt.txt`、`html-generation-report.json`、`deck.html`、`deck.prepared.html`、`measurements.json`、`qa-report.json`、`preview-html/` 和 `preview-pptx/`。
 
 ## 过程展示规范
 

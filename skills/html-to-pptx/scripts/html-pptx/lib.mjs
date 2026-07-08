@@ -1121,34 +1121,6 @@ export async function inspectPreparedHtmlImages(preparedHtmlAbsolutePath) {
   };
 }
 
-async function inspectTemplateUsage(htmlAbsolutePath, preparedHtmlAbsolutePath, expectedTemplateId) {
-  const readTemplateId = async (filePath) => {
-    if (!(await fileExists(filePath))) {
-      return "";
-    }
-
-    const html = await fs.readFile(filePath, "utf8");
-    const dom = new JSDOM(html);
-
-    return dom.window.document.querySelector("[data-ranni-template-id]")?.getAttribute("data-ranni-template-id")?.trim() ?? "";
-  };
-  const sourceTemplateId = await readTemplateId(htmlAbsolutePath);
-  const preparedTemplateId = await readTemplateId(preparedHtmlAbsolutePath);
-  const expected = String(expectedTemplateId ?? "").trim();
-
-  return {
-    expectedTemplateId: expected,
-    preparedTemplateId,
-    sourceTemplateId,
-    status:
-      expected && sourceTemplateId && sourceTemplateId !== expected
-        ? "mismatch"
-        : expected && !sourceTemplateId
-          ? "missing"
-          : "ok",
-  };
-}
-
 function runProcess(command, args, cwd, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -1526,7 +1498,6 @@ export async function validateHtmlPptxExport(args) {
     previewHtmlDirectory,
     previewPptxDirectory,
     qaReportAbsolutePath,
-    expectedTemplateId,
     slideSelector,
     workspaceRoot,
   } = args;
@@ -1541,12 +1512,11 @@ export async function validateHtmlPptxExport(args) {
     await closeBrowser(browser, browserContext);
   }
 
-  const [htmlPreviews, preparedHtmlImages, pptxInspection, pptxPreview, templateUsage] = await Promise.all([
+  const [htmlPreviews, preparedHtmlImages, pptxInspection, pptxPreview] = await Promise.all([
     renderHtmlPreviews(htmlAbsolutePath, previewHtmlDirectory, slideSelector, workspaceRoot),
     inspectPreparedHtmlImages(preparedHtmlAbsolutePath),
     inspectPptxFile(pptxAbsolutePath),
     renderPptxPreview(pptxAbsolutePath, previewPptxDirectory, workspaceRoot),
-    inspectTemplateUsage(htmlAbsolutePath, preparedHtmlAbsolutePath, expectedTemplateId),
   ]);
   const pptxPreviewStatusPath = path.join(previewPptxDirectory, "render-status.json");
   const pptxPreviewStatusRelativePath = toWorkspaceRelative(pptxPreviewStatusPath, workspaceRoot);
@@ -1568,20 +1538,6 @@ export async function validateHtmlPptxExport(args) {
   }));
 
   const warnings = [...(measurements?.warnings ?? []), ...pptxPreview.warnings, ...visualSmoke.warnings];
-
-  if (templateUsage.status === "missing") {
-    warnings.push({
-      message: `本次 run 选择了模板 ${templateUsage.expectedTemplateId}，但 HTML 未记录 data-ranni-template-id。`,
-      type: "template-id-missing",
-    });
-  }
-
-  if (templateUsage.status === "mismatch") {
-    warnings.push({
-      message: `本次 run 选择了模板 ${templateUsage.expectedTemplateId}，HTML 实际记录为 ${templateUsage.sourceTemplateId}。`,
-      type: "template-id-mismatch",
-    });
-  }
 
   if (pptxInspection.slideFiles !== measurements.slides.length) {
     warnings.push({
@@ -1628,7 +1584,6 @@ export async function validateHtmlPptxExport(args) {
     slides: measurements.slides.length,
     slideWidth: SLIDE_WIDTH_PX,
     sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-    template: templateUsage,
     visualSmoke,
     warnings,
   };

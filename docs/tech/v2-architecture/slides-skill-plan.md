@@ -44,10 +44,9 @@ Ranni `html-to-pptx` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受
 - `skills/html-to-pptx/SKILL.md` 描述 PPTX 任务方法、受限 HTML 规范和工具顺序。
 - `skills/html-to-pptx/tools.ts` 提供四个 HTML-to-PPTX 工具的薄封装，负责 schema、workspace resolver 和脚本调度。
 - `skills/html-to-pptx/scripts/html-pptx/*.mjs` 承载 Playwright、`dom-to-pptx`、LibreOffice、Poppler、PPTX XML 检查和视觉 smoke check。
-- `skills/html-to-pptx/templates/default-business/` 提供默认模板包，可直接用浏览器打开和编辑。
-- `lib/html-to-pptx/templates.ts` 提供模板 registry，扫描 `manifest.json`、读取 `guidance.md`，并把选中模板注入 agent system prompt。
+- `skills/html-to-pptx/examples/default-business/` 提供内部 spike 验收示例 deck。
+- `lib/html-to-pptx/sample-decks.ts` 提供示例 deck 读取能力，仅供本地 spike 脚本使用。
 - `lib/html-design/catalog.ts` 提供共享设计风格；composer 选择后通过 `toolSettings.htmlToPptx.styleId` 传入 run。
-- `/api/html-to-pptx/templates` 向前端提供模板列表；composer 选择后通过 `toolSettings.htmlToPptx.templateId` 传入 run。
 - `scripts/slides-html-pptx-spike.ts` 提供端到端本地验收入口。
 - `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md` 提供审美、布局、排版和兼容性硬性准则。
 
@@ -55,7 +54,7 @@ Ranni `html-to-pptx` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受
 
 | 工具 | 输入重点 | 输出重点 |
 |---|---|---|
-| `init_slide_html_workspace` | `deckSlug`、`dir`、`title`、`prompt`、`template` | `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-*`、`final/` |
+| `init_slide_html_workspace` | `deckSlug`、`dir`、`title`、`prompt`、`styleId` | `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-*`、`final/` |
 | `prepare_slide_html_for_pptx` | `html`、`outHtml`、`measurementsPath`、`fallbackAssetsDir` | `deck.prepared.html`、`measurements.json`、局部截图资产 |
 | `export_html_to_pptx` | `html`、`outPptx`、`title`、`author` | `final/*.pptx` |
 | `validate_html_pptx_export` | `html`、`preparedHtml`、`pptx`、`qaReportPath` | HTML preview、PPTX preview、`qa-report.json` |
@@ -112,13 +111,12 @@ html-generation-report.json
 - `pptxPreview`
 - `designGuidelines`
 - `visualSmoke`
-- `template`
 
 warning 用于记录转换边界。遇到 `dom-to-pptx` 覆盖不足时，应缩小 HTML 子集、增加局部截图回退或写入 warning，避免临时扩大能力承诺。
 
 设计准则 warning 使用 `design-*` 类型，覆盖动画、hover、padding-bottom、box-shadow、大圆角、主内容绝对定位、标题字号、正文行高、图片尺寸和 DOM 嵌套深度等检查项。`designGuidelines.status` 为 `passed` 时表示当前 HTML 通过设计合规检查。
 
-视觉 smoke check 只记录客观渲染事故：PPTX 预览接近空白、HTML/PPTX PNG 页数不一致、单页大范围视觉漂移。审美判断通过设计准则、模板约束和人工预览完成。
+视觉 smoke check 只记录客观渲染事故：PPTX 预览接近空白、HTML/PPTX PNG 页数不一致、单页大范围视觉漂移。审美判断通过设计准则、agent 规划和人工预览完成。
 
 ## 7. 验收
 
@@ -152,4 +150,4 @@ git diff --check
 2. 统计源 HTML 标注与 PPTX 文本 run 的对应关系。
 3. 增加字体可用性与替换风险检查。
 4. 沉淀稳定 HTML 子集的自研 mapper。
-5. 为常见 deck 类型增加 HTML 模板与主题。
+5. 沉淀常见 deck 类型的规划 prompt 和页面结构建议。

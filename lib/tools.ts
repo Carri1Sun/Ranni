@@ -48,9 +48,7 @@ export type ToolSettings = {
     templateId?: string;
   };
   htmlToPptx?: {
-    styleVariantId?: string;
     styleId?: string;
-    templateId?: string;
   };
   tavilyApiKey?: string;
 };

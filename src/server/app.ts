@@ -24,7 +24,6 @@ import {
   listHtmlDesignStyles,
   listHtmlPageTemplates,
 } from "../../lib/html-design/catalog";
-import { listHtmlToPptxTemplates } from "../../lib/html-to-pptx/templates";
 import { listSkillIndices } from "../../lib/skills/registry";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
@@ -82,8 +81,6 @@ const toolSettingsSchema = z.object({
   htmlToPptx: z
     .object({
       styleId: optionalSecretSchema,
-      styleVariantId: optionalSecretSchema,
-      templateId: optionalSecretSchema,
     })
     .optional(),
   researchMode: z.boolean().optional().default(false),
@@ -637,50 +634,6 @@ export function createServerApp() {
       result: {
         pageTemplates: listHtmlPageTemplates(),
         styles: listHtmlDesignStyles(),
-      },
-    });
-  });
-
-  app.get("/api/html-to-pptx/templates", (_request, response) => {
-    response.json({
-      ok: true,
-      result: {
-        templates: listHtmlToPptxTemplates().map((template) => ({
-          compatibility: template.compatibility,
-          accentColor: template.accentColor,
-          default: template.default ?? false,
-          description: template.description,
-          fontPackages: template.fontPackages,
-          id: template.id,
-          layouts: template.layouts,
-          name: template.name,
-          preview: template.preview,
-          surfaceColor: template.surfaceColor,
-          tags: template.tags,
-          version: template.version,
-        })),
-      },
-    });
-  });
-
-  app.get("/api/slides/templates", (_request, response) => {
-    response.json({
-      ok: true,
-      result: {
-        templates: listHtmlToPptxTemplates().map((template) => ({
-          compatibility: template.compatibility,
-          accentColor: template.accentColor,
-          default: template.default ?? false,
-          description: template.description,
-          fontPackages: template.fontPackages,
-          id: template.id,
-          layouts: template.layouts,
-          name: template.name,
-          preview: template.preview,
-          surfaceColor: template.surfaceColor,
-          tags: template.tags,
-          version: template.version,
-        })),
       },
     });
   });

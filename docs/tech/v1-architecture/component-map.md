@@ -334,19 +334,19 @@ HTML 设计风格和网页类型 catalog。
 - 为后端接口、前端选择卡片、agent system prompt 和 HTML 工具提供元信息。
 - 记录公开调研来源 URL 和本地产品指导文档位置。
 
-### `lib/html-to-pptx/templates.ts`
+### `lib/html-to-pptx/sample-decks.ts`
 
-HTML-to-PPTX 模板 registry。
+HTML-to-PPTX 内部示例 deck registry。
 
 主要职责：
 
-- 扫描 `skills/html-to-pptx/templates/*/manifest.json`。
-- 为后端接口、agent system prompt 和 HTML-to-PPTX 工具提供模板元信息。
-- 读取模板 `guidance.md`，让 agent 在幻灯片创作时遵守选中模板。
+- 扫描 `skills/html-to-pptx/examples/*/manifest.json`。
+- 为本地 spike 脚本和 HTML-to-PPTX 工具提供示例 deck 元信息。
+- 用户 PPTX 路径不提供模板选择，agent 根据设计风格和用户内容规划页面结构。
 
-### `skills/html-to-pptx/templates/default-business/`
+### `skills/html-to-pptx/examples/default-business/`
 
-默认 HTML-to-PPTX 模板包。
+内部 HTML-to-PPTX spike 示例 deck。
 
 主要职责：
 
@@ -356,13 +356,11 @@ HTML-to-PPTX 模板 registry。
 
 ### `src/server/app.ts` HTML design API
 
-HTML 设计和 PPTX 模板列表接口。
+HTML 设计选项接口。
 
 主要职责：
 
 - `GET /api/html-design/options` 返回设计风格和网页类型模板。
-- `GET /api/html-to-pptx/templates` 返回可选 PPTX 模板元信息。
-- `GET /api/slides/templates` 保留旧入口兼容，返回同一组 PPTX 模板。
 - `POST /api/runs` 接收 `toolSettings.htmlDesign` 和 `toolSettings.htmlToPptx` 并传给 agent。
 
 ### `docs/tech/v2-architecture/slides-skill-design/`

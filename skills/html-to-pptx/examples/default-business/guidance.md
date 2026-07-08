@@ -1,4 +1,4 @@
-# Default Business 模板使用准则
+# Default Business 示例 Deck 准则
 
 ## 定位
 
@@ -7,11 +7,11 @@
 ## 必须遵守
 
 - 每页使用现有 `.slide` 结构，固定 `1280px x 720px`。
-- 优先复用模板中的页面结构和 CSS class，不临时发明大面积新布局。
+- 示例页只用于脚本验收；真实用户 deck 应按用户内容重新规划页面结构。
 - 关键标题、正文、列表、表格文字必须保留为 DOM 文本，并标记 `data-pptx-editable`。
 - 复杂图表、canvas、密集 SVG、多层视觉组合必须放进固定尺寸容器，并标记 `data-pptx-raster` 和 `data-pptx-alt`。
 - 图片和图形资产放入 `assets/`，引用相对路径，并硬编码宽高或让 CSS 明确尺寸。
-- 使用模板 tokens 中的颜色、字号、间距和低圆角，不使用 `box-shadow`、动画、hover 或主内容绝对定位。
+- 使用稳定的颜色、字号、间距和低圆角，不使用 `box-shadow`、动画、hover 或主内容绝对定位。
 
 ## 页面选择
 
@@ -26,4 +26,4 @@
 
 ## 输出要求
 
-生成 deck 时保留 `html-generation-report.json` 中的模板信息。导出前如果发现模板规则被破坏，应先修复 HTML/CSS，再继续 prepare/export/validate。
+导出前如果发现受限 HTML 规则被破坏，应先修复 HTML/CSS，再继续 prepare/export/validate。

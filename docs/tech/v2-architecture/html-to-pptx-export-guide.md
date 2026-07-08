@@ -418,7 +418,7 @@ computed style + DOM box
 
 ## 11. 推荐实现顺序
 
-1. 维护 `skills/html-to-pptx/templates/default-business/` 默认模板包。
+1. 维护 `skills/html-to-pptx/examples/default-business/` 内部 spike 示例 deck。
 2. 保持 Playwright 渲染、DOM 测量与截图回退脚本可独立运行。
 3. 保持 `dom-to-pptx` browser bundle 注入和图片内联稳定。
 4. 生成 HTML 预览和 PPTX 预览。
@@ -461,16 +461,16 @@ skills/html-to-pptx/scripts/html-pptx/
   validate.mjs
 ```
 
-模板 registry：
+内部示例 deck registry：
 
 ```text
-lib/html-to-pptx/templates.ts
+lib/html-to-pptx/sample-decks.ts
 ```
 
-默认模板包：
+内部示例 deck：
 
 ```text
-skills/html-to-pptx/templates/default-business/
+skills/html-to-pptx/examples/default-business/
   manifest.json
   tokens.json
   guidance.md
@@ -538,7 +538,6 @@ html-generation-report.json
 - `htmlPreviewPaths`
 - `pptxPreview`
 - `visualSmoke`
-- `template`
 
 已知限制：
 

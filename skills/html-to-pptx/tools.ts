@@ -7,10 +7,10 @@ import { z } from "zod";
 import { findHtmlDesignStyle } from "../../lib/html-design/catalog";
 import type { ToolDefinition, ToolExecutionContext } from "../../lib/tools";
 import {
-  findHtmlToPptxTemplate,
-  getDefaultHtmlToPptxTemplateId,
-  getHtmlToPptxTemplateDirectory,
-} from "../../lib/html-to-pptx/templates";
+  findHtmlToPptxSampleDeck,
+  getDefaultHtmlToPptxSampleDeckId,
+  getHtmlToPptxSampleDeckDirectory,
+} from "../../lib/html-to-pptx/sample-decks";
 import {
   getWorkspaceRoot,
   resolveWorkspacePath,
@@ -23,8 +23,7 @@ const initSlideHtmlWorkspaceSchema = z.object({
   overwrite: z.boolean().default(false),
   prompt: z.string().min(1).optional(),
   styleId: z.string().min(1).optional(),
-  template: z.enum(["blank", "spike-sample"]).default("blank"),
-  templateId: z.string().min(1).optional(),
+  exampleDeck: z.enum(["spike-sample"]).optional(),
   title: z.string().min(1).default("HTML to PPTX spike"),
 });
 
@@ -383,18 +382,16 @@ async function initSlideHtmlWorkspace(
   const selectedDesignStyle = selectedDesignStyleId
     ? findHtmlDesignStyle(selectedDesignStyleId)
     : undefined;
-  const selectedTemplateId =
-    args.templateId?.trim() ||
-    context.toolSettings?.htmlToPptx?.templateId?.trim();
-  const templateId =
-    selectedTemplateId ||
-    (args.template === "spike-sample" ? getDefaultHtmlToPptxTemplateId() : "");
-  const selectedTemplate = templateId
-    ? findHtmlToPptxTemplate(templateId)
+  const sampleDeckId =
+    args.exampleDeck === "spike-sample"
+      ? getDefaultHtmlToPptxSampleDeckId()
+      : "";
+  const selectedSampleDeck = sampleDeckId
+    ? findHtmlToPptxSampleDeck(sampleDeckId)
     : undefined;
 
-  if (templateId && !selectedTemplate) {
-    throw new Error(`未找到 HTML-to-PPTX 模板：${templateId}`);
+  if (sampleDeckId && !selectedSampleDeck) {
+    throw new Error(`未找到 HTML-to-PPTX 示例 deck：${sampleDeckId}`);
   }
 
   if (selectedDesignStyleId && !selectedDesignStyle) {
@@ -409,17 +406,17 @@ async function initSlideHtmlWorkspace(
     ),
   );
   const templateResult =
-    selectedTemplate
+    selectedSampleDeck
       ? await copyTemplateDirectory(
-          getHtmlToPptxTemplateDirectory(selectedTemplate.id),
+          getHtmlToPptxSampleDeckDirectory(selectedSampleDeck.id),
           baseAbsolutePath,
           workspaceRoot,
           args.overwrite,
           {
             "{{PROMPT}}": safePrompt,
-          "{{TEMPLATE_ID}}": selectedTemplate.id,
-          "{{TEMPLATE_NAME}}": escapeHtml(selectedTemplate.name),
-          "{{TITLE}}": safeTitle,
+            "{{SAMPLE_DECK_ID}}": selectedSampleDeck.id,
+            "{{SAMPLE_DECK_NAME}}": escapeHtml(selectedSampleDeck.name),
+            "{{TITLE}}": safeTitle,
           },
         )
       : await writeBlankTemplate(
@@ -449,10 +446,10 @@ async function initSlideHtmlWorkspace(
           route: "restricted-slide-html",
           designStyleId: selectedDesignStyle?.id ?? "",
           designStyleName: selectedDesignStyle?.name ?? "",
-          template: args.template,
-          templateId: selectedTemplate?.id ?? "blank",
-          templateName: selectedTemplate?.name ?? "Blank",
-          templateVersion: selectedTemplate?.version ?? "local",
+          exampleDeck: args.exampleDeck ?? "",
+          sampleDeckId: selectedSampleDeck?.id ?? "",
+          sampleDeckName: selectedSampleDeck?.name ?? "",
+          sampleDeckVersion: selectedSampleDeck?.version ?? "",
           title: args.title,
         },
         null,
@@ -471,7 +468,7 @@ async function initSlideHtmlWorkspace(
     `QA：${toWorkspaceRelative(qaReportPath, workspaceRoot)}`,
     `最终 PPTX：${toWorkspaceRelative(finalPptxPath, workspaceRoot)}`,
     `设计风格：${selectedDesignStyle ? `${selectedDesignStyle.name} (${selectedDesignStyle.id})` : "未指定"}`,
-    `模板：${selectedTemplate ? `${selectedTemplate.name} (${selectedTemplate.id})` : "Blank"}`,
+    `示例 deck：${selectedSampleDeck ? `${selectedSampleDeck.name} (${selectedSampleDeck.id})` : "无"}`,
     writtenFiles.length ? `写入：${writtenFiles.join(", ")}` : "写入：无",
     skippedFiles.length
       ? `跳过已有文件：${skippedFiles.join(", ")}`
@@ -594,8 +591,6 @@ async function validateHtmlPptxExport(
       previewHtmlDirectory: path.join(htmlDirectory, "preview-html"),
       previewPptxDirectory: path.join(htmlDirectory, "preview-pptx"),
       qaReportAbsolutePath,
-      expectedTemplateId:
-        context.toolSettings?.htmlToPptx?.templateId?.trim() || "",
       slideSelector: args.slideSelector,
       workspaceRoot,
     },
@@ -646,18 +641,6 @@ export const tools: ToolDefinition[] = [
             type: "string",
             description:
               "Optional shared HTML design style id. Defaults to the selected run style.",
-          },
-          template: {
-            type: "string",
-            enum: ["blank", "spike-sample"],
-            default: "blank",
-            description:
-              "Use spike-sample to copy the default 8-slide validation deck template. A selected slides templateId in tool settings also forces template package initialization.",
-          },
-          templateId: {
-            type: "string",
-            description:
-              "Optional slides template package id. Defaults to the selected run template or the default template for spike-sample.",
           },
           title: {
             type: "string",

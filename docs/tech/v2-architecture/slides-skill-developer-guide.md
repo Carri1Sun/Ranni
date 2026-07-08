@@ -44,7 +44,7 @@ skills/html-to-pptx/
     prepare.mjs
     export.mjs
     validate.mjs
-  templates/default-business/
+  examples/default-business/
     deck.html
     styles.css
     manifest.json
@@ -61,20 +61,19 @@ docs/tech/v2-architecture/slides-skill-design/
 
 `SKILL.md` 是 agent 选择路线的主要提示来源，必须保持为 HTML-to-PPTX 单一路线说明。
 
-`tools.ts` 只保留 schema、workspace resolver、模板初始化和脚本调度；Playwright、LibreOffice、Poppler、`dom-to-pptx` 和 PPTX/PNG 检查逻辑放在 `scripts/html-pptx/*.mjs`。模板 registry 由 `lib/html-to-pptx/templates.ts` 扫描 `skills/html-to-pptx/templates/*/manifest.json`。
+`tools.ts` 只保留 schema、workspace resolver、空白 workspace 初始化、内部示例 deck 初始化和脚本调度；Playwright、LibreOffice、Poppler、`dom-to-pptx` 和 PPTX/PNG 检查逻辑放在 `scripts/html-pptx/*.mjs`。PPTX 用户路径不提供模板选择，agent 需要按用户内容和设计风格规划页面结构。
 
 ## 3. 工具实现要求
 
 ### `init_slide_html_workspace`
 
-- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`template`、`templateId`、`styleId`、`overwrite`。
+- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`styleId`、`overwrite`。
 - 通过 workspace resolver 创建 deck 目录。
 - 创建 `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-html/`、`preview-pptx/`、`final/`。
 - 传入 `prompt` 时写入 `prompt.txt` 和 `html-generation-report.json`。
-- `template: "spike-sample"` 从默认模板包拷贝 8 页示例 deck。
-- `templateId` 或 `toolSettings.htmlToPptx.templateId` 可指定模板包，优先级高于 `template` 默认值。
+- 本地 spike 脚本可通过内部 `exampleDeck: "spike-sample"` 拷贝 8 页示例 deck；该参数不出现在模型可见工具说明中。
 - `styleId` 或 `toolSettings.htmlToPptx.styleId` 可指定共享设计风格。
-- `html-generation-report.json` 记录 `templateId`、`templateName`、`templateVersion`、`designStyleId` 和 `designStyleName`。
+- `html-generation-report.json` 记录 `designStyleId`、`designStyleName` 和内部示例 deck 信息。
 
 ### `prepare_slide_html_for_pptx`
 
@@ -120,7 +119,7 @@ docs/tech/v2-architecture/slides-skill-design/
 
 ## 5. Spike 示例 deck
 
-`templates/default-business/` 的样例应覆盖：
+`examples/default-business/` 的样例应覆盖：
 
 - 封面
 - 目录
@@ -156,7 +155,6 @@ npm run slides:html-spike
 - `qa-report.json.preparedHtmlImages.images` 不高于 `qa-report.json.pptxInspection.pictureCount`。
 - `qa-report.json.visualSmoke.available` 在 PPTX PNG 预览可用时为 `true`。
 - 视觉 smoke check 不产生空白页、页数不一致或高差异 warning。
-- `qa-report.json.template.sourceTemplateId` 记录实际模板 ID。
 - 样例时间线保留轨道和节点等可映射视觉层级，避免合规后变成平铺卡片。
 - slide 数为 8。
 - 可编辑元素数量达到样例下限。
