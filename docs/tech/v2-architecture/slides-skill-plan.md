@@ -2,20 +2,20 @@
 author: manus
 version: v2
 date: 2026-07-07
-subject: Ranni slides skill 实现方案（HTML-to-PPTX）
+subject: Ranni HTML-to-PPTX skill 实现方案
 audience: 执行该能力的 coding agent
 baseline: HTML-to-PPTX spike 已接入
 prerequisites: skill 动态加载机制已落地（见 skill-dynamic-loading-plan.md）
-related: html-to-pptx-export-guide.md、slides-skill-developer-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
+related: html-generation-skills-plan.md、html-to-pptx-export-guide.md、slides-skill-developer-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
 ---
 
-# Ranni slides skill 实现方案（HTML-to-PPTX）
+# Ranni HTML-to-PPTX skill 实现方案
 
 ## 0. 当前结论
 
-Ranni `slides` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 slide HTML，再用 Playwright 完成渲染、DOM 测量和局部截图回退，最后通过 `dom-to-pptx` 导出有限可编辑 `.pptx` 并生成 QA 报告。
+Ranni `html-to-pptx` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 slide HTML，再用 Playwright 完成渲染、DOM 测量和局部截图回退，最后通过 `dom-to-pptx` 导出有限可编辑 `.pptx` 并生成 QA 报告。
 
-早期直出工具已从当前工具注册、skill prompt 和用户文档入口中移除。后续幻灯片生成任务默认进入 HTML 创作与转换链路。
+早期直出工具已从当前工具注册、skill prompt 和用户文档入口中移除。后续 PPTX 生成任务默认进入 HTML 创作与转换链路。静态网页创作由独立 `html` skill 承担，见 `html-generation-skills-plan.md`。
 
 ## 1. 目标
 
@@ -30,7 +30,7 @@ Ranni `slides` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 sl
 
 ```text
 用户幻灯片任务
--> load_skill("slides")
+-> load_skill("html-to-pptx")
 -> init_slide_html_workspace
 -> 创作 deck.html + styles.css + assets/
 -> prepare_slide_html_for_pptx
@@ -41,12 +41,13 @@ Ranni `slides` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受限 sl
 
 核心职责：
 
-- `skills/slides/SKILL.md` 描述 slides 任务方法、受限 HTML 规范和工具顺序。
-- `skills/slides/tools.ts` 提供四个 HTML-to-PPTX 工具的薄封装，负责 schema、workspace resolver 和脚本调度。
-- `skills/slides/scripts/html-pptx/*.mjs` 承载 Playwright、`dom-to-pptx`、LibreOffice、Poppler、PPTX XML 检查和视觉 smoke check。
-- `skills/slides/templates/default-business/` 提供默认模板包，可直接用浏览器打开和编辑。
-- `lib/slides/templates.ts` 提供模板 registry，扫描 `manifest.json`、读取 `guidance.md`，并把选中模板注入 agent system prompt。
-- `/api/slides/templates` 向前端提供模板列表；composer 选择后通过 `toolSettings.slides.templateId` 传入 run。
+- `skills/html-to-pptx/SKILL.md` 描述 PPTX 任务方法、受限 HTML 规范和工具顺序。
+- `skills/html-to-pptx/tools.ts` 提供四个 HTML-to-PPTX 工具的薄封装，负责 schema、workspace resolver 和脚本调度。
+- `skills/html-to-pptx/scripts/html-pptx/*.mjs` 承载 Playwright、`dom-to-pptx`、LibreOffice、Poppler、PPTX XML 检查和视觉 smoke check。
+- `skills/html-to-pptx/templates/default-business/` 提供默认模板包，可直接用浏览器打开和编辑。
+- `lib/html-to-pptx/templates.ts` 提供模板 registry，扫描 `manifest.json`、读取 `guidance.md`，并把选中模板注入 agent system prompt。
+- `lib/html-design/catalog.ts` 提供共享设计风格；composer 选择后通过 `toolSettings.htmlToPptx.styleId` 传入 run。
+- `/api/html-to-pptx/templates` 向前端提供模板列表；composer 选择后通过 `toolSettings.htmlToPptx.templateId` 传入 run。
 - `scripts/slides-html-pptx-spike.ts` 提供端到端本地验收入口。
 - `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md` 提供审美、布局、排版和兼容性硬性准则。
 

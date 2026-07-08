@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { tools } from "../skills/slides/tools";
+import { tools } from "../skills/html-to-pptx/tools";
 
 type CliOptions = {
   deckSlug: string;
@@ -89,7 +89,7 @@ async function runTool(name: string, args: unknown, workspaceRoot: string) {
   }
 
   const result = await entry.execute(args, {
-    activeSkillNames: ["slides"],
+    activeSkillNames: ["html-to-pptx"],
     workspaceRoot,
   });
 

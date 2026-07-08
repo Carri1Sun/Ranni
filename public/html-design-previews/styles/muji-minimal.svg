@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" role="img" aria-label="素雅 Muji 风">
+  <rect width="320" height="180" rx="18" fill="#f4efe6"/>
+  <rect x="20" y="22" width="280" height="136" rx="14" fill="rgba(255,255,255,.72)" stroke="rgba(15,23,42,.16)"/>
+  <circle cx="264" cy="54" r="22" fill="#8a6f4d" opacity=".9"/>
+  <rect x="38" y="42" width="118" height="12" rx="6" fill="#8a6f4d"/>
+  <rect x="38" y="68" width="190" height="8" rx="4" fill="rgba(15,23,42,.64)"/>
+  <rect x="38" y="86" width="154" height="8" rx="4" fill="rgba(15,23,42,.34)"/>
+  <rect x="38" y="116" width="68" height="22" rx="7" fill="#8a6f4d"/>
+  <rect x="118" y="116" width="54" height="22" rx="7" fill="transparent" stroke="rgba(15,23,42,.24)"/>
+  <text x="20" y="174" fill="rgba(15,23,42,.72)" font-family="Inter, Arial, sans-serif" font-size="12">素雅 Muji 风 · 米白、低饱和、细线和安静排版。</text>
+</svg>

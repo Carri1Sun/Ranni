@@ -141,7 +141,9 @@ type AppSettings = {
   openaiModel: string;
   provider: ProviderId;
   qwenApiKey: string;
-  selectedSlidesTemplateId: string;
+  selectedHtmlDesignStyleId: string;
+  selectedHtmlPageTemplateId: string;
+  selectedHtmlToPptxTemplateId: string;
   showThinkingInFeed: boolean;
   showProcessDetails: boolean;
   tavilyApiKey: string;
@@ -153,7 +155,21 @@ type SkillIndex = {
   name: string;
 };
 
-type SlidesTemplateIndex = {
+type HtmlDesignOptionIndex = {
+  accentColor: string;
+  description: string;
+  id: string;
+  name: string;
+  preview: string;
+  surfaceColor: string;
+  tags: string[];
+};
+
+type HtmlPageTemplateIndex = HtmlDesignOptionIndex & {
+  sections: string[];
+};
+
+type HtmlToPptxTemplateIndex = {
   accentColor?: string;
   default?: boolean;
   description: string;
@@ -164,6 +180,7 @@ type SlidesTemplateIndex = {
     name: string;
   }>;
   name: string;
+  preview?: string;
   surfaceColor?: string;
   tags: string[];
   version: string;
@@ -340,7 +357,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiModel: "",
   provider: "deepseek",
   qwenApiKey: "",
-  selectedSlidesTemplateId: "",
+  selectedHtmlDesignStyleId: "",
+  selectedHtmlPageTemplateId: "",
+  selectedHtmlToPptxTemplateId: "",
   showThinkingInFeed: true,
   showProcessDetails: false,
   tavilyApiKey: "",
@@ -576,9 +595,10 @@ function sanitizeSkillNames(raw: unknown) {
 
 function getSkillDisplayLabel(name: string) {
   const labels: Record<string, string> = {
-    demo: "Demo 验证",
     image: "图片生成",
     imagegen: "图片生成",
+    html: "网页创作",
+    "html-to-pptx": "HTML-to-PPTX",
     slides: "幻灯片生成",
   };
 
@@ -641,10 +661,20 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
-    selectedSlidesTemplateId:
-      typeof raw.selectedSlidesTemplateId === "string"
-        ? raw.selectedSlidesTemplateId.trim()
-        : DEFAULT_SETTINGS.selectedSlidesTemplateId,
+    selectedHtmlDesignStyleId:
+      typeof raw.selectedHtmlDesignStyleId === "string"
+        ? raw.selectedHtmlDesignStyleId.trim()
+        : DEFAULT_SETTINGS.selectedHtmlDesignStyleId,
+    selectedHtmlPageTemplateId:
+      typeof raw.selectedHtmlPageTemplateId === "string"
+        ? raw.selectedHtmlPageTemplateId.trim()
+        : DEFAULT_SETTINGS.selectedHtmlPageTemplateId,
+    selectedHtmlToPptxTemplateId:
+      typeof raw.selectedHtmlToPptxTemplateId === "string"
+        ? raw.selectedHtmlToPptxTemplateId.trim()
+        : typeof raw.selectedSlidesTemplateId === "string"
+          ? raw.selectedSlidesTemplateId.trim()
+          : DEFAULT_SETTINGS.selectedHtmlToPptxTemplateId,
     showThinkingInFeed:
       typeof raw.showThinkingInFeed === "boolean"
         ? raw.showThinkingInFeed
@@ -2339,7 +2369,11 @@ function buildToolSettings(
   settings: AppSettings,
   extraActiveSkills: string[] = [],
   researchMode = false,
-  slidesTemplateId = "",
+  selectedDesign: {
+    htmlDesignStyleId?: string;
+    htmlPageTemplateId?: string;
+    htmlToPptxTemplateId?: string;
+  } = {},
 ) {
   const activeSkills = new Set(settings.activeSkills);
 
@@ -2356,12 +2390,21 @@ function buildToolSettings(
     computerUseApiKey:
       settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
     computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
+    htmlDesign:
+      selectedDesign.htmlDesignStyleId || selectedDesign.htmlPageTemplateId
+        ? {
+            styleId: selectedDesign.htmlDesignStyleId,
+            templateId: selectedDesign.htmlPageTemplateId,
+          }
+        : undefined,
+    htmlToPptx:
+      selectedDesign.htmlToPptxTemplateId || selectedDesign.htmlDesignStyleId
+        ? {
+            styleId: selectedDesign.htmlDesignStyleId,
+            templateId: selectedDesign.htmlToPptxTemplateId,
+          }
+        : undefined,
     researchMode,
-    slides: slidesTemplateId
-      ? {
-          templateId: slidesTemplateId,
-        }
-      : undefined,
     tavilyApiKey: settings.tavilyApiKey.trim(),
   };
 }
@@ -3188,12 +3231,26 @@ export function AgentConsole({
     "error" | "idle" | "loading" | "success"
   >("idle");
   const [skillIndexError, setSkillIndexError] = useState("");
-  const [slideTemplates, setSlideTemplates] = useState<SlidesTemplateIndex[]>([]);
-  const [slideTemplateStatus, setSlideTemplateStatus] = useState<
+  const [htmlDesignStyles, setHtmlDesignStyles] = useState<
+    HtmlDesignOptionIndex[]
+  >([]);
+  const [htmlPageTemplates, setHtmlPageTemplates] = useState<
+    HtmlPageTemplateIndex[]
+  >([]);
+  const [htmlDesignStatus, setHtmlDesignStatus] = useState<
     "error" | "idle" | "loading" | "success"
   >("idle");
-  const [slideTemplateError, setSlideTemplateError] = useState("");
-  const [isSlidesComposerSkillEnabled, setIsSlidesComposerSkillEnabled] =
+  const [htmlDesignError, setHtmlDesignError] = useState("");
+  const [htmlToPptxTemplates, setHtmlToPptxTemplates] = useState<
+    HtmlToPptxTemplateIndex[]
+  >([]);
+  const [htmlToPptxTemplateStatus, setHtmlToPptxTemplateStatus] = useState<
+    "error" | "idle" | "loading" | "success"
+  >("idle");
+  const [htmlToPptxTemplateError, setHtmlToPptxTemplateError] = useState("");
+  const [isHtmlComposerSkillEnabled, setIsHtmlComposerSkillEnabled] =
+    useState(false);
+  const [isHtmlToPptxComposerSkillEnabled, setIsHtmlToPptxComposerSkillEnabled] =
     useState(false);
   const [isResearchModeEnabled, setIsResearchModeEnabled] = useState(false);
   const [workspacePickerStatus, setWorkspacePickerStatus] = useState<
@@ -3484,46 +3541,112 @@ export function AgentConsole({
   useEffect(() => {
     const controller = new AbortController();
 
-    setSlideTemplateStatus("loading");
-    setSlideTemplateError("");
+    setHtmlDesignStatus("loading");
+    setHtmlDesignError("");
 
     void (async () => {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/slides/templates`, {
+        const response = await fetch(`${apiBaseUrl}/api/html-design/options`, {
           signal: controller.signal,
         });
         const payload = (await response.json()) as {
           error?: string;
           ok?: boolean;
           result?: {
-            templates?: SlidesTemplateIndex[];
+            pageTemplates?: HtmlPageTemplateIndex[];
+            styles?: HtmlDesignOptionIndex[];
           };
         };
 
         if (!response.ok || payload.ok === false) {
-          throw new Error(payload.error || "无法加载幻灯片模板。");
+          throw new Error(payload.error || "无法加载 HTML 设计选项。");
+        }
+
+        const styles = Array.isArray(payload.result?.styles)
+          ? payload.result.styles.filter(
+              (style): style is HtmlDesignOptionIndex =>
+                typeof style.id === "string" &&
+                typeof style.name === "string" &&
+                typeof style.description === "string" &&
+                typeof style.preview === "string",
+            )
+          : [];
+        const pageTemplates = Array.isArray(payload.result?.pageTemplates)
+          ? payload.result.pageTemplates.filter(
+              (template): template is HtmlPageTemplateIndex =>
+                typeof template.id === "string" &&
+                typeof template.name === "string" &&
+                typeof template.description === "string" &&
+                typeof template.preview === "string" &&
+                Array.isArray(template.sections),
+            )
+          : [];
+
+        setHtmlDesignStyles(styles);
+        setHtmlPageTemplates(pageTemplates);
+        setHtmlDesignStatus("success");
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setHtmlDesignStyles([]);
+        setHtmlPageTemplates([]);
+        setHtmlDesignStatus("error");
+        setHtmlDesignError(
+          error instanceof Error ? error.message : "无法加载 HTML 设计选项。",
+        );
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setHtmlToPptxTemplateStatus("loading");
+    setHtmlToPptxTemplateError("");
+
+    void (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/html-to-pptx/templates`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            templates?: HtmlToPptxTemplateIndex[];
+          };
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "无法加载 PPTX 模板。");
         }
 
         const templates = Array.isArray(payload.result?.templates)
           ? payload.result.templates.filter(
-              (template): template is SlidesTemplateIndex =>
+              (template): template is HtmlToPptxTemplateIndex =>
                 typeof template.id === "string" &&
                 typeof template.name === "string" &&
                 typeof template.description === "string",
             )
           : [];
 
-        setSlideTemplates(templates);
-        setSlideTemplateStatus("success");
+        setHtmlToPptxTemplates(templates);
+        setHtmlToPptxTemplateStatus("success");
       } catch (error) {
         if (controller.signal.aborted) {
           return;
         }
 
-        setSlideTemplates([]);
-        setSlideTemplateStatus("error");
-        setSlideTemplateError(
-          error instanceof Error ? error.message : "无法加载幻灯片模板。",
+        setHtmlToPptxTemplates([]);
+        setHtmlToPptxTemplateStatus("error");
+        setHtmlToPptxTemplateError(
+          error instanceof Error ? error.message : "无法加载 PPTX 模板。",
         );
       }
     })();
@@ -5450,7 +5573,10 @@ export function AgentConsole({
         generateSessionTitleInBackground(sessionId, trimmed);
       }
 
-      const extraActiveSkills = isSlidesComposerSkillEnabled ? ["slides"] : [];
+      const extraActiveSkills = [
+        ...(isHtmlComposerSkillEnabled ? ["html"] : []),
+        ...(isHtmlToPptxComposerSkillEnabled ? ["html-to-pptx"] : []),
+      ];
       const response = await fetch(`${apiBaseUrl}/api/runs`, {
         method: "POST",
         headers: {
@@ -5463,7 +5589,18 @@ export function AgentConsole({
             settings,
             extraActiveSkills,
             isResearchModeEnabled,
-            isSlidesComposerSkillEnabled ? effectiveSlidesTemplateId : "",
+            {
+              htmlDesignStyleId:
+                isHtmlComposerSkillEnabled || isHtmlToPptxComposerSkillEnabled
+                  ? effectiveHtmlDesignStyleId
+                  : "",
+              htmlPageTemplateId: isHtmlComposerSkillEnabled
+                ? effectiveHtmlPageTemplateId
+                : "",
+              htmlToPptxTemplateId: isHtmlToPptxComposerSkillEnabled
+                ? effectiveHtmlToPptxTemplateId
+                : "",
+            },
           ),
           workspaceRoot: sessionForRun.workspaceRoot,
           sessionId,
@@ -5486,7 +5623,8 @@ export function AgentConsole({
 
       const runResponse = (await response.json()) as { runId?: string };
       activeRequest.runId = runResponse.runId;
-      setIsSlidesComposerSkillEnabled(false);
+      setIsHtmlComposerSkillEnabled(false);
+      setIsHtmlToPptxComposerSkillEnabled(false);
       setIsResearchModeEnabled(false);
       appendStreamEventLog({
         action: "run_started_command",
@@ -5711,49 +5849,134 @@ export function AgentConsole({
     selectedSkillNames.length > 0 || activatedSkillsInSelectedRun.length > 0
       ? `已选 ${selectedSkillNames.length} · 已激活 ${activatedSkillsInSelectedRun.length}`
       : "自动路由";
-  const slidesSkillAvailable = skillIndices.some(
-    (skill) => skill.name === "slides",
+  const htmlSkillAvailable = skillIndices.some((skill) => skill.name === "html");
+  const htmlToPptxSkillAvailable = skillIndices.some(
+    (skill) => skill.name === "html-to-pptx",
   );
-  const defaultSlidesTemplate =
-    slideTemplates.find((template) => template.default) ?? slideTemplates[0];
-  const configuredSlidesTemplate = slideTemplates.find(
-    (template) => template.id === settings.selectedSlidesTemplateId,
+  const defaultHtmlDesignStyle = htmlDesignStyles[0];
+  const configuredHtmlDesignStyle = htmlDesignStyles.find(
+    (style) => style.id === settings.selectedHtmlDesignStyleId,
   );
-  const effectiveSlidesTemplate =
-    configuredSlidesTemplate ?? defaultSlidesTemplate;
-  const effectiveSlidesTemplateId = effectiveSlidesTemplate?.id ?? "";
-  const slidesTemplateUnavailable =
-    slideTemplateStatus !== "success" || slideTemplates.length === 0;
-  const slidesTemplateUnavailableTitle =
-    slideTemplateStatus === "error"
-      ? slideTemplateError || "slides 模板加载失败"
-      : slideTemplateStatus === "success"
-        ? "当前未发现 slides 模板"
-        : "正在加载 slides 模板";
-  const slidesSendBlocked =
-    isSlidesComposerSkillEnabled && slidesTemplateUnavailable;
-  const slidesComposerButtonDisabled =
+  const effectiveHtmlDesignStyle =
+    configuredHtmlDesignStyle ?? defaultHtmlDesignStyle;
+  const effectiveHtmlDesignStyleId = effectiveHtmlDesignStyle?.id ?? "";
+  const defaultHtmlPageTemplate = htmlPageTemplates[0];
+  const configuredHtmlPageTemplate = htmlPageTemplates.find(
+    (template) => template.id === settings.selectedHtmlPageTemplateId,
+  );
+  const effectiveHtmlPageTemplate =
+    configuredHtmlPageTemplate ?? defaultHtmlPageTemplate;
+  const effectiveHtmlPageTemplateId = effectiveHtmlPageTemplate?.id ?? "";
+  const defaultHtmlToPptxTemplate =
+    htmlToPptxTemplates.find((template) => template.default) ??
+    htmlToPptxTemplates[0];
+  const configuredHtmlToPptxTemplate = htmlToPptxTemplates.find(
+    (template) => template.id === settings.selectedHtmlToPptxTemplateId,
+  );
+  const effectiveHtmlToPptxTemplate =
+    configuredHtmlToPptxTemplate ?? defaultHtmlToPptxTemplate;
+  const effectiveHtmlToPptxTemplateId = effectiveHtmlToPptxTemplate?.id ?? "";
+  const htmlDesignUnavailable =
+    htmlDesignStatus !== "success" || htmlDesignStyles.length === 0;
+  const htmlPageTemplateUnavailable =
+    htmlDesignStatus !== "success" || htmlPageTemplates.length === 0;
+  const htmlToPptxTemplateUnavailable =
+    htmlToPptxTemplateStatus !== "success" || htmlToPptxTemplates.length === 0;
+  const htmlDesignUnavailableTitle =
+    htmlDesignStatus === "error"
+      ? htmlDesignError || "HTML 设计选项加载失败"
+      : htmlDesignStatus === "success"
+        ? "当前未发现 HTML 设计风格"
+        : "正在加载 HTML 设计选项";
+  const htmlPageTemplateUnavailableTitle =
+    htmlDesignStatus === "error"
+      ? htmlDesignError || "HTML 网页类型加载失败"
+      : htmlDesignStatus === "success"
+        ? "当前未发现 HTML 网页类型"
+        : "正在加载 HTML 网页类型";
+  const htmlToPptxTemplateUnavailableTitle =
+    htmlToPptxTemplateStatus === "error"
+      ? htmlToPptxTemplateError || "PPTX 模板加载失败"
+      : htmlToPptxTemplateStatus === "success"
+        ? "当前未发现 PPTX 模板"
+        : "正在加载 PPTX 模板";
+  const htmlSendBlocked =
+    isHtmlComposerSkillEnabled &&
+    (htmlDesignUnavailable || htmlPageTemplateUnavailable);
+  const htmlToPptxSendBlocked =
+    isHtmlToPptxComposerSkillEnabled &&
+    (htmlDesignUnavailable || htmlToPptxTemplateUnavailable);
+  const composerSkillSendBlocked = htmlSendBlocked || htmlToPptxSendBlocked;
+  const htmlComposerButtonDisabled =
     skillIndexStatus === "loading" ||
-    !slidesSkillAvailable ||
-    slidesTemplateUnavailable;
-  let slidesComposerButtonTitle = "本次发送启用 slides skill";
+    !htmlSkillAvailable ||
+    htmlDesignUnavailable ||
+    htmlPageTemplateUnavailable;
+  const htmlToPptxComposerButtonDisabled =
+    skillIndexStatus === "loading" ||
+    !htmlToPptxSkillAvailable ||
+    htmlDesignUnavailable ||
+    htmlToPptxTemplateUnavailable;
+  let htmlComposerButtonTitle = "本次发送启用 html skill";
+  let htmlToPptxComposerButtonTitle = "本次发送启用 html-to-pptx skill";
 
   if (skillIndexStatus === "loading") {
-    slidesComposerButtonTitle = "正在加载本地能力列表";
-  } else if (!slidesSkillAvailable) {
-    slidesComposerButtonTitle = "当前未发现 slides skill";
-  } else if (slidesTemplateUnavailable) {
-    slidesComposerButtonTitle = slidesTemplateUnavailableTitle;
-  } else if (isSlidesComposerSkillEnabled) {
-    slidesComposerButtonTitle = "本次发送会强制加载 slides skill";
+    htmlComposerButtonTitle = "正在加载本地能力列表";
+    htmlToPptxComposerButtonTitle = "正在加载本地能力列表";
+  } else {
+    if (!htmlSkillAvailable) {
+      htmlComposerButtonTitle = "当前未发现 html skill";
+    } else if (htmlDesignUnavailable) {
+      htmlComposerButtonTitle = htmlDesignUnavailableTitle;
+    } else if (htmlPageTemplateUnavailable) {
+      htmlComposerButtonTitle = htmlPageTemplateUnavailableTitle;
+    } else if (isHtmlComposerSkillEnabled) {
+      htmlComposerButtonTitle = "本次发送会强制加载 html skill";
+    }
+
+    if (!htmlToPptxSkillAvailable) {
+      htmlToPptxComposerButtonTitle = "当前未发现 html-to-pptx skill";
+    } else if (htmlDesignUnavailable) {
+      htmlToPptxComposerButtonTitle = htmlDesignUnavailableTitle;
+    } else if (htmlToPptxTemplateUnavailable) {
+      htmlToPptxComposerButtonTitle = htmlToPptxTemplateUnavailableTitle;
+    } else if (isHtmlToPptxComposerSkillEnabled) {
+      htmlToPptxComposerButtonTitle =
+        "本次发送会强制加载 html-to-pptx skill";
+    }
   }
   const researchModeButtonTitle = isResearchModeEnabled
     ? "本次发送已启用研究校验：开启 research 信号校验与完整性打回"
     : "本次发送启用研究校验";
-  const renderSlidesTemplateStrip = (placement: "draft" | "composer") => {
-    if (!isSlidesComposerSkillEnabled) {
-      return null;
-    }
+  const renderSelectionStrip = ({
+    activeId,
+    emptyText,
+    errorText,
+    loadingText,
+    onSelect,
+    options,
+    placement,
+    status,
+    title,
+  }: {
+    activeId: string;
+    emptyText: string;
+    errorText: string;
+    loadingText: string;
+    onSelect: (id: string) => void;
+    options: Array<{
+      accentColor?: string;
+      description: string;
+      id: string;
+      name: string;
+      preview?: string;
+      surfaceColor?: string;
+    }>;
+    placement: "draft" | "composer";
+    status: "error" | "idle" | "loading" | "success";
+    title: string;
+  }) => {
+    const activeOption = options.find((option) => option.id === activeId);
 
     return (
       <div
@@ -5764,26 +5987,28 @@ export function AgentConsole({
         }`}
       >
         <div className={styles.slidesTemplateStripHeader}>
-          <span>Slides 模板</span>
+          <span>{title}</span>
           <strong>
-            {slideTemplateStatus === "loading"
-              ? "加载中"
-              : effectiveSlidesTemplate?.name ?? "未配置"}
+            {status === "loading"
+              ? loadingText
+              : activeOption?.name ?? "未配置"}
           </strong>
         </div>
         <div className={styles.slidesTemplateScroller}>
-          {slideTemplateStatus === "error" ? (
-            <span className={styles.slidesTemplateNotice}>
-              {slideTemplateError || "模板加载失败"}
-            </span>
+          {status === "error" ? (
+            <span className={styles.slidesTemplateNotice}>{errorText}</span>
           ) : null}
 
-          {slideTemplates.map((template) => {
-            const isSelected = template.id === effectiveSlidesTemplateId;
+          {status === "success" && options.length === 0 ? (
+            <span className={styles.slidesTemplateNotice}>{emptyText}</span>
+          ) : null}
+
+          {options.map((option) => {
+            const isSelected = option.id === activeId;
 
             return (
               <button
-                key={template.id}
+                key={option.id}
                 aria-pressed={isSelected}
                 className={`${styles.slidesTemplateOption} ${
                   isSelected ? styles.slidesTemplateOptionActive : ""
@@ -5791,23 +6016,29 @@ export function AgentConsole({
                 style={
                   {
                     "--slide-template-accent":
-                      template.accentColor ?? "var(--ranni-accent-2)",
+                      option.accentColor ?? "var(--ranni-accent-2)",
                     "--slide-template-surface":
-                      template.surfaceColor ?? "rgba(255, 255, 255, 0.08)",
+                      option.surfaceColor ?? "rgba(255, 255, 255, 0.08)",
                   } as CSSProperties
                 }
                 type="button"
-                onClick={() =>
-                  setSettings((current) => ({
-                    ...current,
-                    selectedSlidesTemplateId: template.id,
-                  }))
-                }
+                onClick={() => onSelect(option.id)}
               >
-                <span className={styles.slidesTemplateSwatch} aria-hidden="true" />
+                {option.preview ? (
+                  <img
+                    alt=""
+                    className={styles.slidesTemplatePreview}
+                    src={option.preview}
+                  />
+                ) : (
+                  <span
+                    className={styles.slidesTemplateSwatch}
+                    aria-hidden="true"
+                  />
+                )}
                 <span>
-                  <strong>{template.name}</strong>
-                  <small>{template.description}</small>
+                  <strong>{option.name}</strong>
+                  <small>{option.description}</small>
                 </span>
               </button>
             );
@@ -5815,6 +6046,89 @@ export function AgentConsole({
         </div>
       </div>
     );
+  };
+  const renderHtmlComposerSelections = (placement: "draft" | "composer") => {
+    if (!isHtmlComposerSkillEnabled && !isHtmlToPptxComposerSkillEnabled) {
+      return null;
+    }
+
+    return (
+      <>
+        {renderSelectionStrip({
+          activeId: effectiveHtmlDesignStyleId,
+          emptyText: "当前未发现 HTML 设计风格",
+          errorText: htmlDesignError || "HTML 设计选项加载失败",
+          loadingText: "加载中",
+          onSelect: (id) =>
+            setSettings((current) => ({
+              ...current,
+              selectedHtmlDesignStyleId: id,
+            })),
+          options: htmlDesignStyles,
+          placement,
+          status: htmlDesignStatus,
+          title: "设计风格",
+        })}
+
+        {isHtmlComposerSkillEnabled
+          ? renderSelectionStrip({
+              activeId: effectiveHtmlPageTemplateId,
+              emptyText: "当前未发现 HTML 网页类型",
+              errorText: htmlDesignError || "HTML 网页类型加载失败",
+              loadingText: "加载中",
+              onSelect: (id) =>
+                setSettings((current) => ({
+                  ...current,
+                  selectedHtmlPageTemplateId: id,
+                })),
+              options: htmlPageTemplates,
+              placement,
+              status: htmlDesignStatus,
+              title: "网页类型",
+            })
+          : null}
+
+        {isHtmlToPptxComposerSkillEnabled
+          ? renderSelectionStrip({
+              activeId: effectiveHtmlToPptxTemplateId,
+              emptyText: "当前未发现 PPTX 模板",
+              errorText: htmlToPptxTemplateError || "PPTX 模板加载失败",
+              loadingText: "加载中",
+              onSelect: (id) =>
+                setSettings((current) => ({
+                  ...current,
+                  selectedHtmlToPptxTemplateId: id,
+                })),
+              options: htmlToPptxTemplates,
+              placement,
+              status: htmlToPptxTemplateStatus,
+              title: "PPTX 模板",
+            })
+          : null}
+      </>
+    );
+  };
+  const toggleHtmlComposerSkill = () => {
+    setIsHtmlComposerSkillEnabled((current) => {
+      const next = !current;
+
+      if (next) {
+        setIsHtmlToPptxComposerSkillEnabled(false);
+      }
+
+      return next;
+    });
+  };
+  const toggleHtmlToPptxComposerSkill = () => {
+    setIsHtmlToPptxComposerSkillEnabled((current) => {
+      const next = !current;
+
+      if (next) {
+        setIsHtmlComposerSkillEnabled(false);
+      }
+
+      return next;
+    });
   };
   const toggleActiveSkill = (name: string, enabled: boolean) => {
     setSettings((current) => {
@@ -6055,7 +6369,7 @@ export function AgentConsole({
               className={styles.draftSession}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!slidesSendBlocked) {
+                if (!composerSkillSendBlocked) {
                   void sendMessage(input);
                 }
               }}
@@ -6080,7 +6394,7 @@ export function AgentConsole({
                         if (
                           workspacePickerStatus !== "loading" &&
                           input.trim() &&
-                          !slidesSendBlocked
+                          !composerSkillSendBlocked
                         ) {
                           void sendMessage(input);
                         }
@@ -6089,21 +6403,34 @@ export function AgentConsole({
                   />
                   <div className={styles.composerSkillToolbar}>
                     <button
-                      aria-pressed={isSlidesComposerSkillEnabled}
+                      aria-pressed={isHtmlComposerSkillEnabled}
                       className={`${styles.composerSkillToggle} ${
-                        isSlidesComposerSkillEnabled
+                        isHtmlComposerSkillEnabled
                           ? styles.composerSkillToggleActive
                           : ""
                       }`}
-                      disabled={slidesComposerButtonDisabled}
-                      title={slidesComposerButtonTitle}
+                      disabled={htmlComposerButtonDisabled}
+                      title={htmlComposerButtonTitle}
                       type="button"
-                      onClick={() =>
-                        setIsSlidesComposerSkillEnabled((current) => !current)
-                      }
+                      onClick={toggleHtmlComposerSkill}
+                    >
+                      <Globe2 size={14} aria-hidden="true" />
+                      <span>网页</span>
+                    </button>
+                    <button
+                      aria-pressed={isHtmlToPptxComposerSkillEnabled}
+                      className={`${styles.composerSkillToggle} ${
+                        isHtmlToPptxComposerSkillEnabled
+                          ? styles.composerSkillToggleActive
+                          : ""
+                      }`}
+                      disabled={htmlToPptxComposerButtonDisabled}
+                      title={htmlToPptxComposerButtonTitle}
+                      type="button"
+                      onClick={toggleHtmlToPptxComposerSkill}
                     >
                       <Sparkles size={14} aria-hidden="true" />
-                      <span>幻灯片</span>
+                      <span>PPTX</span>
                     </button>
                     <button
                       aria-pressed={isResearchModeEnabled}
@@ -6127,7 +6454,7 @@ export function AgentConsole({
                     disabled={
                       !input.trim() ||
                       !effectiveHasApiKey ||
-                      slidesSendBlocked ||
+                      composerSkillSendBlocked ||
                       workspacePickerStatus === "loading"
                     }
                     type="submit"
@@ -6136,7 +6463,7 @@ export function AgentConsole({
                   </button>
                 </div>
 
-                {renderSlidesTemplateStrip("draft")}
+                {renderHtmlComposerSelections("draft")}
 
                 <div
                   className={styles.draftWorkspaceButton}
@@ -6705,12 +7032,12 @@ export function AgentConsole({
               className={styles.composer}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!slidesSendBlocked) {
+                if (!composerSkillSendBlocked) {
                   void sendMessage(input);
                 }
               }}
             >
-              {renderSlidesTemplateStrip("composer")}
+              {renderHtmlComposerSelections("composer")}
 
               <div className={styles.composerInputWrap}>
                 <textarea
@@ -6731,7 +7058,7 @@ export function AgentConsole({
                       if (
                         !currentSessionIsRunning &&
                         input.trim() &&
-                        !slidesSendBlocked
+                        !composerSkillSendBlocked
                       ) {
                         void sendMessage(input);
                       }
@@ -6740,21 +7067,36 @@ export function AgentConsole({
                 />
                 <div className={styles.composerSkillToolbar}>
                   <button
-                    aria-pressed={isSlidesComposerSkillEnabled}
+                    aria-pressed={isHtmlComposerSkillEnabled}
                     className={`${styles.composerSkillToggle} ${
-                      isSlidesComposerSkillEnabled
+                      isHtmlComposerSkillEnabled
                         ? styles.composerSkillToggleActive
                         : ""
                     }`}
-                    disabled={slidesComposerButtonDisabled || currentSessionIsRunning}
-                    title={slidesComposerButtonTitle}
+                    disabled={htmlComposerButtonDisabled || currentSessionIsRunning}
+                    title={htmlComposerButtonTitle}
                     type="button"
-                    onClick={() =>
-                      setIsSlidesComposerSkillEnabled((current) => !current)
+                    onClick={toggleHtmlComposerSkill}
+                  >
+                    <Globe2 size={14} aria-hidden="true" />
+                    <span>网页</span>
+                  </button>
+                  <button
+                    aria-pressed={isHtmlToPptxComposerSkillEnabled}
+                    className={`${styles.composerSkillToggle} ${
+                      isHtmlToPptxComposerSkillEnabled
+                        ? styles.composerSkillToggleActive
+                        : ""
+                    }`}
+                    disabled={
+                      htmlToPptxComposerButtonDisabled || currentSessionIsRunning
                     }
+                    title={htmlToPptxComposerButtonTitle}
+                    type="button"
+                    onClick={toggleHtmlToPptxComposerSkill}
                   >
                     <Sparkles size={14} aria-hidden="true" />
-                    <span>幻灯片</span>
+                    <span>PPTX</span>
                   </button>
                   <button
                     aria-pressed={isResearchModeEnabled}
@@ -6784,7 +7126,9 @@ export function AgentConsole({
                   <button
                     className={styles.submitButton}
                     disabled={
-                      !input.trim() || !effectiveHasApiKey || slidesSendBlocked
+                      !input.trim() ||
+                      !effectiveHasApiKey ||
+                      composerSkillSendBlocked
                     }
                     type="submit"
                   >
@@ -7279,7 +7623,7 @@ export function AgentConsole({
                     </div>
 
                     <p className={styles.settingsHint}>
-                      开启后，新 run 会在第一步直接加载对应技能；关闭时，Agent 仍可根据能力索引调用 load_skill 自动激活。输入框里的“幻灯片”开关只影响下一次发送。
+                      开启后，新 run 会在第一步直接加载对应技能；关闭时，Agent 仍可根据能力索引调用 load_skill 自动激活。输入框里的“网页 / PPTX”开关只影响下一次发送。
                     </p>
 
                     {skillIndexStatus === "loading" ? (

@@ -581,8 +581,8 @@
 }
 
 .slidesTemplateOption {
-  min-width: 210px;
-  max-width: 240px;
+  min-width: 260px;
+  max-width: 300px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -638,6 +638,16 @@
   background:
     linear-gradient(135deg, var(--slide-template-accent) 0 50%, transparent 50%),
     var(--slide-template-surface);
+}
+
+.slidesTemplatePreview {
+  width: 58px;
+  height: 34px;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: var(--slide-template-surface);
+  object-fit: cover;
 }
 
 .slidesTemplateNotice {

@@ -16,10 +16,10 @@ date: 2026-07-06
 | `src/renderer/` | Vite 前端入口 |
 | `src/server/` | Express 后端、API、静态网页托管 |
 | `lib/` | Agent loop、事件总线、运行注册表、EventMapper、工具、模型适配、trace、workspace、task memory |
-| `skills/` | 本地动态 skill 包，例如 `slides` 和 `demo`；`slides` 包含 HTML-to-PPTX 工具 |
+| `skills/` | 本地动态 skill 包，当前产品能力为 `html` 和 `html-to-pptx` |
 | `docs/` | 产品、架构、核心概念 |
 | `public/` | 浏览器可访问静态资源 |
-| `scripts/` | 维护脚本，例如 logo 资产生成、research eval、slides HTML-to-PPTX spike runner |
+| `scripts/` | 维护脚本，例如 logo 资产生成、research eval、HTML 设计预览生成、HTML-to-PPTX spike runner |
 
 ## 根目录文件
 
@@ -57,7 +57,7 @@ date: 2026-07-06
 - assistant 消息复制、导出 markdown。
 - session 级 trace 导出，包含未完成 run。
 - 首条消息异步 session 命名。
-- 输入框内的临时能力开关，例如“幻灯片”。
+- 输入框内的临时能力开关，例如“网页”和“PPTX”。
 
 页面结构映射：
 
@@ -294,9 +294,19 @@ Workspace 边界工具。
 
 `resolveWorkspacePath` 保证文件工具只能访问当前 workspace 内的路径。
 
-### `skills/slides/tools.ts`
+### `skills/html/tools.ts`
 
-slides skill 专属工具。
+HTML skill 专属工具。
+
+主要职责：
+
+- `init_html_workspace` 初始化静态网页目录，写入 `index.html`、`styles.css`、`assets/`、`preview/` 和生成报告。
+- `validate_static_html` 用 Playwright 渲染桌面和移动视口，输出预览截图和 `qa-report.json`。
+- 所有工具输入输出通过 workspace resolver 解析。
+
+### `skills/html-to-pptx/tools.ts`
+
+HTML-to-PPTX skill 专属工具。
 
 主要职责：
 
@@ -304,7 +314,7 @@ slides skill 专属工具。
 - 保留 zod schema、workspace resolver、模板初始化和 `.mjs` 脚本调度。
 - 所有工具输入输出通过 workspace resolver 解析。
 
-### `skills/slides/scripts/html-pptx/`
+### `skills/html-to-pptx/scripts/html-pptx/`
 
 HTML-to-PPTX 脚本实现目录。
 
@@ -314,17 +324,27 @@ HTML-to-PPTX 脚本实现目录。
 - 用 `dom-to-pptx` 导出有限可编辑 PPTX。
 - 用 LibreOffice、Poppler、JSZip、pixelmatch 和 pngjs 执行预览、结构检查和客观视觉 smoke check。
 
-### `lib/slides/templates.ts`
+### `lib/html-design/catalog.ts`
 
-slides 模板 registry。
+HTML 设计风格和网页类型 catalog。
 
 主要职责：
 
-- 扫描 `skills/slides/templates/*/manifest.json`。
-- 为后端接口、agent system prompt 和 slides 工具提供模板元信息。
+- 定义 10 个设计风格和 10 个网页类型模板。
+- 为后端接口、前端选择卡片、agent system prompt 和 HTML 工具提供元信息。
+- 记录公开调研来源 URL 和本地产品指导文档位置。
+
+### `lib/html-to-pptx/templates.ts`
+
+HTML-to-PPTX 模板 registry。
+
+主要职责：
+
+- 扫描 `skills/html-to-pptx/templates/*/manifest.json`。
+- 为后端接口、agent system prompt 和 HTML-to-PPTX 工具提供模板元信息。
 - 读取模板 `guidance.md`，让 agent 在幻灯片创作时遵守选中模板。
 
-### `skills/slides/templates/default-business/`
+### `skills/html-to-pptx/templates/default-business/`
 
 默认 HTML-to-PPTX 模板包。
 
@@ -332,20 +352,22 @@ slides 模板 registry。
 
 - 提供真实 `deck.html`、`styles.css`、`manifest.json`、`tokens.json`、`guidance.md` 和本地 SVG 资产。
 - 覆盖封面、目录、文本、双栏图文、数据表格、复杂图表截图回退、时间线和总结页。
-- 遵守 slides skill 设计指南中的画布、排版、留白、低圆角、静态输出和 PPTX 兼容性规则。
+- 遵守 HTML-to-PPTX 设计指南中的画布、排版、留白、低圆角、静态输出和 PPTX 兼容性规则。
 
-### `src/server/app.ts` slides templates API
+### `src/server/app.ts` HTML design API
 
-slides 模板列表接口。
+HTML 设计和 PPTX 模板列表接口。
 
 主要职责：
 
-- `GET /api/slides/templates` 返回可选模板元信息。
-- `POST /api/runs` 接收 `toolSettings.slides.templateId` 并传给 agent。
+- `GET /api/html-design/options` 返回设计风格和网页类型模板。
+- `GET /api/html-to-pptx/templates` 返回可选 PPTX 模板元信息。
+- `GET /api/slides/templates` 保留旧入口兼容，返回同一组 PPTX 模板。
+- `POST /api/runs` 接收 `toolSettings.htmlDesign` 和 `toolSettings.htmlToPptx` 并传给 agent。
 
 ### `docs/tech/v2-architecture/slides-skill-design/`
 
-slides skill 设计规范目录。
+HTML-to-PPTX 设计规范目录。
 
 主要职责：
 

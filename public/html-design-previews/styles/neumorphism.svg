@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" role="img" aria-label="新拟态风">
+  <rect width="320" height="180" rx="18" fill="#eef4fb"/>
+  <rect x="20" y="22" width="280" height="136" rx="14" fill="rgba(255,255,255,.72)" stroke="rgba(15,23,42,.16)"/>
+  <circle cx="264" cy="54" r="22" fill="#60a5fa" opacity=".9"/>
+  <rect x="38" y="42" width="118" height="12" rx="6" fill="#60a5fa"/>
+  <rect x="38" y="68" width="190" height="8" rx="4" fill="rgba(15,23,42,.64)"/>
+  <rect x="38" y="86" width="154" height="8" rx="4" fill="rgba(15,23,42,.34)"/>
+  <rect x="38" y="116" width="68" height="22" rx="7" fill="#60a5fa"/>
+  <rect x="118" y="116" width="54" height="22" rx="7" fill="transparent" stroke="rgba(15,23,42,.24)"/>
+  <text x="20" y="174" fill="rgba(15,23,42,.72)" font-family="Inter, Arial, sans-serif" font-size="12">新拟态风 · 柔和凸起、浅色背景和低对比阴影。</text>
+</svg>

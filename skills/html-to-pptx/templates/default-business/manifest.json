@@ -5,6 +5,7 @@
   "description": "稳健的商务汇报模板，适合策略、研究、项目复盘和通用工作汇报。",
   "accentColor": "#0f766e",
   "default": true,
+  "preview": "/html-design-previews/pptx/default-business.svg",
   "tags": ["business", "report", "strategy", "default"],
   "fontPackages": ["system-inter-noto-sans-sc"],
   "entryHtml": "deck.html",
