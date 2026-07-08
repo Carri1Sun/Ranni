@@ -53,7 +53,7 @@ Test harness 通常包含：
 在 Ranni / numas-agent 中，harness 主要对应以下部分：
 
 - `lib/agent.ts`：agent 主循环，负责多步执行、工具调用、上下文快照和 trace 事件。
-- `lib/llm/`：模型 provider 层，负责 DeepSeek、Qwen、自定义 OpenAI-compatible API 的请求和响应适配。
+- `lib/llm/`：模型 provider 层，负责 DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible API 的请求和响应适配。
 - `lib/tools.ts`：工具定义和执行入口。
 - `lib/trace.ts`：运行状态、模型请求、工具调用、thinking、响应等结构化记录。
 - `src/server/app.ts`：把前端会话请求接入 agent 运行流程。
@@ -93,4 +93,3 @@ The reasoning_content in the thinking mode must be passed back to the API.
 - 能记录足够的信息来复盘失败
 - 尽量把业务能力沉淀到工具和 skill 中，而不是塞进单次 prompt
 - 让同一个任务在不同运行中尽量可复现
-

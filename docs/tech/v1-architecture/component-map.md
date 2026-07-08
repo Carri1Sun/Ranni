@@ -401,6 +401,29 @@ Qwen / DashScope 配置：
 - 默认 base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`。
 - 默认 context window `1_000_000`。
 
+### `lib/llm/providers/anthropic-compatible.ts`
+
+Anthropic-compatible 通用 provider。
+
+主要职责：
+
+- 构造 Messages API 请求。
+- 解析 text、thinking、tool use 和 tool result content blocks。
+- 解析 Anthropic-compatible 流式响应，向 agent 回传 thinking delta。
+- 处理 retry。
+- 支持 abort。
+- 生成 trace request/response。
+
+### `lib/llm/providers/minimax-token-plan.ts`
+
+MiniMax Token Plan 配置：
+
+- 默认模型 `MiniMax-M3`。
+- 默认 base URL `https://api.minimax.io/anthropic`。
+- 默认 context window `1_000_000`。
+- 使用 `MINIMAX_TOKEN_PLAN_KEY` 读取 Subscription Key。
+- 全球 endpoint 鉴权区域不匹配时尝试 `https://api.minimaxi.com/anthropic`。
+
 ### `lib/llm/providers/custom-openai.ts`
 
 自定义 OpenAI-compatible provider。

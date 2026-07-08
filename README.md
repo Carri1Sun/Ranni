@@ -16,7 +16,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
 - 设置页包含能力设置；输入框内的“幻灯片”开关可在下一次发送时临时启用 slides skill。
-- 模型 provider 支持 DeepSeek、OpenAI、Qwen、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
+- 模型 provider 支持 DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible URL。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `slides` skill，使用受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
@@ -91,6 +91,11 @@ LLM_MAX_TOKENS=4096
 LLM_ENABLE_THINKING=true
 LLM_REASONING_EFFORT=high
 LLM_PRESERVE_THINKING=false
+MINIMAX_TOKEN_PLAN_KEY=
+MINIMAX_TOKEN_PLAN_BASE_URL=https://api.minimax.io/anthropic
+MINIMAX_TOKEN_PLAN_MODEL=MiniMax-M3
+MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW=1000000
+MINIMAX_TOKEN_PLAN_MAX_TOKENS=4096
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=3001
 VITE_API_BASE_URL=
@@ -117,6 +122,11 @@ VITE_API_BASE_URL=
 | `LLM_ENABLE_THINKING` | 是否启用 thinking mode |
 | `LLM_REASONING_EFFORT` | DeepSeek reasoning effort |
 | `LLM_PRESERVE_THINKING` | provider 是否保留 thinking |
+| `MINIMAX_TOKEN_PLAN_KEY` | MiniMax Token Plan Subscription Key |
+| `MINIMAX_TOKEN_PLAN_BASE_URL` | MiniMax Anthropic-compatible Token Plan 地址，默认 `https://api.minimax.io/anthropic` |
+| `MINIMAX_TOKEN_PLAN_MODEL` | MiniMax Token Plan 模型，默认 `MiniMax-M3` |
+| `MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW` | MiniMax Token Plan 上下文窗口估计值，默认 `1000000` |
+| `MINIMAX_TOKEN_PLAN_MAX_TOKENS` | MiniMax Token Plan 单次模型输出上限，默认 `4096` |
 | `TAVILY_API_KEY` | 网页搜索能力所需 key |
 | `AGENT_WORKSPACE_ROOT` | 低层工具缺少 workspaceRoot 时的后备工作区；产品主路径不依赖它 |
 | `RANNI_DEFAULT_WORKSPACE` | 自动创建 session 专属目录的根目录，默认 `~/Documents/Ranni-Workspace` |

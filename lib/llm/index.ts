@@ -6,6 +6,7 @@ import type {
 } from "./types";
 import { customOpenAIProvider } from "./providers/custom-openai";
 import { deepseekOpenAIProvider } from "./providers/deepseek-openai";
+import { minimaxTokenPlanProvider } from "./providers/minimax-token-plan";
 import { openAIProvider } from "./providers/openai";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
 
@@ -18,6 +19,9 @@ const providers = {
   deepseek: deepseekOpenAIProvider,
   "deepseek-openai": deepseekOpenAIProvider,
   "deepseek-openai-compatible": deepseekOpenAIProvider,
+  minimax: minimaxTokenPlanProvider,
+  "minimax-token-plan": minimaxTokenPlanProvider,
+  "minimax-tokenplan": minimaxTokenPlanProvider,
   openai: openAIProvider,
   "openai-api": openAIProvider,
   "openai-chat-completions": openAIProvider,

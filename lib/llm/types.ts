@@ -79,6 +79,7 @@ export type ModelConnectionConfig = {
   apiKey?: string;
   baseUrl?: string;
   deepseekApiKey?: string;
+  minimaxTokenPlanKey?: string;
   model?: string;
   provider?: string;
   qwenApiKey?: string;
