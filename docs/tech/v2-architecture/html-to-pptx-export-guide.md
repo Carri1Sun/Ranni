@@ -21,7 +21,7 @@ related: slides-skill-plan.md、slides-skill-developer-guide.md、document-gener
 - 对复杂图表、复杂 CSS 装饰、canvas/SVG 组合视觉做局部截图回退。
 - 所有产物、中间文件、预览、诊断报告都落在当前 session workspace。
 
-本方案已接入 slides skill 当前主流程。skill 当前只暴露 HTML-to-PPTX 工具链，agent 生成幻灯片时应先创作受限 slide HTML，再通过准备、导出、验证三步产出 `.pptx`。
+本方案已接入 `html-to-pptx` skill 当前主流程。skill 当前只暴露 HTML-to-PPTX 工具链，agent 生成 PPTX 时应先创作受限 slide HTML，再通过准备、导出、验证三步产出 `.pptx`。
 
 ## 1. 方案摘要
 
@@ -391,7 +391,7 @@ computed style + DOM box
 
 ## 9. 当前 skill 路线
 
-当前 slides skill 的可调用工具只包含 HTML-to-PPTX 路线，适合视觉创作效率更高、预览更直接的场景。
+当前 `html-to-pptx` skill 的可调用工具只包含 HTML-to-PPTX 路线，适合视觉创作效率更高、预览更直接的场景。静态网页创作由独立 `html` skill 负责。
 
 当前工具链：
 
@@ -418,19 +418,19 @@ computed style + DOM box
 
 ## 11. 推荐实现顺序
 
-1. 维护 `skills/slides/templates/default-business/` 默认模板包。
+1. 维护 `skills/html-to-pptx/templates/default-business/` 默认模板包。
 2. 保持 Playwright 渲染、DOM 测量与截图回退脚本可独立运行。
 3. 保持 `dom-to-pptx` browser bundle 注入和图片内联稳定。
 4. 生成 HTML 预览和 PPTX 预览。
 5. 记录可编辑对象统计、截图回退统计和视觉 smoke check。
 6. 用 PowerPoint、Keynote、LibreOffice 做阶段性手动兼容检查。
-7. 将稳定子集写回 slides skill 规范。
+7. 将稳定子集写回 HTML-to-PPTX skill 规范。
 
 验收标准以“Ranni 能稳定交付有限可编辑且视觉可靠的 PPTX”为准。
 
 ## 12. 当前实现状态
 
-已在 `skills/slides/` 中接入 HTML-to-PPTX 路线，当前可调用工具为以下四个。
+已在 `skills/html-to-pptx/` 中接入 HTML-to-PPTX 路线，当前可调用工具为以下四个。
 
 新增依赖：
 
@@ -454,7 +454,7 @@ computed style + DOM box
 脚本实现：
 
 ```text
-skills/slides/scripts/html-pptx/
+skills/html-to-pptx/scripts/html-pptx/
   lib.mjs
   prepare.mjs
   export.mjs
@@ -464,13 +464,13 @@ skills/slides/scripts/html-pptx/
 模板 registry：
 
 ```text
-lib/slides/templates.ts
+lib/html-to-pptx/templates.ts
 ```
 
 默认模板包：
 
 ```text
-skills/slides/templates/default-business/
+skills/html-to-pptx/templates/default-business/
   manifest.json
   tokens.json
   guidance.md
@@ -483,6 +483,7 @@ skills/slides/templates/default-business/
 
 ```bash
 npm run slides:html-spike
+npm run html-to-pptx:spike
 ```
 
 默认会创建或复用：
@@ -515,7 +516,7 @@ prompt.txt
 html-generation-report.json
 ```
 
-`slides:html-spike` 会执行严格端到端断言：
+`slides:html-spike` 和 `html-to-pptx:spike` 会执行严格端到端断言：
 
 - prompt 已保存并进入 HTML 生成报告。
 - 所有核心产物存在。

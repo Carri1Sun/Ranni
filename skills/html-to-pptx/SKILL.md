@@ -1,9 +1,9 @@
 ---
-name: slides
+name: html-to-pptx
 description: Use when the user wants to create or edit PowerPoint decks (.pptx): research reports, executive decks, strategy narratives, technical explainers, keynote-style talks. Creates restricted slide HTML first, then exports a limited editable PPTX with Playwright, dom-to-pptx, and local raster fallback for complex visuals.
 ---
 
-# slides 技能
+# HTML-to-PPTX 技能
 
 ## 何时使用
 
@@ -11,11 +11,11 @@ description: Use when the user wants to create or edit PowerPoint decks (.pptx):
 
 ## 默认创作路线
 
-slides skill 当前只暴露 HTML-to-PPTX 工具链。做幻灯片时先创作受限 slide HTML，通过浏览器预览与测量确认版式，再导出有限可编辑 `.pptx`。
+HTML-to-PPTX skill 当前只暴露 HTML-to-PPTX 工具链。做幻灯片时先创作受限 slide HTML，通过浏览器预览与测量确认版式，再导出有限可编辑 `.pptx`。
 
 工具顺序：
 
-1. `init_slide_html_workspace`：创建 `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-html/`、`preview-pptx/` 和 `final/`。需要样例时传 `template: "spike-sample"`，或传 `templateId` 使用指定模板包；工具会复制 `skills/slides/templates/<template-id>/` 中的真实 HTML/CSS 模板，并用 `prompt` 保存创作输入。
+1. `init_slide_html_workspace`：创建 `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-html/`、`preview-pptx/` 和 `final/`。需要样例时传 `template: "spike-sample"`，或传 `templateId` 使用指定模板包；工具会复制 `skills/html-to-pptx/templates/<template-id>/` 中的真实 HTML/CSS 模板，并用 `prompt` 保存创作输入。
 2. 编辑 `deck.html` 和 `styles.css`：每页一个 `.slide`，固定 1280x720，重要文本保留为 HTML 文本。
 3. `prepare_slide_html_for_pptx`：用 Playwright 渲染 HTML，测量 `.slide`，把 `data-pptx-raster` 节点截图到 `fallback-assets/`，再写出 `deck.prepared.html` 和 `measurements.json`。
 4. `export_html_to_pptx`：在 Playwright 页面中注入 `dom-to-pptx`，导出前把 workspace 内本地 `<img>` 内联为 data URI，再把 `deck.prepared.html` 转为 `.pptx`。
@@ -55,6 +55,11 @@ npm run slides:html-spike
 - PPTX 兼容：背景层使用 `z-index: 1`，主内容层使用 `z-index: 10`；图片和 canvas 必须有明确像素级宽高，并设置合适的 `object-fit`；表格使用标准 `<table>`、`<tr>`、`<td>`。
 - 装饰和复杂视觉：背景几何图形可绝对定位；复杂图表、canvas、D3/Chart.js、复杂渐变或多层视觉必须放进固定尺寸容器，并标记 `data-pptx-raster` 和 `data-pptx-alt`。
 
+如果本次 run 选择了共享 HTML 设计风格，必须遵守 system prompt 中的 `HTML design selection`。设计风格来源见：
+
+- `docs/product/slides-design/html-design-guide.md`
+- `docs/product/html-design/html-design-style-guidelines.md`
+
 ## 可编辑性原则
 
 - 重要标题、正文、列表、表格文字优先保留为 DOM 文本，并标记 `data-pptx-editable`。
@@ -85,7 +90,7 @@ npm run slides:html-spike
 
 所有路径必须落在当前 session workspace 内。
 
-如果本次 run 选择了 slides 模板，必须使用选中的 `templateId` 调用 `init_slide_html_workspace`，并复用该模板包里的 CSS、布局和设计准则。
+如果本次 run 选择了 HTML-to-PPTX 模板，必须使用选中的 `templateId` 调用 `init_slide_html_workspace`，并复用该模板包里的 CSS、布局和设计准则。
 
 ## 边界
 

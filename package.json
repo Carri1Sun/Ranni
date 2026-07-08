@@ -7,6 +7,8 @@
     "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "tsx watch src/server/index.ts",
     "dev:frontend": "vite",
+    "html-design:previews": "tsx scripts/generate-html-design-previews.ts",
+    "html-to-pptx:spike": "tsx scripts/slides-html-pptx-spike.ts",
     "research:eval": "tsx scripts/research-eval.ts",
     "slides:html-spike": "tsx scripts/slides-html-pptx-spike.ts",
     "build": "rimraf dist && vite build && tsc -p tsconfig.node.json",

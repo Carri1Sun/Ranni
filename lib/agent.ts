@@ -28,7 +28,8 @@ import {
   normalizeSkillNames,
   type SkillIndex,
 } from "./skills/registry";
-import { buildSlidesTemplateRuntimeInstruction } from "./slides/templates";
+import { buildHtmlDesignRuntimeInstruction } from "./html-design/catalog";
+import { buildHtmlToPptxTemplateRuntimeInstruction } from "./html-to-pptx/templates";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -241,9 +242,10 @@ class PacedTextEmitter {
 
 function createSystemPrompt({
   activeSkillNames,
+  htmlDesignInstruction,
+  htmlToPptxTemplateInstruction,
   researchMode,
   runtime,
-  slidesTemplateInstruction,
   skillIndices,
   taskMemorySummary,
   taskState,
@@ -251,9 +253,10 @@ function createSystemPrompt({
   workspaceRoot,
 }: {
   activeSkillNames: string[];
+  htmlDesignInstruction: string[];
+  htmlToPptxTemplateInstruction: string[];
   researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
-  slidesTemplateInstruction: string[];
   skillIndices: SkillIndex[];
   taskMemorySummary: string;
   taskState: TaskState;
@@ -419,8 +422,11 @@ function createSystemPrompt({
           }),
         ]
       : []),
-    ...(slidesTemplateInstruction.length > 0
-      ? [...slidesTemplateInstruction, ""]
+    ...(htmlDesignInstruction.length > 0
+      ? [...htmlDesignInstruction, ""]
+      : []),
+    ...(htmlToPptxTemplateInstruction.length > 0
+      ? [...htmlToPptxTemplateInstruction, ""]
       : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
@@ -1794,14 +1800,31 @@ export async function runAgentTurn({
       const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
       const system = createSystemPrompt({
         activeSkillNames,
-        researchMode,
-        runtime,
-        slidesTemplateInstruction:
-          activeSkillNames.includes("slides") && toolSettings?.slides?.templateId
-            ? buildSlidesTemplateRuntimeInstruction(
-                toolSettings.slides.templateId,
+        htmlDesignInstruction: [
+          ...(activeSkillNames.includes("html") && toolSettings?.htmlDesign
+            ? buildHtmlDesignRuntimeInstruction({
+                pageTemplateId: toolSettings.htmlDesign.templateId,
+                styleId: toolSettings.htmlDesign.styleId,
+                targetSkill: "html",
+              })
+            : []),
+          ...(activeSkillNames.includes("html-to-pptx") &&
+          toolSettings?.htmlToPptx?.styleId
+            ? buildHtmlDesignRuntimeInstruction({
+                styleId: toolSettings.htmlToPptx.styleId,
+                targetSkill: "html-to-pptx",
+              })
+            : []),
+        ],
+        htmlToPptxTemplateInstruction:
+          activeSkillNames.includes("html-to-pptx") &&
+          toolSettings?.htmlToPptx?.templateId
+            ? buildHtmlToPptxTemplateRuntimeInstruction(
+                toolSettings.htmlToPptx.templateId,
               )
             : [],
+        researchMode,
+        runtime,
         skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
         taskState,

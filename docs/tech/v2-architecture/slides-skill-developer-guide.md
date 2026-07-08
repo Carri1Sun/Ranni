@@ -2,17 +2,17 @@
 author: manus
 version: v2
 date: 2026-07-07
-subject: Ranni slides skill 开发执行指南（HTML-to-PPTX）
-audience: 实现 slides skill 的 coding agent
+subject: Ranni HTML-to-PPTX skill 开发执行指南
+audience: 实现 HTML-to-PPTX skill 的 coding agent
 prerequisites: skill 动态加载机制已落地（skill-dynamic-loading-plan.md Task 1–6 完成）
-related: slides-skill-plan.md、html-to-pptx-export-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
+related: html-generation-skills-plan.md、slides-skill-plan.md、html-to-pptx-export-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
 ---
 
-# Ranni slides skill 开发执行指南
+# Ranni HTML-to-PPTX skill 开发执行指南
 
 ## 0. 本指南定位
 
-这是给 coding agent 的执行手册，说明当前 slides skill 的 HTML-to-PPTX 实现方式、文件边界、工具职责和验收步骤。
+这是给 coding agent 的执行手册，说明当前 `html-to-pptx` skill 的实现方式、文件边界、工具职责和验收步骤。静态网页创作由 `html` skill 承担，见 `html-generation-skills-plan.md`。
 
 当前能力链路：
 
@@ -36,7 +36,7 @@ init_slide_html_workspace
 ## 2. 文件清单
 
 ```text
-skills/slides/
+skills/html-to-pptx/
   SKILL.md
   tools.ts
   scripts/html-pptx/
@@ -61,19 +61,20 @@ docs/tech/v2-architecture/slides-skill-design/
 
 `SKILL.md` 是 agent 选择路线的主要提示来源，必须保持为 HTML-to-PPTX 单一路线说明。
 
-`tools.ts` 只保留 schema、workspace resolver、模板初始化和脚本调度；Playwright、LibreOffice、Poppler、`dom-to-pptx` 和 PPTX/PNG 检查逻辑放在 `scripts/html-pptx/*.mjs`。模板 registry 由 `lib/slides/templates.ts` 扫描 `skills/slides/templates/*/manifest.json`。
+`tools.ts` 只保留 schema、workspace resolver、模板初始化和脚本调度；Playwright、LibreOffice、Poppler、`dom-to-pptx` 和 PPTX/PNG 检查逻辑放在 `scripts/html-pptx/*.mjs`。模板 registry 由 `lib/html-to-pptx/templates.ts` 扫描 `skills/html-to-pptx/templates/*/manifest.json`。
 
 ## 3. 工具实现要求
 
 ### `init_slide_html_workspace`
 
-- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`template`、`templateId`、`overwrite`。
+- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`template`、`templateId`、`styleId`、`overwrite`。
 - 通过 workspace resolver 创建 deck 目录。
 - 创建 `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-html/`、`preview-pptx/`、`final/`。
 - 传入 `prompt` 时写入 `prompt.txt` 和 `html-generation-report.json`。
 - `template: "spike-sample"` 从默认模板包拷贝 8 页示例 deck。
-- `templateId` 或 `toolSettings.slides.templateId` 可指定模板包，优先级高于 `template` 默认值。
-- `html-generation-report.json` 记录 `templateId`、`templateName` 和 `templateVersion`。
+- `templateId` 或 `toolSettings.htmlToPptx.templateId` 可指定模板包，优先级高于 `template` 默认值。
+- `styleId` 或 `toolSettings.htmlToPptx.styleId` 可指定共享设计风格。
+- `html-generation-report.json` 记录 `templateId`、`templateName`、`templateVersion`、`designStyleId` 和 `designStyleName`。
 
 ### `prepare_slide_html_for_pptx`
 

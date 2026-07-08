@@ -34,15 +34,15 @@ const templateManifestSchema = z.object({
   version: z.string().min(1).default("v1"),
 });
 
-export type SlidesTemplateManifest = z.infer<typeof templateManifestSchema>;
+export type HtmlToPptxTemplateManifest = z.infer<typeof templateManifestSchema>;
 
-export type SlidesTemplateSummary = SlidesTemplateManifest & {
+export type HtmlToPptxTemplateSummary = HtmlToPptxTemplateManifest & {
   directoryName: string;
   guidanceText?: string;
 };
 
 function getTemplatesRoot() {
-  return path.resolve(process.cwd(), "skills", "slides", "templates");
+  return path.resolve(process.cwd(), "skills", "html-to-pptx", "templates");
 }
 
 function readJsonFile(filePath: string) {
@@ -69,10 +69,10 @@ function readTemplateManifest(directoryPath: string) {
   return {
     ...parsed,
     directoryName: path.basename(directoryPath),
-  } satisfies SlidesTemplateSummary;
+  } satisfies HtmlToPptxTemplateSummary;
 }
 
-export function listSlidesTemplates() {
+export function listHtmlToPptxTemplates() {
   const templatesRoot = getTemplatesRoot();
 
   if (!fs.existsSync(templatesRoot)) {
@@ -84,7 +84,7 @@ export function listSlidesTemplates() {
     .map((entry) => path.join(templatesRoot, entry))
     .filter(isDirectory)
     .map(readTemplateManifest)
-    .filter((item): item is SlidesTemplateSummary => Boolean(item))
+    .filter((item): item is HtmlToPptxTemplateSummary => Boolean(item))
     .sort((left, right) => {
       if (left.default && !right.default) {
         return -1;
@@ -98,14 +98,14 @@ export function listSlidesTemplates() {
     });
 }
 
-export function getDefaultSlidesTemplateId() {
-  const templates = listSlidesTemplates();
+export function getDefaultHtmlToPptxTemplateId() {
+  const templates = listHtmlToPptxTemplates();
 
   return templates.find((template) => template.default)?.id ?? templates[0]?.id ?? "default-business";
 }
 
-export function findSlidesTemplate(templateId?: string) {
-  const templates = listSlidesTemplates();
+export function findHtmlToPptxTemplate(templateId?: string) {
+  const templates = listHtmlToPptxTemplates();
   const normalizedId = templateId?.trim();
 
   if (normalizedId) {
@@ -115,18 +115,18 @@ export function findSlidesTemplate(templateId?: string) {
   return templates.find((template) => template.default) ?? templates[0];
 }
 
-export function getSlidesTemplateDirectory(templateId?: string) {
-  const template = findSlidesTemplate(templateId);
+export function getHtmlToPptxTemplateDirectory(templateId?: string) {
+  const template = findHtmlToPptxTemplate(templateId);
 
   if (!template) {
-    throw new Error("未找到可用 slides 模板。");
+    throw new Error("未找到可用 HTML-to-PPTX 模板。");
   }
 
   return path.join(getTemplatesRoot(), template.directoryName);
 }
 
-export function readSlidesTemplateGuidance(templateId?: string) {
-  const template = findSlidesTemplate(templateId);
+export function readHtmlToPptxTemplateGuidance(templateId?: string) {
+  const template = findHtmlToPptxTemplate(templateId);
 
   if (!template) {
     return undefined;
@@ -145,27 +145,27 @@ export function readSlidesTemplateGuidance(templateId?: string) {
   return fs.readFileSync(guidancePath, "utf8").trim();
 }
 
-export function buildSlidesTemplateRuntimeInstruction(templateId?: string) {
-  const template = findSlidesTemplate(templateId);
+export function buildHtmlToPptxTemplateRuntimeInstruction(templateId?: string) {
+  const template = findHtmlToPptxTemplate(templateId);
 
   if (!template) {
     return [];
   }
 
-  const guidance = readSlidesTemplateGuidance(template.id);
+  const guidance = readHtmlToPptxTemplateGuidance(template.id);
   const layoutList = template.layouts
     .map((layout) => `${layout.id}: ${layout.name}`)
     .join(", ");
 
   return [
-    "Slides template selection:",
+    "HTML-to-PPTX template selection:",
     `- Template id: ${template.id}`,
     `- Template name: ${template.name}`,
     `- Version: ${template.version}`,
     `- Description: ${template.description}`,
     `- Font packages: ${template.fontPackages.join(", ") || "system fonts"}`,
     `- Layouts: ${layoutList || "unspecified"}`,
-    "- When creating slides, strictly use this template package. Call init_slide_html_workspace with this templateId, reuse its CSS/classes/layouts, and keep generated reports tied to this template.",
+    "- When creating slide HTML for PPTX export, strictly use this template package. Call init_slide_html_workspace with this templateId, reuse its CSS/classes/layouts, and keep generated reports tied to this template.",
     guidance ? ["", "Template guidance:", guidance].join("\n") : "",
     "",
   ].filter(Boolean);
