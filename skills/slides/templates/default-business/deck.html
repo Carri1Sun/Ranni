@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1280, initial-scale=1" />
+  <title>{{TITLE}}</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="deck" data-pptx-deck data-ranni-template-id="{{TEMPLATE_ID}}">
+    <section class="slide cover-slide" data-slide-id="cover">
+      <img class="cover-pattern" src="./assets/pattern-grid.svg" alt="" data-pptx-ignore />
+      <div class="cover-band"></div>
+      <p class="eyebrow" data-pptx-editable>Ranni slides spike</p>
+      <h1 class="cover-title" data-pptx-editable>{{TITLE}}</h1>
+      <p class="cover-subtitle" data-pptx-editable>{{PROMPT}}</p>
+      <div class="cover-meta" data-pptx-editable>HTML source -> prepared DOM -> limited editable PPTX</div>
+    </section>
+
+    <section class="slide agenda-slide" data-slide-id="agenda">
+      <h2 class="slide-heading" data-pptx-editable>目录</h2>
+      <ol class="agenda-list">
+        <li data-pptx-editable><span>01</span><strong>规范</strong><em>固定画布与导出标注</em></li>
+        <li data-pptx-editable><span>02</span><strong>预处理</strong><em>Playwright 测量与截图回退</em></li>
+        <li data-pptx-editable><span>03</span><strong>转换</strong><em>dom-to-pptx 生成有限可编辑 PPTX</em></li>
+        <li data-pptx-editable><span>04</span><strong>验证</strong><em>HTML / PPTX 预览与 QA 报告</em></li>
+      </ol>
+      <p class="page-note" data-pptx-editable>目标是先收敛可用子集，再决定产品化投入。</p>
+    </section>
+
+    <section class="slide text-slide" data-slide-id="text">
+      <h2 class="slide-heading" data-pptx-editable>受限 HTML 的写作边界</h2>
+      <div class="text-panel primary" data-pptx-editable>
+        <h3>页面约束</h3>
+        <p>每页使用独立 .slide，画布固定为 1280 x 720，页内 overflow hidden，避免转换时出现滚动状态。</p>
+      </div>
+      <div class="text-panel secondary" data-pptx-editable>
+        <h3>元素意图</h3>
+        <p>重要标题和正文标记 data-pptx-editable，复杂视觉块标记 data-pptx-raster 并提供 data-pptx-alt。</p>
+      </div>
+      <blockquote data-pptx-editable>优先保留关键文本可编辑性，复杂视觉使用局部截图稳定输出。</blockquote>
+    </section>
+
+    <section class="slide two-col-slide" data-slide-id="two-col">
+      <h2 class="slide-heading" data-pptx-editable>双栏图文页</h2>
+      <div class="copy-column" data-pptx-editable>
+        <h3>面向 agent 的生成方式</h3>
+        <ul>
+          <li>用 CSS 控制版式和视觉层级。</li>
+          <li>所有本地资源放进 assets/。</li>
+          <li>导出前将复杂局部替换为图片。</li>
+        </ul>
+      </div>
+      <figure class="visual-column">
+        <img src="./assets/workbench.svg" alt="Ranni workbench illustration" data-pptx-alt="Ranni workbench illustration" />
+        <figcaption data-pptx-editable>本地 SVG 资产可随 deck 目录迁移。</figcaption>
+      </figure>
+    </section>
+
+    <section class="slide data-slide" data-slide-id="data-table">
+      <h2 class="slide-heading" data-pptx-editable>数据与表格页</h2>
+      <div class="metric-row">
+        <div class="metric-card" data-pptx-editable><span>Slides</span><strong>8</strong><em>覆盖典型版式</em></div>
+        <div class="metric-card green" data-pptx-editable><span>Editable</span><strong>文本</strong><em>保留为对象</em></div>
+        <div class="metric-card gold" data-pptx-editable><span>Raster</span><strong>局部</strong><em>按节点回退</em></div>
+      </div>
+      <table class="qa-table">
+        <thead><tr><th data-pptx-editable>检查项</th><th data-pptx-editable>方法</th><th data-pptx-editable>输出</th></tr></thead>
+        <tbody>
+          <tr><td data-pptx-editable>尺寸</td><td data-pptx-editable>DOM 测量</td><td data-pptx-editable>measurements.json</td></tr>
+          <tr><td data-pptx-editable>回退</td><td data-pptx-editable>元素截图</td><td data-pptx-editable>fallback-assets/</td></tr>
+          <tr><td data-pptx-editable>预览</td><td data-pptx-editable>HTML / PPTX 渲染</td><td data-pptx-editable>preview-*/</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="slide chart-slide" data-slide-id="raster-chart">
+      <h2 class="slide-heading" data-pptx-editable>复杂图表截图回退页</h2>
+      <p class="chart-copy" data-pptx-editable>图表主体使用 canvas、渐变和叠加标签，导出前按 data-pptx-raster 局部截图。</p>
+      <div class="chart-raster" data-pptx-raster data-pptx-alt="复杂增长路径图">
+        <canvas id="growth-canvas" width="760" height="350"></canvas>
+        <div class="chart-label label-a">Q1 需求爬坡</div>
+        <div class="chart-label label-b">Q3 质量门稳定</div>
+        <div class="chart-legend"><span></span>HTML 预览与 PPTX 输出差异</div>
+      </div>
+      <div class="side-callout" data-pptx-editable><strong>保留策略</strong><br />标题、说明和结论仍保持可编辑。</div>
+    </section>
+
+    <section class="slide timeline-slide" data-slide-id="timeline">
+      <h2 class="slide-heading" data-pptx-editable>产品化时间线</h2>
+      <div class="timeline-stage">
+        <div class="timeline-rail"></div>
+        <div class="timeline-node n1"></div>
+        <div class="timeline-node n2"></div>
+        <div class="timeline-node n3"></div>
+        <div class="timeline-node n4"></div>
+        <div class="timeline-items">
+          <div class="timeline-item t1" data-pptx-editable><span>P0</span><strong>Spike</strong><em>验证工具链和样例 deck</em></div>
+          <div class="timeline-item t2" data-pptx-editable><span>P1</span><strong>Skill route</strong><em>暴露稳定工具与报告字段</em></div>
+          <div class="timeline-item t3" data-pptx-editable><span>P2</span><strong>Quality gates</strong><em>增加 diff、字体和编辑性检查</em></div>
+          <div class="timeline-item t4" data-pptx-editable><span>P3</span><strong>Mapper</strong><em>为稳定子集自研映射器</em></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide summary-slide" data-slide-id="summary">
+      <div class="summary-mark"></div>
+      <h2 class="summary-title" data-pptx-editable>结论</h2>
+      <div class="summary-grid">
+        <div data-pptx-editable><strong>可编辑优先</strong><span>正文和核心结论保留为 PPTX 文本对象。</span></div>
+        <div data-pptx-editable><strong>视觉稳定</strong><span>复杂节点在转换前进入 fallback-assets/。</span></div>
+        <div data-pptx-editable><strong>证据留存</strong><span>measurements.json 与 qa-report.json 记录真实表现。</span></div>
+      </div>
+      <p class="summary-footer" data-pptx-editable>下一步：扩大样例覆盖，并补充图像 diff 与字体检查。</p>
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("growth-canvas");
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      const gradient = ctx.createLinearGradient(0, 0, w, h);
+      gradient.addColorStop(0, "#f6f8ff");
+      gradient.addColorStop(1, "#fff7ed");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "#d7deea";
+      ctx.lineWidth = 1;
+      for (let x = 60; x < w; x += 80) { ctx.beginPath(); ctx.moveTo(x, 34); ctx.lineTo(x, h - 46); ctx.stroke(); }
+      for (let y = 60; y < h; y += 58) { ctx.beginPath(); ctx.moveTo(42, y); ctx.lineTo(w - 36, y); ctx.stroke(); }
+      const points = [[62,260],[150,230],[238,246],[326,184],[414,152],[502,116],[590,136],[678,78]];
+      const area = ctx.createLinearGradient(0, 78, 0, 300);
+      area.addColorStop(0, "rgba(20, 184, 166, 0.36)");
+      area.addColorStop(1, "rgba(20, 184, 166, 0.02)");
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], 300);
+      for (const p of points) ctx.lineTo(p[0], p[1]);
+      ctx.lineTo(points[points.length - 1][0], 300);
+      ctx.closePath();
+      ctx.fillStyle = area;
+      ctx.fill();
+      ctx.beginPath();
+      points.forEach((p, i) => { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+      ctx.strokeStyle = "#0f766e";
+      ctx.lineWidth = 8;
+      ctx.lineJoin = "round";
+      ctx.shadowColor = "rgba(15, 118, 110, 0.32)";
+      ctx.shadowBlur = 18;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      points.forEach((p, i) => { ctx.beginPath(); ctx.arc(p[0], p[1], i === 7 ? 13 : 9, 0, Math.PI * 2); ctx.fillStyle = i === 7 ? "#ef4444" : "#14b8a6"; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "#ffffff"; ctx.stroke(); });
+    }
+  </script>
+</body>
+</html>

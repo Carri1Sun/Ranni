@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlertCircle,
   BookOpenText,
@@ -140,6 +140,7 @@ type AppSettings = {
   openaiModel: string;
   provider: ProviderId;
   qwenApiKey: string;
+  selectedSlidesTemplateId: string;
   showThinkingInFeed: boolean;
   showProcessDetails: boolean;
   tavilyApiKey: string;
@@ -149,6 +150,22 @@ type AppSettings = {
 type SkillIndex = {
   description: string;
   name: string;
+};
+
+type SlidesTemplateIndex = {
+  accentColor?: string;
+  default?: boolean;
+  description: string;
+  fontPackages: string[];
+  id: string;
+  layouts: Array<{
+    id: string;
+    name: string;
+  }>;
+  name: string;
+  surfaceColor?: string;
+  tags: string[];
+  version: string;
 };
 
 type TestConnectionState =
@@ -321,6 +338,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiModel: "",
   provider: "deepseek",
   qwenApiKey: "",
+  selectedSlidesTemplateId: "",
   showThinkingInFeed: true,
   showProcessDetails: false,
   tavilyApiKey: "",
@@ -605,6 +623,10 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
+    selectedSlidesTemplateId:
+      typeof raw.selectedSlidesTemplateId === "string"
+        ? raw.selectedSlidesTemplateId.trim()
+        : DEFAULT_SETTINGS.selectedSlidesTemplateId,
     showThinkingInFeed:
       typeof raw.showThinkingInFeed === "boolean"
         ? raw.showThinkingInFeed
@@ -2288,6 +2310,7 @@ function buildToolSettings(
   settings: AppSettings,
   extraActiveSkills: string[] = [],
   researchMode = false,
+  slidesTemplateId = "",
 ) {
   const activeSkills = new Set(settings.activeSkills);
 
@@ -2305,6 +2328,11 @@ function buildToolSettings(
       settings.computerUseApiKey.trim() || settings.openaiApiKey.trim(),
     computerUseModel: settings.computerUseModel.trim() || "gpt-5.5",
     researchMode,
+    slides: slidesTemplateId
+      ? {
+          templateId: slidesTemplateId,
+        }
+      : undefined,
     tavilyApiKey: settings.tavilyApiKey.trim(),
   };
 }
@@ -3131,6 +3159,11 @@ export function AgentConsole({
     "error" | "idle" | "loading" | "success"
   >("idle");
   const [skillIndexError, setSkillIndexError] = useState("");
+  const [slideTemplates, setSlideTemplates] = useState<SlidesTemplateIndex[]>([]);
+  const [slideTemplateStatus, setSlideTemplateStatus] = useState<
+    "error" | "idle" | "loading" | "success"
+  >("idle");
+  const [slideTemplateError, setSlideTemplateError] = useState("");
   const [isSlidesComposerSkillEnabled, setIsSlidesComposerSkillEnabled] =
     useState(false);
   const [isResearchModeEnabled, setIsResearchModeEnabled] = useState(false);
@@ -3410,6 +3443,58 @@ export function AgentConsole({
         setSkillIndexStatus("error");
         setSkillIndexError(
           error instanceof Error ? error.message : "无法加载能力列表。",
+        );
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setSlideTemplateStatus("loading");
+    setSlideTemplateError("");
+
+    void (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/slides/templates`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            templates?: SlidesTemplateIndex[];
+          };
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "无法加载幻灯片模板。");
+        }
+
+        const templates = Array.isArray(payload.result?.templates)
+          ? payload.result.templates.filter(
+              (template): template is SlidesTemplateIndex =>
+                typeof template.id === "string" &&
+                typeof template.name === "string" &&
+                typeof template.description === "string",
+            )
+          : [];
+
+        setSlideTemplates(templates);
+        setSlideTemplateStatus("success");
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setSlideTemplates([]);
+        setSlideTemplateStatus("error");
+        setSlideTemplateError(
+          error instanceof Error ? error.message : "无法加载幻灯片模板。",
         );
       }
     })();
@@ -5349,6 +5434,7 @@ export function AgentConsole({
             settings,
             extraActiveSkills,
             isResearchModeEnabled,
+            isSlidesComposerSkillEnabled ? effectiveSlidesTemplateId : "",
           ),
           workspaceRoot: sessionForRun.workspaceRoot,
           sessionId,
@@ -5599,18 +5685,108 @@ export function AgentConsole({
   const slidesSkillAvailable = skillIndices.some(
     (skill) => skill.name === "slides",
   );
+  const defaultSlidesTemplate =
+    slideTemplates.find((template) => template.default) ?? slideTemplates[0];
+  const configuredSlidesTemplate = slideTemplates.find(
+    (template) => template.id === settings.selectedSlidesTemplateId,
+  );
+  const effectiveSlidesTemplate =
+    configuredSlidesTemplate ?? defaultSlidesTemplate;
+  const effectiveSlidesTemplateId = effectiveSlidesTemplate?.id ?? "";
+  const slidesTemplateUnavailable =
+    slideTemplateStatus !== "success" || slideTemplates.length === 0;
+  const slidesTemplateUnavailableTitle =
+    slideTemplateStatus === "error"
+      ? slideTemplateError || "slides 模板加载失败"
+      : slideTemplateStatus === "success"
+        ? "当前未发现 slides 模板"
+        : "正在加载 slides 模板";
+  const slidesSendBlocked =
+    isSlidesComposerSkillEnabled && slidesTemplateUnavailable;
   const slidesComposerButtonDisabled =
-    skillIndexStatus === "loading" || !slidesSkillAvailable;
-  const slidesComposerButtonTitle = slidesSkillAvailable
-    ? isSlidesComposerSkillEnabled
-      ? "本次发送会强制加载 slides skill"
-      : "本次发送启用 slides skill"
-    : skillIndexStatus === "loading"
-      ? "正在加载本地能力列表"
-      : "当前未发现 slides skill";
+    skillIndexStatus === "loading" ||
+    !slidesSkillAvailable ||
+    slidesTemplateUnavailable;
+  let slidesComposerButtonTitle = "本次发送启用 slides skill";
+
+  if (skillIndexStatus === "loading") {
+    slidesComposerButtonTitle = "正在加载本地能力列表";
+  } else if (!slidesSkillAvailable) {
+    slidesComposerButtonTitle = "当前未发现 slides skill";
+  } else if (slidesTemplateUnavailable) {
+    slidesComposerButtonTitle = slidesTemplateUnavailableTitle;
+  } else if (isSlidesComposerSkillEnabled) {
+    slidesComposerButtonTitle = "本次发送会强制加载 slides skill";
+  }
   const researchModeButtonTitle = isResearchModeEnabled
     ? "本次发送已启用研究校验：开启 research 信号校验与完整性打回"
     : "本次发送启用研究校验";
+  const renderSlidesTemplateStrip = (placement: "draft" | "composer") => {
+    if (!isSlidesComposerSkillEnabled) {
+      return null;
+    }
+
+    return (
+      <div
+        className={`${styles.slidesTemplateStrip} ${
+          placement === "draft"
+            ? styles.slidesTemplateStripDraft
+            : styles.slidesTemplateStripComposer
+        }`}
+      >
+        <div className={styles.slidesTemplateStripHeader}>
+          <span>Slides 模板</span>
+          <strong>
+            {slideTemplateStatus === "loading"
+              ? "加载中"
+              : effectiveSlidesTemplate?.name ?? "未配置"}
+          </strong>
+        </div>
+        <div className={styles.slidesTemplateScroller}>
+          {slideTemplateStatus === "error" ? (
+            <span className={styles.slidesTemplateNotice}>
+              {slideTemplateError || "模板加载失败"}
+            </span>
+          ) : null}
+
+          {slideTemplates.map((template) => {
+            const isSelected = template.id === effectiveSlidesTemplateId;
+
+            return (
+              <button
+                key={template.id}
+                aria-pressed={isSelected}
+                className={`${styles.slidesTemplateOption} ${
+                  isSelected ? styles.slidesTemplateOptionActive : ""
+                }`}
+                style={
+                  {
+                    "--slide-template-accent":
+                      template.accentColor ?? "var(--ranni-accent-2)",
+                    "--slide-template-surface":
+                      template.surfaceColor ?? "rgba(255, 255, 255, 0.08)",
+                  } as CSSProperties
+                }
+                type="button"
+                onClick={() =>
+                  setSettings((current) => ({
+                    ...current,
+                    selectedSlidesTemplateId: template.id,
+                  }))
+                }
+              >
+                <span className={styles.slidesTemplateSwatch} aria-hidden="true" />
+                <span>
+                  <strong>{template.name}</strong>
+                  <small>{template.description}</small>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
   const toggleActiveSkill = (name: string, enabled: boolean) => {
     setSettings((current) => {
       const nextNames = new Set(current.activeSkills);
@@ -5850,7 +6026,9 @@ export function AgentConsole({
               className={styles.draftSession}
               onSubmit={(event) => {
                 event.preventDefault();
-                void sendMessage(input);
+                if (!slidesSendBlocked) {
+                  void sendMessage(input);
+                }
               }}
             >
               <div className={styles.draftSessionInner}>
@@ -5872,7 +6050,8 @@ export function AgentConsole({
 
                         if (
                           workspacePickerStatus !== "loading" &&
-                          input.trim()
+                          input.trim() &&
+                          !slidesSendBlocked
                         ) {
                           void sendMessage(input);
                         }
@@ -5919,6 +6098,7 @@ export function AgentConsole({
                     disabled={
                       !input.trim() ||
                       !effectiveHasApiKey ||
+                      slidesSendBlocked ||
                       workspacePickerStatus === "loading"
                     }
                     type="submit"
@@ -5926,6 +6106,8 @@ export function AgentConsole({
                     {effectiveHasApiKey ? "发送" : "先设置 Key"}
                   </button>
                 </div>
+
+                {renderSlidesTemplateStrip("draft")}
 
                 <div
                   className={styles.draftWorkspaceButton}
@@ -6494,9 +6676,13 @@ export function AgentConsole({
               className={styles.composer}
               onSubmit={(event) => {
                 event.preventDefault();
-                void sendMessage(input);
+                if (!slidesSendBlocked) {
+                  void sendMessage(input);
+                }
               }}
             >
+              {renderSlidesTemplateStrip("composer")}
+
               <div className={styles.composerInputWrap}>
                 <textarea
                   className={styles.textarea}
@@ -6513,7 +6699,11 @@ export function AgentConsole({
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
 
-                      if (!currentSessionIsRunning && input.trim()) {
+                      if (
+                        !currentSessionIsRunning &&
+                        input.trim() &&
+                        !slidesSendBlocked
+                      ) {
                         void sendMessage(input);
                       }
                     }
@@ -6564,7 +6754,9 @@ export function AgentConsole({
                 ) : (
                   <button
                     className={styles.submitButton}
-                    disabled={!input.trim() || !effectiveHasApiKey}
+                    disabled={
+                      !input.trim() || !effectiveHasApiKey || slidesSendBlocked
+                    }
                     type="submit"
                   >
                     {effectiveHasApiKey ? "发送" : "先设置 Key"}

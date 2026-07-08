@@ -28,6 +28,7 @@ import {
   normalizeSkillNames,
   type SkillIndex,
 } from "./skills/registry";
+import { buildSlidesTemplateRuntimeInstruction } from "./slides/templates";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -242,6 +243,7 @@ function createSystemPrompt({
   activeSkillNames,
   researchMode,
   runtime,
+  slidesTemplateInstruction,
   skillIndices,
   taskMemorySummary,
   taskState,
@@ -251,6 +253,7 @@ function createSystemPrompt({
   activeSkillNames: string[];
   researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
+  slidesTemplateInstruction: string[];
   skillIndices: SkillIndex[];
   taskMemorySummary: string;
   taskState: TaskState;
@@ -415,6 +418,9 @@ function createSystemPrompt({
               : [`## Skill: ${name}`, "(No additional instructions.)", ""];
           }),
         ]
+      : []),
+    ...(slidesTemplateInstruction.length > 0
+      ? [...slidesTemplateInstruction, ""]
       : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
@@ -1790,6 +1796,12 @@ export async function runAgentTurn({
         activeSkillNames,
         researchMode,
         runtime,
+        slidesTemplateInstruction:
+          activeSkillNames.includes("slides") && toolSettings?.slides?.templateId
+            ? buildSlidesTemplateRuntimeInstruction(
+                toolSettings.slides.templateId,
+              )
+            : [],
         skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
         taskState,

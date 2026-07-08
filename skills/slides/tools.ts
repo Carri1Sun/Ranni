@@ -1,24 +1,20 @@
-import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
+import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
-import { JSDOM } from "jsdom";
-import JSZip from "jszip";
-import { chromium, type Browser, type BrowserContext } from "playwright";
 import { z } from "zod";
 
 import type { ToolDefinition, ToolExecutionContext } from "../../lib/tools";
+import {
+  findSlidesTemplate,
+  getDefaultSlidesTemplateId,
+  getSlidesTemplateDirectory,
+} from "../../lib/slides/templates";
 import {
   getWorkspaceRoot,
   resolveWorkspacePath,
   toWorkspaceRelative,
 } from "../../lib/workspace";
-import {
-  createBlankSlideHtmlTemplate,
-  createSpikeSlideHtmlTemplate,
-} from "./html-spike-template";
 
 const initSlideHtmlWorkspaceSchema = z.object({
   deckSlug: z.string().min(1),
@@ -26,6 +22,7 @@ const initSlideHtmlWorkspaceSchema = z.object({
   overwrite: z.boolean().default(false),
   prompt: z.string().min(1).optional(),
   template: z.enum(["blank", "spike-sample"]).default("blank"),
+  templateId: z.string().min(1).optional(),
   title: z.string().min(1).default("HTML to PPTX spike"),
 });
 
@@ -54,61 +51,6 @@ const validateHtmlPptxExportSchema = z.object({
   slideSelector: z.string().min(1).default(".slide"),
 });
 
-const SLIDE_WIDTH_PX = 1280;
-const SLIDE_HEIGHT_PX = 720;
-const SLIDE_WIDTH_IN = 13.333;
-const SLIDE_HEIGHT_IN = 7.5;
-const requireFromSkill = createRequire(__filename);
-
-type HtmlPptxWarning = {
-  message: string;
-  slideId?: string;
-  type: string;
-};
-
-type RasterFallbackMeasurement = {
-  alt: string;
-  asset: string;
-  height: number;
-  index: number;
-  left: number;
-  position: string;
-  slideId: string;
-  top: number;
-  width: number;
-  zIndex: string;
-};
-
-type SlideMeasurement = {
-  height: number;
-  id: string;
-  index: number;
-  scrollHeight: number;
-  scrollWidth: number;
-  width: number;
-};
-
-type HtmlPptxMeasurements = {
-  editableElements: number;
-  ignoredElements: number;
-  preparedHtml: string;
-  rasterFallbacks: RasterFallbackMeasurement[];
-  slideHeight: number;
-  slideSelector: string;
-  slides: SlideMeasurement[];
-  slideWidth: number;
-  sourceHtml: string;
-  warnings: HtmlPptxWarning[];
-};
-
-type PreparedHtmlImageInspection = {
-  dataUriImages: number;
-  fallbackImages: number;
-  images: number;
-  localImages: number;
-  remoteImages: number;
-};
-
 function sanitizePathSegment(value: string) {
   return (
     value
@@ -119,10 +61,19 @@ function sanitizePathSegment(value: string) {
   );
 }
 
-function toPortableRelativePath(fromDirectory: string, targetPath: string) {
-  const relativePath = path.relative(fromDirectory, targetPath);
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
-  return relativePath.split(path.sep).join("/");
+function summarizePrompt(value: string | undefined, fallback: string) {
+  const normalized = (value?.trim() || fallback).replace(/\s+/g, " ");
+
+  return normalized.length > 68 ? `${normalized.slice(0, 65)}...` : normalized;
 }
 
 function resolveDefaultWorkspaceOutput(
@@ -149,494 +100,9 @@ async function fileExists(filePath: string) {
   }
 }
 
-function isRemoteReference(value: string) {
-  return /^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file:");
-}
-
-function isRemoteOrDataImageSource(value: string) {
-  return /^(?:https?:|data:)/i.test(value);
-}
-
-function getImageMimeType(filePath: string) {
-  const extension = path.extname(filePath).toLowerCase();
-
-  if (extension === ".svg") {
-    return "image/svg+xml";
-  }
-
-  if (extension === ".jpg" || extension === ".jpeg") {
-    return "image/jpeg";
-  }
-
-  if (extension === ".webp") {
-    return "image/webp";
-  }
-
-  if (extension === ".gif") {
-    return "image/gif";
-  }
-
-  return "image/png";
-}
-
-function isInsideWorkspace(filePath: string, workspaceRoot: string) {
-  const relativePath = path.relative(workspaceRoot, filePath);
-
-  return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
-}
-
-async function imageFileToDataUri(filePath: string) {
-  const content = await fs.readFile(filePath);
-
-  return `data:${getImageMimeType(filePath)};base64,${content.toString("base64")}`;
-}
-
-function resolveLocalImageSource(
-  source: string,
-  htmlAbsolutePath: string,
-  workspaceRoot: string,
-) {
-  if (!source || isRemoteOrDataImageSource(source)) {
-    return undefined;
-  }
-
-  try {
-    const fileUrl = new URL(source, pathToFileURL(htmlAbsolutePath).href);
-
-    if (fileUrl.protocol !== "file:") {
-      return undefined;
-    }
-
-    const filePath = decodeURIComponent(fileUrl.pathname);
-
-    if (!isInsideWorkspace(filePath, workspaceRoot)) {
-      return undefined;
-    }
-
-    return filePath;
-  } catch {
-    return undefined;
-  }
-}
-
-async function inlineLocalImagesForDomToPptx(
-  browserContext: BrowserContext,
-  htmlAbsolutePath: string,
-  workspaceRoot: string,
-) {
-  const page = await openSlideHtml(browserContext, htmlAbsolutePath);
-
-  try {
-    const images = await page.evaluate(() =>
-      Array.from(document.images).map((image, index) => ({
-        index,
-        source:
-          image.getAttribute("src") ||
-          image.currentSrc ||
-          image.src ||
-          "",
-      })),
-    );
-    let inlined = 0;
-
-    for (const image of images) {
-      const imagePath = resolveLocalImageSource(
-        image.source,
-        htmlAbsolutePath,
-        workspaceRoot,
-      );
-
-      if (!imagePath || !(await fileExists(imagePath))) {
-        continue;
-      }
-
-      const dataUri = await imageFileToDataUri(imagePath);
-
-      await page.evaluate(
-        ({ dataUri: nextSource, index }) => {
-          const image = document.images[index];
-
-          if (!image) {
-            return;
-          }
-
-          image.setAttribute("data-pptx-inline-source", image.getAttribute("src") || "");
-          image.src = nextSource;
-        },
-        { dataUri, index: image.index },
-      );
-      inlined += 1;
-    }
-
-    await page.evaluate(async () => {
-      await Promise.all(
-        Array.from(document.images).map(
-          (image) =>
-            image.complete
-              ? Promise.resolve()
-              : new Promise<void>((resolve) => {
-                  image.addEventListener("load", () => resolve(), { once: true });
-                  image.addEventListener("error", () => resolve(), { once: true });
-                }),
-        ),
-      );
-    });
-
-    return { inlined, page };
-  } catch (error) {
-    await page.close();
-    throw error;
-  }
-}
-
-async function readSlideHtmlDesignSources(htmlAbsolutePath: string) {
-  const html = await fs.readFile(htmlAbsolutePath, "utf8");
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
-  const htmlDirectory = path.dirname(htmlAbsolutePath);
-  const cssTexts = Array.from(document.querySelectorAll("style"))
-    .map((style) => style.textContent ?? "")
-    .filter(Boolean);
-  const stylesheetHrefs = Array.from(
-    document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),
-  ).map((link) => link.getAttribute("href") ?? "");
-
-  for (const href of stylesheetHrefs) {
-    if (!href || isRemoteReference(href) || href.startsWith("#")) {
-      continue;
-    }
-
-    const cssPath = resolveWorkspacePath(
-      path.join(path.dirname(htmlAbsolutePath), href),
-      htmlDirectory,
-    );
-
-    if (await fileExists(cssPath)) {
-      cssTexts.push(await fs.readFile(cssPath, "utf8"));
-    }
-  }
-
-  return {
-    css: cssTexts.join("\n"),
-    html,
-  };
-}
-
-function extractCssDeclarationValues(css: string, property: string) {
-  const values: string[] = [];
-  const pattern = new RegExp(`${property}\\s*:\\s*([^;{}]+)`, "gi");
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(css))) {
-    values.push(match[1]?.trim() ?? "");
-  }
-
-  return values;
-}
-
-async function collectSourceDesignWarnings(
-  htmlAbsolutePath: string,
-): Promise<HtmlPptxWarning[]> {
-  const warnings: HtmlPptxWarning[] = [];
-  const { css } = await readSlideHtmlDesignSources(htmlAbsolutePath);
-  const source = css.toLowerCase();
-
-  if (/\bpadding-bottom\s*:/i.test(css)) {
-    warnings.push({
-      message: "设计规范禁止在主要内容流中使用 padding-bottom。",
-      type: "design-padding-bottom",
-    });
-  }
-
-  if (/@keyframes\b|\banimation(?:-[a-z]+)?\s*:/i.test(css)) {
-    warnings.push({
-      message: "设计规范禁止 CSS 动画和 @keyframes。",
-      type: "design-animation",
-    });
-  }
-
-  if (/\btransition(?:-[a-z]+)?\s*:/i.test(css)) {
-    warnings.push({
-      message: "设计规范禁止 transition。",
-      type: "design-transition",
-    });
-  }
-
-  if (/:hover\b/i.test(css)) {
-    warnings.push({
-      message: "设计规范禁止 :hover 伪类。",
-      type: "design-hover",
-    });
-  }
-
-  if (/\bbox-shadow\s*:/i.test(css)) {
-    warnings.push({
-      message: "设计规范禁止使用卡片阴影，避免网页 UI 感和 PPTX 映射偏差。",
-      type: "design-box-shadow",
-    });
-  }
-
-  const contentValues = extractCssDeclarationValues(css, "content");
-  const injectedTextValues = contentValues.filter((value) => {
-    const normalized = value.trim();
-
-    return (
-      /^["']/.test(normalized) &&
-      !/^["']\s*["']$/.test(normalized) &&
-      !/^["']\\?[a-z0-9-]*["']$/i.test(normalized)
-    );
-  });
-
-  if (injectedTextValues.length) {
-    warnings.push({
-      message: "设计规范禁止用 CSS 伪元素 content 注入关键文字。",
-      type: "design-pseudo-content-text",
-    });
-  }
-
-  const borderRadiusValues = extractCssDeclarationValues(css, "border-radius");
-  const largeRadius = borderRadiusValues.find((value) =>
-    Array.from(value.matchAll(/([\d.]+)px/gi)).some(
-      (match) => Number(match[1]) > 8,
-    ),
-  );
-
-  if (largeRadius) {
-    warnings.push({
-      message: `设计规范要求 UI 圆角不超过 8px，检测到 ${largeRadius}。`,
-      type: "design-large-radius",
-    });
-  }
-
-  const fontFamilyCount = new Set(
-    extractCssDeclarationValues(source, "font-family").map((value) =>
-      value.replace(/\s+/g, " ").trim(),
-    ),
-  ).size;
-
-  if (fontFamilyCount > 2) {
-    warnings.push({
-      message: `设计规范要求每套 deck 最多使用 2 种字体，检测到 ${fontFamilyCount} 种 font-family 声明。`,
-      type: "design-too-many-fonts",
-    });
-  }
-
-  return warnings;
-}
-
-async function collectRuntimeDesignWarnings(
-  browserContext: BrowserContext,
-  htmlAbsolutePath: string,
-  slideSelector: string,
-): Promise<HtmlPptxWarning[]> {
-  const page = await openSlideHtml(browserContext, htmlAbsolutePath);
-
-  try {
-    return await page.evaluate((selector) => {
-      const warnings: HtmlPptxWarning[] = [];
-      const slides = Array.from(document.querySelectorAll<HTMLElement>(selector));
-      const textSelector = [
-        "[data-pptx-editable]",
-        "h1",
-        "h2",
-        "h3",
-        "p",
-        "li",
-        "blockquote",
-        "td",
-        "th",
-        "figcaption",
-      ].join(",");
-
-      for (const slide of slides) {
-        const slideId = slide.dataset.slideId || "unknown";
-        const slideStyle = window.getComputedStyle(slide);
-
-        if (slideStyle.boxSizing !== "border-box") {
-          warnings.push({
-            message: "设计规范要求 slide 使用 box-sizing: border-box。",
-            slideId,
-            type: "design-slide-box-sizing",
-          });
-        }
-
-        if (slideStyle.overflow !== "hidden") {
-          warnings.push({
-            message: "设计规范要求 slide 使用 overflow: hidden。",
-            slideId,
-            type: "design-slide-overflow",
-          });
-        }
-
-        const textElements = Array.from(
-          slide.querySelectorAll<HTMLElement>(textSelector),
-        ).filter((element) => {
-          const text = element.textContent?.trim();
-
-          return (
-            Boolean(text) &&
-            !element.closest("[data-pptx-raster]") &&
-            !element.closest("[data-pptx-ignore]") &&
-            !element.hasAttribute("data-pptx-fallback")
-          );
-        });
-        const absoluteTextCount = textElements.filter((element) => {
-          const position = window.getComputedStyle(element).position;
-
-          return position === "absolute" || position === "fixed";
-        }).length;
-
-        if (absoluteTextCount) {
-          warnings.push({
-            message: `设计规范禁止主内容文本使用绝对定位，检测到 ${absoluteTextCount} 个文本节点。`,
-            slideId,
-            type: "design-main-text-absolute",
-          });
-        }
-
-        const denseParagraphs = Array.from(slide.querySelectorAll("p")).filter(
-          (paragraph) =>
-            paragraph.textContent &&
-            paragraph.textContent.trim().length > 170 &&
-            !paragraph.closest("[data-pptx-raster]"),
-        ).length;
-
-        if (denseParagraphs) {
-          warnings.push({
-            message: `设计规范要求长文本提炼为列表或小标题块，检测到 ${denseParagraphs} 个过长段落。`,
-            slideId,
-            type: "design-long-paragraph",
-          });
-        }
-
-        const paragraphCount = Array.from(slide.querySelectorAll("p")).filter(
-          (paragraph) =>
-            paragraph.textContent?.trim() &&
-            !paragraph.closest("[data-pptx-raster]"),
-        ).length;
-
-        if (paragraphCount > 3) {
-          warnings.push({
-            message: `设计规范要求每页正文段落不超过 3 段，检测到 ${paragraphCount} 段。`,
-            slideId,
-            type: "design-too-many-paragraphs",
-          });
-        }
-
-        const bodyTextElements = Array.from(
-          slide.querySelectorAll<HTMLElement>(
-            "p, li, blockquote, td, th, figcaption, em",
-          ),
-        ).filter(
-          (element) =>
-            element.textContent?.trim() &&
-            !element.closest("[data-pptx-raster]") &&
-            !element.closest("[data-pptx-ignore]"),
-        );
-        const lowLineHeightCount = bodyTextElements.filter((element) => {
-          const style = window.getComputedStyle(element);
-          const fontSize = Number.parseFloat(style.fontSize);
-          const lineHeight = Number.parseFloat(style.lineHeight);
-
-          return fontSize > 0 && lineHeight > 0 && lineHeight / fontSize < 1.38;
-        }).length;
-
-        if (lowLineHeightCount) {
-          warnings.push({
-            message: `设计规范要求正文 line-height 接近 1.5 到 1.6，检测到 ${lowLineHeightCount} 个文本节点行高偏紧。`,
-            slideId,
-            type: "design-tight-line-height",
-          });
-        }
-
-        const h2 = slide.querySelector<HTMLElement>("h2");
-
-        if (h2 && !h2.classList.contains("summary-title")) {
-          const fontSize = Number.parseFloat(window.getComputedStyle(h2).fontSize);
-
-          if (fontSize < 30 || fontSize > 36) {
-            warnings.push({
-              message: `设计规范要求内容页标题约 32px，当前为 ${fontSize}px。`,
-              slideId,
-              type: "design-content-heading-size",
-            });
-          }
-        }
-
-        const deepEditableCount = textElements.filter((element) => {
-          let depth = 0;
-          let current: HTMLElement | null = element;
-
-          while (current && current !== slide) {
-            depth += 1;
-            current = current.parentElement;
-          }
-
-          return depth > 5;
-        }).length;
-
-        if (deepEditableCount) {
-          warnings.push({
-            message: `设计规范要求 DOM 结构扁平，检测到 ${deepEditableCount} 个关键文本节点嵌套过深。`,
-            slideId,
-            type: "design-deep-text-nesting",
-          });
-        }
-      }
-
-      const images = Array.from(document.querySelectorAll<HTMLImageElement>("img"))
-        .filter(
-          (image) =>
-            !image.closest("[data-pptx-ignore]") &&
-            !image.hasAttribute("data-pptx-fallback"),
-        );
-
-      for (const image of images) {
-        const rect = image.getBoundingClientRect();
-        const style = window.getComputedStyle(image);
-        const slide = image.closest<HTMLElement>(selector);
-        const slideId = slide?.dataset.slideId || "unknown";
-
-        if (rect.width <= 0 || rect.height <= 0) {
-          warnings.push({
-            message: "设计规范要求图片具有明确像素尺寸。",
-            slideId,
-            type: "design-image-size",
-          });
-        }
-
-        if (style.objectFit === "fill") {
-          warnings.push({
-            message: "设计规范要求图片设置 object-fit，避免 PPTX 坐标和裁切不稳定。",
-            slideId,
-            type: "design-image-object-fit",
-          });
-        }
-      }
-
-      return warnings;
-    }, slideSelector);
-  } finally {
-    await page.close();
-  }
-}
-
-async function collectDesignGuidelineWarnings(
-  browserContext: BrowserContext,
-  htmlAbsolutePath: string,
-  slideSelector: string,
-) {
-  const [sourceWarnings, runtimeWarnings] = await Promise.all([
-    collectSourceDesignWarnings(htmlAbsolutePath),
-    collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, slideSelector),
-  ]);
-
-  return [...sourceWarnings, ...runtimeWarnings];
-}
-
-async function writeTextFileIfAllowed(
+async function writeFileIfAllowed(
   filePath: string,
-  content: string,
+  content: Buffer | string,
   overwrite: boolean,
 ) {
   if (!overwrite && (await fileExists(filePath))) {
@@ -644,77 +110,236 @@ async function writeTextFileIfAllowed(
   }
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, content, "utf8");
+  await fs.writeFile(filePath, content);
 
   return true;
 }
 
-async function launchHtmlPptxBrowser() {
-  const launchErrors: string[] = [];
-  let browser: Browser | undefined;
+function createBlankSlideHtmlTemplate(title: string, prompt?: string) {
+  const safeTitle = escapeHtml(title);
+  const safePrompt = escapeHtml(
+    summarizePrompt(prompt, "在这里放置受限 slide HTML 内容。"),
+  );
 
-  try {
-    browser = await chromium.launch({ headless: true });
-  } catch (error) {
-    launchErrors.push(
-      error instanceof Error ? error.message : "Playwright Chromium 启动失败。",
-    );
-  }
+  return {
+    css: [
+      "html, body { margin: 0; padding: 0; background: #eef2f7; overflow: hidden; }",
+      "body { font-family: Inter, Arial, 'PingFang SC', sans-serif; color: #172033; }",
+      "*, *::before, *::after { box-sizing: border-box; }",
+      ".deck { width: 1280px; }",
+      ".slide { position: relative; width: 1280px; height: 720px; overflow: hidden; background: #ffffff; padding: 80px 92px 0; }",
+      ".slide-title { position: relative; z-index: 10; width: 920px; margin: 0 0 34px; color: #172033; font-size: 64px; line-height: 1.08; letter-spacing: 0; }",
+      ".slide-copy { position: relative; z-index: 10; width: 720px; margin: 0; color: #41516a; font-size: 20px; line-height: 1.55; }",
+    ].join("\n"),
+    html: [
+      "<!doctype html>",
+      '<html lang="zh-CN">',
+      "<head>",
+      '  <meta charset="utf-8" />',
+      '  <meta name="viewport" content="width=1280, initial-scale=1" />',
+      `  <title>${safeTitle}</title>`,
+      '  <link rel="stylesheet" href="./styles.css" />',
+      "</head>",
+      "<body>",
+      '  <main class="deck" data-pptx-deck>',
+      '    <section class="slide" data-slide-id="cover">',
+      `      <h1 class="slide-title" data-pptx-editable>${safeTitle}</h1>`,
+      `      <p class="slide-copy" data-pptx-editable>${safePrompt}</p>`,
+      "    </section>",
+      "  </main>",
+      "</body>",
+      "</html>",
+    ].join("\n"),
+  };
+}
 
-  if (!browser) {
-    try {
-      browser = await chromium.launch({ channel: "chrome", headless: true });
-    } catch (error) {
-      launchErrors.push(
-        error instanceof Error ? error.message : "Chrome channel 启动失败。",
+function resolveSkillPath(...segments: string[]) {
+  const sourceCandidate = path.resolve(process.cwd(), "skills", "slides", ...segments);
+  const localCandidate = path.resolve(__dirname, ...segments);
+
+  return fileExists(sourceCandidate).then((exists) =>
+    exists ? sourceCandidate : localCandidate,
+  );
+}
+
+type CopyResult = {
+  skippedFiles: string[];
+  writtenFiles: string[];
+};
+
+async function copyTemplateDirectory(
+  fromDirectory: string,
+  toDirectory: string,
+  workspaceRoot: string,
+  overwrite: boolean,
+  replacements: Record<string, string>,
+): Promise<CopyResult> {
+  const writtenFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  const entries = await fs.readdir(fromDirectory, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(fromDirectory, entry.name);
+    const targetPath = path.join(toDirectory, entry.name);
+
+    if (entry.isDirectory()) {
+      const nested = await copyTemplateDirectory(
+        sourcePath,
+        targetPath,
+        workspaceRoot,
+        overwrite,
+        replacements,
       );
+
+      writtenFiles.push(...nested.writtenFiles);
+      skippedFiles.push(...nested.skippedFiles);
+      continue;
+    }
+
+    const extension = path.extname(entry.name).toLowerCase();
+    const isTextFile = [".css", ".html", ".js", ".json", ".md", ".svg", ".txt"].includes(extension);
+    const sourceContent = await fs.readFile(sourcePath);
+    const content = isTextFile
+      ? Object.entries(replacements).reduce(
+          (current, [token, value]) => current.replaceAll(token, value),
+          sourceContent.toString("utf8"),
+        )
+      : sourceContent;
+    const didWrite = await writeFileIfAllowed(targetPath, content, overwrite);
+
+    if (didWrite) {
+      writtenFiles.push(toWorkspaceRelative(targetPath, workspaceRoot));
+    } else {
+      skippedFiles.push(toWorkspaceRelative(targetPath, workspaceRoot));
     }
   }
 
-  if (!browser) {
-    throw new Error(
-      [
-        "无法启动 Playwright 浏览器。",
-        "请安装 Playwright Chromium，或确保本机可用 Google Chrome。",
-        ...launchErrors,
-      ].join("\n"),
-    );
+  return { skippedFiles, writtenFiles };
+}
+
+async function writeBlankTemplate(
+  baseAbsolutePath: string,
+  workspaceRoot: string,
+  overwrite: boolean,
+  title: string,
+  prompt: string | undefined,
+): Promise<CopyResult> {
+  const template = createBlankSlideHtmlTemplate(title, prompt);
+  const targets = [
+    {
+      content: template.html,
+      path: path.join(baseAbsolutePath, "deck.html"),
+    },
+    {
+      content: template.css,
+      path: path.join(baseAbsolutePath, "styles.css"),
+    },
+  ];
+  const writtenFiles: string[] = [];
+  const skippedFiles: string[] = [];
+
+  for (const target of targets) {
+    const didWrite = await writeFileIfAllowed(target.path, target.content, overwrite);
+
+    if (didWrite) {
+      writtenFiles.push(toWorkspaceRelative(target.path, workspaceRoot));
+    } else {
+      skippedFiles.push(toWorkspaceRelative(target.path, workspaceRoot));
+    }
   }
 
-  const browserContext = await browser.newContext({
-    deviceScaleFactor: 2,
-    viewport: {
-      height: SLIDE_HEIGHT_PX,
-      width: SLIDE_WIDTH_PX,
-    },
-  });
-
-  return { browser, browserContext };
+  return { skippedFiles, writtenFiles };
 }
 
-async function closeBrowser(
-  browser: Browser,
-  browserContext: BrowserContext,
+async function runHtmlPptxScript(
+  scriptName: "export" | "prepare" | "validate",
+  input: Record<string, unknown>,
+  workspaceRoot: string,
+  signal: AbortSignal | undefined,
 ) {
-  await browserContext.close().catch(() => undefined);
-  await browser.close().catch(() => undefined);
-}
+  const scriptPath = await resolveSkillPath("scripts", "html-pptx", `${scriptName}.mjs`);
 
-async function openSlideHtml(
-  browserContext: BrowserContext,
-  htmlAbsolutePath: string,
-) {
-  const page = await browserContext.newPage();
+  if (!(await fileExists(scriptPath))) {
+    throw new Error(`未找到 HTML-to-PPTX 脚本：${scriptPath}`);
+  }
 
-  await page.goto(pathToFileURL(htmlAbsolutePath).href, {
-    waitUntil: "networkidle",
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const child = spawn(process.execPath, [scriptPath], {
+      cwd: workspaceRoot,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`HTML-to-PPTX 脚本超时：${scriptName}`));
+    }, 300000);
+    const abortHandler = () => {
+      child.kill("SIGTERM");
+      reject(new Error(`HTML-to-PPTX 脚本已取消：${scriptName}`));
+    };
+
+    if (signal?.aborted) {
+      abortHandler();
+      return;
+    }
+
+    signal?.addEventListener("abort", abortHandler, { once: true });
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortHandler);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortHandler);
+
+      if (code !== 0) {
+        reject(
+          new Error(
+            [
+              `HTML-to-PPTX 脚本失败：${scriptName}`,
+              stderr.trim(),
+              stdout.trim(),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          ),
+        );
+        return;
+      }
+
+      const jsonLine = stdout
+        .trim()
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .at(-1);
+
+      if (!jsonLine) {
+        reject(new Error(`HTML-to-PPTX 脚本没有返回 JSON：${scriptName}`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(jsonLine) as Record<string, unknown>);
+      } catch (error) {
+        reject(
+          new Error(
+            `HTML-to-PPTX 脚本返回 JSON 解析失败：${scriptName}\n${jsonLine}\n${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+    });
+    child.stdin.end(`${JSON.stringify(input)}\n`);
   });
-  await page.evaluate(async () => {
-    await document.fonts?.ready;
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  });
-
-  return page;
 }
 
 async function initSlideHtmlWorkspace(
@@ -726,10 +351,6 @@ async function initSlideHtmlWorkspace(
   const deckSlug = sanitizePathSegment(args.deckSlug);
   const baseRelativePath = args.dir ?? deckSlug;
   const baseAbsolutePath = resolveWorkspacePath(baseRelativePath, workspaceRoot);
-  const template =
-    args.template === "spike-sample"
-      ? createSpikeSlideHtmlTemplate(args.title, args.prompt)
-      : createBlankSlideHtmlTemplate(args.title, args.prompt);
   const subDirectories = [
     "assets",
     "fallback-assets",
@@ -750,17 +371,53 @@ async function initSlideHtmlWorkspace(
   const measurementsPath = path.join(baseAbsolutePath, "measurements.json");
   const qaReportPath = path.join(baseAbsolutePath, "qa-report.json");
   const finalPptxPath = path.join(baseAbsolutePath, "final", `${deckSlug}.pptx`);
-  const writtenFiles: string[] = [];
-  const skippedFiles: string[] = [];
+  const selectedTemplateId =
+    args.templateId?.trim() || context.toolSettings?.slides?.templateId?.trim();
+  const templateId =
+    selectedTemplateId ||
+    (args.template === "spike-sample" ? getDefaultSlidesTemplateId() : "");
+  const selectedTemplate = templateId ? findSlidesTemplate(templateId) : undefined;
+
+  if (templateId && !selectedTemplate) {
+    throw new Error(`未找到 slides 模板：${templateId}`);
+  }
+
+  const safeTitle = escapeHtml(args.title);
+  const safePrompt = escapeHtml(
+    summarizePrompt(
+      args.prompt,
+      "验证受限 slide HTML、dom-to-pptx 和局部截图回退的组合边界。",
+    ),
+  );
+  const templateResult =
+    selectedTemplate
+      ? await copyTemplateDirectory(
+          getSlidesTemplateDirectory(selectedTemplate.id),
+          baseAbsolutePath,
+          workspaceRoot,
+          args.overwrite,
+          {
+            "{{PROMPT}}": safePrompt,
+            "{{TEMPLATE_ID}}": selectedTemplate.id,
+            "{{TEMPLATE_NAME}}": escapeHtml(selectedTemplate.name),
+            "{{TITLE}}": safeTitle,
+          },
+        )
+      : await writeBlankTemplate(
+          baseAbsolutePath,
+          workspaceRoot,
+          args.overwrite,
+          args.title,
+          args.prompt,
+        );
+  const writtenFiles = [...templateResult.writtenFiles];
+  const skippedFiles = [...templateResult.skippedFiles];
   const trackWrite = async (filePath: string, content: string) => {
-    const didWrite = await writeTextFileIfAllowed(filePath, content, args.overwrite);
+    const didWrite = await writeFileIfAllowed(filePath, content, args.overwrite);
     const target = didWrite ? writtenFiles : skippedFiles;
 
     target.push(toWorkspaceRelative(filePath, workspaceRoot));
   };
-
-  await trackWrite(htmlPath, template.html);
-  await trackWrite(cssPath, template.css);
 
   if (args.prompt) {
     await trackWrite(path.join(baseAbsolutePath, "prompt.txt"), `${args.prompt}\n`);
@@ -772,16 +429,15 @@ async function initSlideHtmlWorkspace(
           prompt: args.prompt,
           route: "restricted-slide-html",
           template: args.template,
+          templateId: selectedTemplate?.id ?? "blank",
+          templateName: selectedTemplate?.name ?? "Blank",
+          templateVersion: selectedTemplate?.version ?? "local",
           title: args.title,
         },
         null,
         2,
       )}\n`,
     );
-  }
-
-  for (const [assetName, assetContent] of Object.entries(template.assets)) {
-    await trackWrite(path.join(baseAbsolutePath, "assets", assetName), assetContent);
   }
 
   return [
@@ -793,152 +449,12 @@ async function initSlideHtmlWorkspace(
     `measurements：${toWorkspaceRelative(measurementsPath, workspaceRoot)}`,
     `QA：${toWorkspaceRelative(qaReportPath, workspaceRoot)}`,
     `最终 PPTX：${toWorkspaceRelative(finalPptxPath, workspaceRoot)}`,
+    `模板：${selectedTemplate ? `${selectedTemplate.name} (${selectedTemplate.id})` : "Blank"}`,
     writtenFiles.length ? `写入：${writtenFiles.join(", ")}` : "写入：无",
     skippedFiles.length
       ? `跳过已有文件：${skippedFiles.join(", ")}`
       : "跳过已有文件：无",
   ].join("\n");
-}
-
-async function collectHtmlMeasurements(
-  browserContext: BrowserContext,
-  htmlAbsolutePath: string,
-  slideSelector: string,
-) {
-  const page = await openSlideHtml(browserContext, htmlAbsolutePath);
-
-  try {
-    return await page.evaluate(
-      ({ expectedHeight, expectedWidth, selector }) => {
-        const warnings: HtmlPptxWarning[] = [];
-        const slides = Array.from(
-          document.querySelectorAll<HTMLElement>(selector),
-        );
-        const seenSlideIds = new Set<string>();
-        const slideMeasurements = slides.map((slide, index) => {
-          const rect = slide.getBoundingClientRect();
-          const id = slide.dataset.slideId || `slide-${index + 1}`;
-          const width = Math.round(rect.width * 100) / 100;
-          const height = Math.round(rect.height * 100) / 100;
-
-          if (!slide.dataset.slideId) {
-            warnings.push({
-              message: "slide 缺少 data-slide-id，已使用页序作为临时标识。",
-              slideId: id,
-              type: "missing-slide-id",
-            });
-          }
-
-          if (seenSlideIds.has(id)) {
-            warnings.push({
-              message: `slide id ${id} 重复。`,
-              slideId: id,
-              type: "duplicate-slide-id",
-            });
-          }
-
-          seenSlideIds.add(id);
-
-          if (
-            Math.abs(width - expectedWidth) > 1 ||
-            Math.abs(height - expectedHeight) > 1
-          ) {
-            warnings.push({
-              message: `slide 尺寸为 ${width}x${height}，预期为 ${expectedWidth}x${expectedHeight}。`,
-              slideId: id,
-              type: "slide-size-mismatch",
-            });
-          }
-
-          if (
-            slide.scrollWidth > slide.clientWidth ||
-            slide.scrollHeight > slide.clientHeight
-          ) {
-            warnings.push({
-              message: "slide 内部出现滚动尺寸，导出可能裁切。",
-              slideId: id,
-              type: "slide-overflow",
-            });
-          }
-
-          return {
-            height,
-            id,
-            index,
-            scrollHeight: slide.scrollHeight,
-            scrollWidth: slide.scrollWidth,
-            width,
-          };
-        });
-        const rasterElements = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-pptx-raster]"),
-        ).map((element, index) => {
-          const slide = element.closest<HTMLElement>(selector);
-          const slideRect = slide?.getBoundingClientRect();
-          const rect = element.getBoundingClientRect();
-          const computedStyle = window.getComputedStyle(element);
-          const slideId = slide?.dataset.slideId || `slide-${index + 1}`;
-          const alt =
-            element.getAttribute("data-pptx-alt") ||
-            element.getAttribute("aria-label") ||
-            "";
-
-          element.setAttribute("data-pptx-raster-index", String(index));
-
-          if (!slide) {
-            warnings.push({
-              message: "data-pptx-raster 节点不在 slide 内。",
-              type: "raster-outside-slide",
-            });
-          }
-
-          if (!alt.trim()) {
-            warnings.push({
-              message: "截图回退节点缺少 data-pptx-alt。",
-              slideId,
-              type: "missing-raster-alt",
-            });
-          }
-
-          return {
-            alt,
-            borderRadius: computedStyle.borderRadius,
-            height: rect.height,
-            index,
-            left: slideRect ? rect.left - slideRect.left : rect.left,
-            position: computedStyle.position,
-            slideId,
-            top: slideRect ? rect.top - slideRect.top : rect.top,
-            width: rect.width,
-            zIndex: computedStyle.zIndex,
-          };
-        });
-
-        if (!slides.length) {
-          warnings.push({
-            message: `未找到 slide selector：${selector}`,
-            type: "missing-slides",
-          });
-        }
-
-        return {
-          editableElements:
-            document.querySelectorAll("[data-pptx-editable]").length,
-          ignoredElements: document.querySelectorAll("[data-pptx-ignore]").length,
-          rasterElements,
-          slideMeasurements,
-          warnings,
-        };
-      },
-      {
-        expectedHeight: SLIDE_HEIGHT_PX,
-        expectedWidth: SLIDE_WIDTH_PX,
-        selector: slideSelector,
-      },
-    );
-  } finally {
-    await page.close();
-  }
 }
 
 async function prepareSlideHtmlForPptx(
@@ -964,309 +480,27 @@ async function prepareSlideHtmlForPptx(
     args.measurementsPath,
     workspaceRoot,
   );
-  const { browser, browserContext } = await launchHtmlPptxBrowser();
-
-  try {
-    const page = await openSlideHtml(browserContext, htmlAbsolutePath);
-    const state = await page.evaluate(
-      ({ expectedHeight, expectedWidth, selector }) => {
-        const warnings: HtmlPptxWarning[] = [];
-        const slides = Array.from(
-          document.querySelectorAll<HTMLElement>(selector),
-        );
-        const seenSlideIds = new Set<string>();
-        const slideMeasurements = slides.map((slide, index) => {
-          const rect = slide.getBoundingClientRect();
-          const id = slide.dataset.slideId || `slide-${index + 1}`;
-          const width = Math.round(rect.width * 100) / 100;
-          const height = Math.round(rect.height * 100) / 100;
-
-          if (!slide.dataset.slideId) {
-            warnings.push({
-              message: "slide 缺少 data-slide-id，已使用页序作为临时标识。",
-              slideId: id,
-              type: "missing-slide-id",
-            });
-          }
-
-          if (seenSlideIds.has(id)) {
-            warnings.push({
-              message: `slide id ${id} 重复。`,
-              slideId: id,
-              type: "duplicate-slide-id",
-            });
-          }
-
-          seenSlideIds.add(id);
-
-          if (
-            Math.abs(width - expectedWidth) > 1 ||
-            Math.abs(height - expectedHeight) > 1
-          ) {
-            warnings.push({
-              message: `slide 尺寸为 ${width}x${height}，预期为 ${expectedWidth}x${expectedHeight}。`,
-              slideId: id,
-              type: "slide-size-mismatch",
-            });
-          }
-
-          if (
-            slide.scrollWidth > slide.clientWidth ||
-            slide.scrollHeight > slide.clientHeight
-          ) {
-            warnings.push({
-              message: "slide 内部出现滚动尺寸，导出可能裁切。",
-              slideId: id,
-              type: "slide-overflow",
-            });
-          }
-
-          return {
-            height,
-            id,
-            index,
-            scrollHeight: slide.scrollHeight,
-            scrollWidth: slide.scrollWidth,
-            width,
-          };
-        });
-        const rasterElements = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-pptx-raster]"),
-        ).map((element, index) => {
-          const slide = element.closest<HTMLElement>(selector);
-          const slideRect = slide?.getBoundingClientRect();
-          const rect = element.getBoundingClientRect();
-          const computedStyle = window.getComputedStyle(element);
-          const slideId = slide?.dataset.slideId || `slide-${index + 1}`;
-          const alt =
-            element.getAttribute("data-pptx-alt") ||
-            element.getAttribute("aria-label") ||
-            "";
-
-          element.setAttribute("data-pptx-raster-index", String(index));
-
-          if (!slide) {
-            warnings.push({
-              message: "data-pptx-raster 节点不在 slide 内。",
-              type: "raster-outside-slide",
-            });
-          }
-
-          if (!alt.trim()) {
-            warnings.push({
-              message: "截图回退节点缺少 data-pptx-alt。",
-              slideId,
-              type: "missing-raster-alt",
-            });
-          }
-
-          return {
-            alt,
-            borderRadius: computedStyle.borderRadius,
-            height: rect.height,
-            index,
-            left: slideRect ? rect.left - slideRect.left : rect.left,
-            position: computedStyle.position,
-            slideId,
-            top: slideRect ? rect.top - slideRect.top : rect.top,
-            width: rect.width,
-            zIndex: computedStyle.zIndex,
-          };
-        });
-
-        const ignoredElements =
-          document.querySelectorAll("[data-pptx-ignore]").length;
-
-        document.querySelectorAll("[data-pptx-ignore]").forEach((element) => {
-          element.remove();
-        });
-
-        if (!slides.length) {
-          warnings.push({
-            message: `未找到 slide selector：${selector}`,
-            type: "missing-slides",
-          });
-        }
-
-        return {
-          editableElements:
-            document.querySelectorAll("[data-pptx-editable]").length,
-          ignoredElements,
-          rasterElements,
-          slideMeasurements,
-          warnings,
-        };
-      },
-      {
-        expectedHeight: SLIDE_HEIGHT_PX,
-        expectedWidth: SLIDE_WIDTH_PX,
-        selector: args.slideSelector,
-      },
-    );
-    const designWarnings = await collectDesignGuidelineWarnings(
-      browserContext,
+  const result = await runHtmlPptxScript(
+    "prepare",
+    {
+      fallbackAssetsDirectory,
       htmlAbsolutePath,
-      args.slideSelector,
-    );
-    const warnings = [...state.warnings, ...designWarnings];
-    const replacements: Array<{
-      alt: string;
-      asset: string;
-      borderRadius: string;
-      height: number;
-      index: number;
-      left: number;
-      position: string;
-      slideId: string;
-      src: string;
-      top: number;
-      width: number;
-      zIndex: string;
-    }> = [];
-
-    await fs.mkdir(fallbackAssetsDirectory, { recursive: true });
-
-    for (const rasterElement of state.rasterElements) {
-      const width = Math.round(rasterElement.width);
-      const height = Math.round(rasterElement.height);
-
-      if (width <= 0 || height <= 0) {
-        warnings.push({
-          message: "截图回退节点尺寸为空，已跳过。",
-          slideId: rasterElement.slideId,
-          type: "empty-raster-node",
-        });
-        continue;
-      }
-
-      const assetName = `${sanitizePathSegment(rasterElement.slideId)}-${String(
-        rasterElement.index + 1,
-      ).padStart(2, "0")}.png`;
-      const assetAbsolutePath = path.join(fallbackAssetsDirectory, assetName);
-      const locator = page.locator(
-        `[data-pptx-raster-index="${rasterElement.index}"]`,
-      );
-
-      await locator.screenshot({
-        omitBackground: true,
-        path: assetAbsolutePath,
-      });
-
-      replacements.push({
-        alt: rasterElement.alt,
-        asset: toWorkspaceRelative(assetAbsolutePath, workspaceRoot),
-        borderRadius: rasterElement.borderRadius,
-        height: rasterElement.height,
-        index: rasterElement.index,
-        left: rasterElement.left,
-        position: rasterElement.position,
-        slideId: rasterElement.slideId,
-        src: toPortableRelativePath(path.dirname(outHtmlAbsolutePath), assetAbsolutePath),
-        top: rasterElement.top,
-        width: rasterElement.width,
-        zIndex: rasterElement.zIndex,
-      });
-    }
-
-    await page.evaluate(
-      ({ replacements: browserReplacements, selector }) => {
-        for (const replacement of browserReplacements) {
-          const original = document.querySelector<HTMLElement>(
-            `[data-pptx-raster-index="${replacement.index}"]`,
-          );
-          const slide = original?.closest<HTMLElement>(selector);
-
-          if (!original || !slide) {
-            continue;
-          }
-
-          const image = document.createElement("img");
-
-          image.src = replacement.src;
-          image.alt = replacement.alt;
-          image.setAttribute("data-pptx-alt", replacement.alt);
-          image.setAttribute("data-pptx-fallback", "true");
-          image.style.width = `${replacement.width}px`;
-          image.style.height = `${replacement.height}px`;
-          image.style.objectFit = "contain";
-          image.style.display = "block";
-          image.style.margin = "0";
-          image.style.zIndex =
-            replacement.zIndex === "auto" ? "0" : replacement.zIndex;
-          image.style.borderRadius = replacement.borderRadius;
-
-          if (
-            replacement.position === "static" ||
-            replacement.position === "relative"
-          ) {
-            image.style.position = replacement.position;
-            original.replaceWith(image);
-            continue;
-          }
-
-          image.style.position = "absolute";
-          image.style.left = `${replacement.left}px`;
-          image.style.top = `${replacement.top}px`;
-          slide.appendChild(image);
-          original.remove();
-        }
-      },
-      {
-        replacements,
-        selector: args.slideSelector,
-      },
-    );
-
-    const preparedHtml = await page.content();
-    const measurements: HtmlPptxMeasurements = {
-      editableElements: state.editableElements,
-      ignoredElements: state.ignoredElements,
-      preparedHtml: toWorkspaceRelative(outHtmlAbsolutePath, workspaceRoot),
-      rasterFallbacks: replacements.map((replacement) => ({
-        alt: replacement.alt,
-        asset: replacement.asset,
-        height: Math.round(replacement.height * 100) / 100,
-        index: replacement.index,
-        left: Math.round(replacement.left * 100) / 100,
-        position: replacement.position,
-        slideId: replacement.slideId,
-        top: Math.round(replacement.top * 100) / 100,
-        width: Math.round(replacement.width * 100) / 100,
-        zIndex: replacement.zIndex,
-      })),
-      slideHeight: SLIDE_HEIGHT_PX,
-      slideSelector: args.slideSelector,
-      slides: state.slideMeasurements,
-      slideWidth: SLIDE_WIDTH_PX,
-      sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-      warnings,
-    };
-
-    await fs.mkdir(path.dirname(outHtmlAbsolutePath), { recursive: true });
-    await fs.writeFile(outHtmlAbsolutePath, preparedHtml, "utf8");
-    await fs.writeFile(
       measurementsAbsolutePath,
-      `${JSON.stringify(measurements, null, 2)}\n`,
-      "utf8",
-    );
-    await page.close();
+      outHtmlAbsolutePath,
+      slideSelector: args.slideSelector,
+      workspaceRoot,
+    },
+    workspaceRoot,
+    context.signal,
+  );
 
-    return [
-      "已准备 HTML-to-PPTX 输入。",
-      `Prepared HTML：${toWorkspaceRelative(outHtmlAbsolutePath, workspaceRoot)}`,
-      `measurements：${toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot)}`,
-      `截图回退：${replacements.length}`,
-      `warning：${warnings.length}`,
-    ].join("\n");
-  } finally {
-    await closeBrowser(browser, browserContext);
-  }
-}
-
-function resolveDomToPptxBundlePath() {
-  const mainPath = requireFromSkill.resolve("dom-to-pptx");
-
-  return path.join(path.dirname(mainPath), "dom-to-pptx.bundle.js");
+  return [
+    "已准备 HTML-to-PPTX 输入。",
+    `Prepared HTML：${String(result.outHtml ?? toWorkspaceRelative(outHtmlAbsolutePath, workspaceRoot))}`,
+    `measurements：${String(result.measurementsPath ?? toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot))}`,
+    `截图回退：${Number(result.rasterFallbacks ?? 0)}`,
+    `warning：${Number(result.warnings ?? 0)}`,
+  ].join("\n");
 }
 
 async function exportHtmlToPptx(
@@ -1277,495 +511,35 @@ async function exportHtmlToPptx(
   const workspaceRoot = getWorkspaceRoot(context.workspaceRoot);
   const htmlAbsolutePath = resolveWorkspacePath(args.html, workspaceRoot);
   const outPptxAbsolutePath = resolveWorkspacePath(args.outPptx, workspaceRoot);
-  const { browser, browserContext } = await launchHtmlPptxBrowser();
-
-  try {
-    const { inlined, page } = await inlineLocalImagesForDomToPptx(
-      browserContext,
+  const result = await runHtmlPptxScript(
+    "export",
+    {
+      author: args.author,
       htmlAbsolutePath,
+      outPptxAbsolutePath,
+      slideSelector: args.slideSelector,
+      title: args.title,
       workspaceRoot,
-    );
-    const bundlePath = resolveDomToPptxBundlePath();
-
-    await page.addScriptTag({ path: bundlePath });
-
-    const bytes = await page.evaluate(
-      async ({ author, height, selector, title, width }) => {
-        type DomToPptxApi = {
-          exportToPptx: (
-            elementOrSelector: Element[] | string,
-            options: {
-              author: string;
-              autoEmbedFonts: boolean;
-              fileName: string;
-              height: number;
-              layout: string;
-              skipDownload: boolean;
-              svgAsVector: boolean;
-              title: string;
-              width: number;
-            },
-          ) => Promise<Blob>;
-        };
-        const api = (window as unknown as { domToPptx?: DomToPptxApi })
-          .domToPptx;
-
-        if (!api?.exportToPptx) {
-          throw new Error("dom-to-pptx browser bundle 未暴露 exportToPptx。");
-        }
-
-        const slideElements = Array.from(document.querySelectorAll(selector));
-
-        if (!slideElements.length) {
-          throw new Error(`未找到 slide selector：${selector}`);
-        }
-
-        const blob = await api.exportToPptx(slideElements, {
-          author,
-          autoEmbedFonts: false,
-          fileName: "deck.pptx",
-          height,
-          layout: "LAYOUT_WIDE",
-          skipDownload: true,
-          svgAsVector: true,
-          title,
-          width,
-        });
-        const arrayBuffer = await blob.arrayBuffer();
-
-        return Array.from(new Uint8Array(arrayBuffer));
-      },
-      {
-        author: args.author,
-        height: SLIDE_HEIGHT_IN,
-        selector: args.slideSelector,
-        title: args.title,
-        width: SLIDE_WIDTH_IN,
-      },
-    );
-
-    await fs.mkdir(path.dirname(outPptxAbsolutePath), { recursive: true });
-    await fs.writeFile(outPptxAbsolutePath, Buffer.from(bytes));
-    await page.close();
-
-    return [
-      "已通过 dom-to-pptx 导出 PPTX。",
-      `路径：${toWorkspaceRelative(outPptxAbsolutePath, workspaceRoot)}`,
-      `HTML：${toWorkspaceRelative(htmlAbsolutePath, workspaceRoot)}`,
-      `内联本地图片：${inlined}`,
-    ].join("\n");
-  } finally {
-    await closeBrowser(browser, browserContext);
-  }
-}
-
-async function renderHtmlPreviews(
-  htmlAbsolutePath: string,
-  previewDirectory: string,
-  slideSelector: string,
-  workspaceRoot: string,
-) {
-  await fs.rm(previewDirectory, { force: true, recursive: true });
-
-  const { browser, browserContext } = await launchHtmlPptxBrowser();
-
-  try {
-    const page = await openSlideHtml(browserContext, htmlAbsolutePath);
-    const slideIds = await page.evaluate((selector) => {
-      return Array.from(document.querySelectorAll<HTMLElement>(selector)).map(
-        (slide, index) => slide.dataset.slideId || `slide-${index + 1}`,
-      );
-    }, slideSelector);
-    const previewPaths: string[] = [];
-
-    await fs.mkdir(previewDirectory, { recursive: true });
-
-    for (let index = 0; index < slideIds.length; index += 1) {
-      const slideId = sanitizePathSegment(slideIds[index] ?? `slide-${index + 1}`);
-      const previewPath = path.join(
-        previewDirectory,
-        `slide-${String(index + 1).padStart(2, "0")}-${slideId}.png`,
-      );
-
-      await page.locator(slideSelector).nth(index).screenshot({
-        omitBackground: true,
-        path: previewPath,
-      });
-      previewPaths.push(toWorkspaceRelative(previewPath, workspaceRoot));
-    }
-
-    await page.close();
-
-    return previewPaths;
-  } finally {
-    await closeBrowser(browser, browserContext);
-  }
-}
-
-async function inspectPptxFile(pptxAbsolutePath: string) {
-  const zip = await JSZip.loadAsync(await fs.readFile(pptxAbsolutePath));
-  const slideFiles = Object.keys(zip.files)
-    .filter((fileName) => /^ppt\/slides\/slide\d+\.xml$/.test(fileName))
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
-  const mediaFiles = Object.keys(zip.files).filter(
-    (fileName) => /^ppt\/media\/.+/.test(fileName) && !zip.files[fileName]?.dir,
-  );
-  let textRuns = 0;
-  let pictureCount = 0;
-
-  for (const slideFile of slideFiles) {
-    const xml = await zip.file(slideFile)?.async("string");
-
-    if (!xml) {
-      continue;
-    }
-
-    textRuns += xml.match(/<a:t>/g)?.length ?? 0;
-    pictureCount += xml.match(/<p:pic>/g)?.length ?? 0;
-  }
-
-  return {
-    mediaFiles: mediaFiles.length,
-    pictureCount,
-    slideFiles: slideFiles.length,
-    textRuns,
-  };
-}
-
-async function inspectPreparedHtmlImages(
-  preparedHtmlAbsolutePath: string,
-): Promise<PreparedHtmlImageInspection> {
-  if (!(await fileExists(preparedHtmlAbsolutePath))) {
-    return {
-      dataUriImages: 0,
-      fallbackImages: 0,
-      images: 0,
-      localImages: 0,
-      remoteImages: 0,
-    };
-  }
-
-  const html = await fs.readFile(preparedHtmlAbsolutePath, "utf8");
-  const dom = new JSDOM(html);
-  const images = Array.from(dom.window.document.querySelectorAll("img")).filter(
-    (image) => !image.closest("[data-pptx-ignore]"),
-  );
-  const sourceValues = images.map((image) => image.getAttribute("src") ?? "");
-
-  return {
-    dataUriImages: sourceValues.filter((source) => source.startsWith("data:"))
-      .length,
-    fallbackImages: images.filter((image) =>
-      image.hasAttribute("data-pptx-fallback"),
-    ).length,
-    images: images.length,
-    localImages: sourceValues.filter(
-      (source) => source && !isRemoteOrDataImageSource(source),
-    ).length,
-    remoteImages: sourceValues.filter((source) => /^https?:/i.test(source))
-      .length,
-  };
-}
-
-function runProcess(
-  command: string,
-  args: string[],
-  cwd: string,
-  signal: AbortSignal | undefined,
-  timeoutMs = 120000,
-) {
-  return new Promise<{ code: number; stderr: string; stdout: string }>(
-    (resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      const timeout = setTimeout(() => {
-        child.kill("SIGTERM");
-        reject(new Error(`命令超时：${command}`));
-      }, timeoutMs);
-      const abortHandler = () => {
-        child.kill("SIGTERM");
-        reject(new Error(`命令已取消：${command}`));
-      };
-
-      if (signal?.aborted) {
-        abortHandler();
-        return;
-      }
-
-      signal?.addEventListener("abort", abortHandler, { once: true });
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-      child.on("error", (error) => {
-        clearTimeout(timeout);
-        signal?.removeEventListener("abort", abortHandler);
-        reject(error);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        signal?.removeEventListener("abort", abortHandler);
-        resolve({
-          code: code ?? 1,
-          stderr,
-          stdout,
-        });
-      });
     },
-  );
-}
-
-async function commandExists(command: string) {
-  if (path.isAbsolute(command)) {
-    return fileExists(command);
-  }
-
-  try {
-    const result = await runProcess("which", [command], process.cwd(), undefined, 8000);
-
-    return result.code === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function firstAvailableCommand(commands: Array<string | undefined>) {
-  for (const command of commands) {
-    if (command && (await commandExists(command))) {
-      return command;
-    }
-  }
-
-  return undefined;
-}
-
-async function renderQuickLookPptxThumbnail(
-  pptxAbsolutePath: string,
-  previewDirectory: string,
-  workspaceRoot: string,
-  signal: AbortSignal | undefined,
-  warnings: HtmlPptxWarning[],
-  fallbackStatus: string,
-) {
-  const qlmanage = await firstAvailableCommand(["qlmanage"]);
-
-  if (!qlmanage) {
-    warnings.push({
-      message: "未找到 qlmanage，PPTX 缩略图回退未执行。",
-      type: "pptx-preview-quicklook-unavailable",
-    });
-
-    return {
-      files: [],
-      status: fallbackStatus,
-      warnings,
-    };
-  }
-
-  const result = await runProcess(
-    qlmanage,
-    ["-t", "-s", "1280", "-o", previewDirectory, pptxAbsolutePath],
     workspaceRoot,
-    signal,
-    60000,
+    context.signal,
   );
+  const diagnosticLines = [
+    Array.isArray(result.pageErrors) && result.pageErrors.length
+      ? `page error：${result.pageErrors.join("; ")}`
+      : undefined,
+    Array.isArray(result.consoleErrors) && result.consoleErrors.length
+      ? `console error：${result.consoleErrors.join("; ")}`
+      : undefined,
+  ].filter(Boolean);
 
-  if (result.code !== 0) {
-    warnings.push({
-      message: `Quick Look 缩略图生成失败：${result.stderr || result.stdout}`,
-      type: "pptx-preview-quicklook-failed",
-    });
-
-    return {
-      files: [],
-      status: fallbackStatus,
-      warnings,
-    };
-  }
-
-  const thumbnailPath = path.join(
-    previewDirectory,
-    `${path.basename(pptxAbsolutePath)}.png`,
-  );
-
-  if (!(await fileExists(thumbnailPath))) {
-    warnings.push({
-      message: "Quick Look 未产出 PPTX 缩略图。",
-      type: "pptx-preview-quicklook-missing",
-    });
-
-    return {
-      files: [],
-      status: fallbackStatus,
-      warnings,
-    };
-  }
-
-  return {
-    files: [toWorkspaceRelative(thumbnailPath, workspaceRoot)],
-    status: "quicklook-thumbnail",
-    warnings,
-  };
-}
-
-async function renderPptxPreview(
-  pptxAbsolutePath: string,
-  previewDirectory: string,
-  workspaceRoot: string,
-  signal: AbortSignal | undefined,
-) {
-  const warnings: HtmlPptxWarning[] = [];
-  const files: string[] = [];
-
-  await fs.rm(previewDirectory, { force: true, recursive: true });
-  await fs.mkdir(previewDirectory, { recursive: true });
-
-  const soffice = await firstAvailableCommand([
-    process.env.LIBREOFFICE_PATH,
-    "soffice",
-    "libreoffice",
-    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-  ]);
-
-  if (!soffice) {
-    warnings.push({
-      message: "未找到 LibreOffice，PPTX 预览未渲染。",
-      type: "pptx-preview-not-checked",
-    });
-
-    return renderQuickLookPptxThumbnail(
-      pptxAbsolutePath,
-      previewDirectory,
-      workspaceRoot,
-      signal,
-      warnings,
-      "not_checked",
-    );
-  }
-
-  const convertResult = await runProcess(
-    soffice,
-    [
-      "--headless",
-      "--convert-to",
-      "pdf",
-      "--outdir",
-      previewDirectory,
-      pptxAbsolutePath,
-    ],
-    workspaceRoot,
-    signal,
-  );
-
-  if (convertResult.code !== 0) {
-    warnings.push({
-      message: `LibreOffice 转 PDF 失败：${convertResult.stderr || convertResult.stdout}`,
-      type: "pptx-preview-failed",
-    });
-
-    return renderQuickLookPptxThumbnail(
-      pptxAbsolutePath,
-      previewDirectory,
-      workspaceRoot,
-      signal,
-      warnings,
-      "failed",
-    );
-  }
-
-  const pdfPath = path.join(
-    previewDirectory,
-    `${path.basename(pptxAbsolutePath, path.extname(pptxAbsolutePath))}.pdf`,
-  );
-
-  if (!(await fileExists(pdfPath))) {
-    warnings.push({
-      message: "LibreOffice 未产出 PDF 预览。",
-      type: "pptx-preview-missing-pdf",
-    });
-
-    return renderQuickLookPptxThumbnail(
-      pptxAbsolutePath,
-      previewDirectory,
-      workspaceRoot,
-      signal,
-      warnings,
-      "failed",
-    );
-  }
-
-  files.push(toWorkspaceRelative(pdfPath, workspaceRoot));
-
-  const pdftoppm = await firstAvailableCommand(["pdftoppm"]);
-
-  if (!pdftoppm) {
-    warnings.push({
-      message: "未找到 pdftoppm，PPTX 预览仅保留 PDF。",
-      type: "pptx-preview-pdf-only",
-    });
-
-    return {
-      files,
-      status: "pdf-only",
-      warnings,
-    };
-  }
-
-  const outputPrefix = path.join(previewDirectory, "slide");
-  const renderResult = await runProcess(
-    pdftoppm,
-    ["-png", "-r", "144", pdfPath, outputPrefix],
-    workspaceRoot,
-    signal,
-  );
-
-  if (renderResult.code !== 0) {
-    warnings.push({
-      message: `pdftoppm 渲染失败：${renderResult.stderr || renderResult.stdout}`,
-      type: "pptx-preview-render-failed",
-    });
-
-    return {
-      files,
-      status: "pdf-only",
-      warnings,
-    };
-  }
-
-  const renderedFiles = (await fs.readdir(previewDirectory))
-    .filter((fileName) => /^slide-\d+\.png$/.test(fileName))
-    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
-    .map((fileName) =>
-      toWorkspaceRelative(path.join(previewDirectory, fileName), workspaceRoot),
-    );
-
-  files.push(...renderedFiles);
-
-  return {
-    files,
-    status: renderedFiles.length ? "rendered" : "pdf-only",
-    warnings,
-  };
-}
-
-async function readMeasurements(
-  measurementsAbsolutePath: string | undefined,
-) {
-  if (!measurementsAbsolutePath || !(await fileExists(measurementsAbsolutePath))) {
-    return undefined;
-  }
-
-  return JSON.parse(
-    await fs.readFile(measurementsAbsolutePath, "utf8"),
-  ) as HtmlPptxMeasurements;
+  return [
+    "已通过 dom-to-pptx 导出 PPTX。",
+    `路径：${String(result.outPptx ?? toWorkspaceRelative(outPptxAbsolutePath, workspaceRoot))}`,
+    `HTML：${String(result.html ?? toWorkspaceRelative(htmlAbsolutePath, workspaceRoot))}`,
+    `内联本地图片：${Number(result.inlined ?? 0)}`,
+    ...diagnosticLines,
+  ].join("\n");
 }
 
 async function validateHtmlPptxExport(
@@ -1788,149 +562,31 @@ async function validateHtmlPptxExport(
     args.qaReportPath,
     workspaceRoot,
   );
-  const previewHtmlDirectory = path.join(htmlDirectory, "preview-html");
-  const previewPptxDirectory = path.join(htmlDirectory, "preview-pptx");
-  const { browser, browserContext } = await launchHtmlPptxBrowser();
-  let measurements = await readMeasurements(measurementsAbsolutePath);
-
-  try {
-    if (!measurements) {
-      const measured = await collectHtmlMeasurements(
-        browserContext,
-        htmlAbsolutePath,
-        args.slideSelector,
-      );
-
-      const designWarnings = await collectDesignGuidelineWarnings(
-        browserContext,
-        htmlAbsolutePath,
-        args.slideSelector,
-      );
-
-      measurements = {
-        editableElements: measured.editableElements,
-        ignoredElements: measured.ignoredElements,
-        preparedHtml: toWorkspaceRelative(preparedHtmlAbsolutePath, workspaceRoot),
-        rasterFallbacks: [],
-        slideHeight: SLIDE_HEIGHT_PX,
-        slideSelector: args.slideSelector,
-        slides: measured.slideMeasurements,
-        slideWidth: SLIDE_WIDTH_PX,
-        sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-        warnings: [...measured.warnings, ...designWarnings],
-      };
-    }
-  } finally {
-    await closeBrowser(browser, browserContext);
-  }
-
-  const [htmlPreviews, preparedHtmlImages, pptxInspection, pptxPreview] =
-    await Promise.all([
-      renderHtmlPreviews(
-        htmlAbsolutePath,
-        previewHtmlDirectory,
-        args.slideSelector,
-        workspaceRoot,
-      ),
-      inspectPreparedHtmlImages(preparedHtmlAbsolutePath),
-      inspectPptxFile(pptxAbsolutePath),
-      renderPptxPreview(
-        pptxAbsolutePath,
-        previewPptxDirectory,
-        workspaceRoot,
-        context.signal,
-      ),
-    ]);
-  const pptxPreviewStatusPath = path.join(
-    previewPptxDirectory,
-    "render-status.json",
-  );
-  const pptxPreviewStatusRelativePath = toWorkspaceRelative(
-    pptxPreviewStatusPath,
-    workspaceRoot,
-  );
-
-  await fs.mkdir(previewPptxDirectory, { recursive: true });
-  pptxPreview.files.push(pptxPreviewStatusRelativePath);
-  await fs.writeFile(
-    pptxPreviewStatusPath,
-    `${JSON.stringify(pptxPreview, null, 2)}\n`,
-    "utf8",
-  );
-
-  const warnings = [
-    ...(measurements?.warnings ?? []),
-    ...pptxPreview.warnings,
-  ];
-
-  if (pptxInspection.slideFiles !== measurements.slides.length) {
-    warnings.push({
-      message: `PPTX slide 文件数 ${pptxInspection.slideFiles} 与 HTML slide 数 ${measurements.slides.length} 不一致。`,
-      type: "pptx-slide-count-mismatch",
-    });
-  }
-
-  if (pptxInspection.textRuns === 0 && measurements.editableElements > 0) {
-    warnings.push({
-      message: "PPTX 中未检测到文本 run，可编辑文本可能未保留。",
-      type: "pptx-no-text-runs",
-    });
-  }
-
-  if (
-    preparedHtmlImages.images > 0 &&
-    pptxInspection.pictureCount < preparedHtmlImages.images
-  ) {
-    warnings.push({
-      message: `PPTX 图片对象数 ${pptxInspection.pictureCount} 少于 prepared HTML 图片数 ${preparedHtmlImages.images}，可能存在视觉资产丢失。`,
-      type: "pptx-image-count-mismatch",
-    });
-  }
-
-  const designWarnings = warnings.filter((warning) =>
-    warning.type.startsWith("design-"),
-  );
-  const report = {
-    deck: toWorkspaceRelative(pptxAbsolutePath, workspaceRoot),
-    designGuidelines: {
-      reference:
-        "docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md",
-      status: designWarnings.length ? "violations" : "passed",
-      warnings: designWarnings,
+  const result = await runHtmlPptxScript(
+    "validate",
+    {
+      htmlAbsolutePath,
+      measurementsAbsolutePath,
+      pptxAbsolutePath,
+      preparedHtmlAbsolutePath,
+      previewHtmlDirectory: path.join(htmlDirectory, "preview-html"),
+      previewPptxDirectory: path.join(htmlDirectory, "preview-pptx"),
+      qaReportAbsolutePath,
+      expectedTemplateId: context.toolSettings?.slides?.templateId?.trim() || "",
+      slideSelector: args.slideSelector,
+      workspaceRoot,
     },
-    editableElements: measurements.editableElements,
-    generatedPptxPath: toWorkspaceRelative(pptxAbsolutePath, workspaceRoot),
-    htmlPreviewPaths: htmlPreviews,
-    ignoredElements: measurements.ignoredElements,
-    measurementsPath: toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot),
-    preparedHtmlImages,
-    preparedHtml: toWorkspaceRelative(preparedHtmlAbsolutePath, workspaceRoot),
-    pptxInspection,
-    pptxPreview,
-    rasterFallbacks: measurements.rasterFallbacks.length,
-    schema: "ranni.html-to-pptx.qa.v1",
-    slideHeight: SLIDE_HEIGHT_PX,
-    slideSelector: args.slideSelector,
-    slides: measurements.slides.length,
-    slideWidth: SLIDE_WIDTH_PX,
-    sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-    warnings,
-  };
-
-  await fs.mkdir(path.dirname(qaReportAbsolutePath), { recursive: true });
-  await fs.writeFile(
-    qaReportAbsolutePath,
-    `${JSON.stringify(report, null, 2)}\n`,
-    "utf8",
+    workspaceRoot,
+    context.signal,
   );
 
   return [
     "已验证 HTML-to-PPTX spike 产物。",
-    `QA：${toWorkspaceRelative(qaReportAbsolutePath, workspaceRoot)}`,
-    `slide 数：${report.slides}`,
-    `可编辑元素：${report.editableElements}`,
-    `截图回退：${report.rasterFallbacks}`,
-    `warning：${warnings.length}`,
+    `QA：${String(result.qaReport ?? toWorkspaceRelative(qaReportAbsolutePath, workspaceRoot))}`,
+    `slide 数：${Number(result.slides ?? 0)}`,
+    `可编辑元素：${Number(result.editableElements ?? 0)}`,
+    `截图回退：${Number(result.rasterFallbacks ?? 0)}`,
+    `warning：${Number(result.warnings ?? 0)}`,
   ].join("\n");
 }
 
@@ -1967,7 +623,13 @@ export const tools: ToolDefinition[] = [
             type: "string",
             enum: ["blank", "spike-sample"],
             default: "blank",
-            description: "Use spike-sample to create the 8-slide validation deck.",
+            description:
+              "Use spike-sample to copy the default 8-slide validation deck template. A selected slides templateId in tool settings also forces template package initialization.",
+          },
+          templateId: {
+            type: "string",
+            description:
+              "Optional slides template package id. Defaults to the selected run template or the default template for spike-sample.",
           },
           title: {
             type: "string",
@@ -2057,7 +719,7 @@ export const tools: ToolDefinition[] = [
     tool: {
       name: "validate_html_pptx_export",
       description:
-        "Render HTML previews with Playwright, attempt PPTX previews via LibreOffice and Poppler, inspect PPTX structure, and write qa-report.json for the HTML-to-PPTX spike route.",
+        "Render HTML previews with Playwright, attempt PPTX previews via LibreOffice and Poppler, inspect PPTX structure, run objective visual smoke checks, and write qa-report.json for the HTML-to-PPTX route.",
       input_schema: {
         type: "object",
         properties: {

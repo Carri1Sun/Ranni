@@ -1,0 +1,29 @@
+{
+  "id": "default-business",
+  "name": "Default Business",
+  "version": "v1",
+  "description": "稳健的商务汇报模板，适合策略、研究、项目复盘和通用工作汇报。",
+  "accentColor": "#0f766e",
+  "default": true,
+  "tags": ["business", "report", "strategy", "default"],
+  "fontPackages": ["system-inter-noto-sans-sc"],
+  "entryHtml": "deck.html",
+  "entryCss": "styles.css",
+  "guidance": "guidance.md",
+  "tokens": "tokens.json",
+  "surfaceColor": "#fbfcff",
+  "layouts": [
+    { "id": "cover", "name": "封面", "file": "deck.html#cover", "required": true },
+    { "id": "agenda", "name": "目录", "file": "deck.html#agenda" },
+    { "id": "text", "name": "文本页", "file": "deck.html#text" },
+    { "id": "two-column", "name": "双栏图文", "file": "deck.html#two-col" },
+    { "id": "data-table", "name": "数据表格", "file": "deck.html#data-table" },
+    { "id": "chart-raster", "name": "复杂图表回退", "file": "deck.html#raster-chart" },
+    { "id": "timeline", "name": "时间线", "file": "deck.html#timeline" },
+    { "id": "summary", "name": "总结", "file": "deck.html#summary" }
+  ],
+  "compatibility": {
+    "htmlToPptx": "stable",
+    "requiresRasterFallback": ["complex-chart", "canvas", "dense-svg"]
+  }
+}

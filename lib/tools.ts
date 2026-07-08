@@ -43,6 +43,10 @@ export type ToolSettings = {
   computerUseApiKey?: string;
   computerUseModel?: string;
   researchMode?: boolean;
+  slides?: {
+    styleVariantId?: string;
+    templateId?: string;
+  };
   tavilyApiKey?: string;
 };
 

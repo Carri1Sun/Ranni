@@ -300,19 +300,48 @@ slides skill 专属工具。
 
 主要职责：
 
-- `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export` 提供 HTML-to-PPTX 路线。
+- `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export` 提供 HTML-to-PPTX 路线的工具入口。
+- 保留 zod schema、workspace resolver、模板初始化和 `.mjs` 脚本调度。
 - 所有工具输入输出通过 workspace resolver 解析。
 
-### `skills/slides/html-spike-template.ts`
+### `skills/slides/scripts/html-pptx/`
 
-HTML-to-PPTX spike 示例模板。
+HTML-to-PPTX 脚本实现目录。
 
 主要职责：
 
-- 生成受限 `deck.html` 与 `styles.css`。
-- 提供本地 SVG 资产内容。
+- 用 Playwright 渲染、测量和截图回退。
+- 用 `dom-to-pptx` 导出有限可编辑 PPTX。
+- 用 LibreOffice、Poppler、JSZip、pixelmatch 和 pngjs 执行预览、结构检查和客观视觉 smoke check。
+
+### `lib/slides/templates.ts`
+
+slides 模板 registry。
+
+主要职责：
+
+- 扫描 `skills/slides/templates/*/manifest.json`。
+- 为后端接口、agent system prompt 和 slides 工具提供模板元信息。
+- 读取模板 `guidance.md`，让 agent 在幻灯片创作时遵守选中模板。
+
+### `skills/slides/templates/default-business/`
+
+默认 HTML-to-PPTX 模板包。
+
+主要职责：
+
+- 提供真实 `deck.html`、`styles.css`、`manifest.json`、`tokens.json`、`guidance.md` 和本地 SVG 资产。
 - 覆盖封面、目录、文本、双栏图文、数据表格、复杂图表截图回退、时间线和总结页。
 - 遵守 slides skill 设计指南中的画布、排版、留白、低圆角、静态输出和 PPTX 兼容性规则。
+
+### `src/server/app.ts` slides templates API
+
+slides 模板列表接口。
+
+主要职责：
+
+- `GET /api/slides/templates` 返回可选模板元信息。
+- `POST /api/runs` 接收 `toolSettings.slides.templateId` 并传给 agent。
 
 ### `docs/tech/v2-architecture/slides-skill-design/`
 

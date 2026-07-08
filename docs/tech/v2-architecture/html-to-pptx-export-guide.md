@@ -33,8 +33,8 @@ related: slides-skill-plan.md、slides-skill-developer-guide.md、document-gener
 -> 识别截图回退节点
 -> 将复杂节点截图并替换为 img
 -> dom-to-pptx 生成 .pptx
--> 渲染 PPTX 预览
--> 对比 HTML 预览与 PPTX 预览
+-> 渲染 HTML 与 PPTX 预览
+-> 执行客观视觉 smoke check
 -> 产出 qa-report.json
 ```
 
@@ -74,7 +74,8 @@ slides/
   styles.css
   assets/
   fallback-assets/
-  preview/
+  preview-html/
+  preview-pptx/
   measurements.json
   qa-report.json
   final/
@@ -175,9 +176,9 @@ slides/
 - 对照片类大图可用 JPEG，减少文件体积。
 - 截图分辨率至少按 2x device scale factor 生成。
 
-## 5. Spike 计划
+## 5. 示例与验证计划
 
-Spike 的目标是验证 `dom-to-pptx` 在 Ranni 真实创作场景中的表现，暂时不接入主流程。
+当前路线已接入 slides skill，示例 deck 用于持续验证 `dom-to-pptx` 在 Ranni 真实创作场景中的表现。
 
 ### 5.1 测试 deck
 
@@ -371,7 +372,7 @@ slides-html-pptx-spike/
 
 ### P2：质量门
 
-- 增加 HTML preview 与 PPTX preview 的图像差异检测。
+- 增加 HTML preview 与 PPTX preview 的客观视觉 smoke check。
 - 增加文本可编辑性统计。
 - 增加字体缺失检测。
 - 增加元素越界、空白页、截图资源缺失检测。
@@ -417,15 +418,15 @@ computed style + DOM box
 
 ## 11. 推荐实现顺序
 
-1. 新建 spike 目录与样例 deck。
-2. 接入 Playwright 渲染与截图回退脚本。
-3. 接入 `dom-to-pptx` browser bundle。
+1. 维护 `skills/slides/templates/default-business/` 默认模板包。
+2. 保持 Playwright 渲染、DOM 测量与截图回退脚本可独立运行。
+3. 保持 `dom-to-pptx` browser bundle 注入和图片内联稳定。
 4. 生成 HTML 预览和 PPTX 预览。
-5. 记录可编辑对象统计和截图回退统计。
-6. 用 PowerPoint、Keynote、LibreOffice 做一次手动兼容检查。
-7. 将成功子集写回 slides skill 规范。
+5. 记录可编辑对象统计、截图回退统计和视觉 smoke check。
+6. 用 PowerPoint、Keynote、LibreOffice 做阶段性手动兼容检查。
+7. 将稳定子集写回 slides skill 规范。
 
-完成 P0 后，再决定是否进入 P1 skill 工具化。验收标准以“Ranni 能稳定交付有限可编辑且视觉可靠的 PPTX”为准。
+验收标准以“Ranni 能稳定交付有限可编辑且视觉可靠的 PPTX”为准。
 
 ## 12. 当前实现状态
 
@@ -438,6 +439,8 @@ computed style + DOM box
 | `dom-to-pptx` | 在浏览器上下文中把 prepared slide DOM 转为 `.pptx` |
 | `playwright` | 渲染 HTML、测量 DOM、截图 `data-pptx-raster` 节点、输出 HTML preview |
 | `jszip` | 检查 PPTX 内 slide XML、文本 run 和图片对象数量 |
+| `pixelmatch` | 计算 HTML/PPTX 预览 PNG 的高阈值视觉差异 |
+| `pngjs` | 读取 PPTX 预览 PNG 并检测空白页风险 |
 
 新增工具：
 
@@ -447,6 +450,34 @@ computed style + DOM box
 | `prepare_slide_html_for_pptx` | 执行 Playwright 测量、截图回退和 `deck.prepared.html` 写出 |
 | `export_html_to_pptx` | 注入 `dom-to-pptx` browser bundle 并导出最终 `.pptx` |
 | `validate_html_pptx_export` | 输出 HTML preview、尝试 PPTX preview、写 `qa-report.json` |
+
+脚本实现：
+
+```text
+skills/slides/scripts/html-pptx/
+  lib.mjs
+  prepare.mjs
+  export.mjs
+  validate.mjs
+```
+
+模板 registry：
+
+```text
+lib/slides/templates.ts
+```
+
+默认模板包：
+
+```text
+skills/slides/templates/default-business/
+  manifest.json
+  tokens.json
+  guidance.md
+  deck.html
+  styles.css
+  assets/
+```
 
 本地 spike runner：
 
@@ -505,6 +536,8 @@ html-generation-report.json
 - `pptxInspection`
 - `htmlPreviewPaths`
 - `pptxPreview`
+- `visualSmoke`
+- `template`
 
 已知限制：
 
@@ -513,11 +546,11 @@ html-generation-report.json
 - 复杂视觉推荐只包裹局部节点并标记 `data-pptx-raster`，关键文本继续单独标记为 `data-pptx-editable`。
 - `data-pptx-raster` 按原定位模式替换：普通流和 `position: relative` 节点原地替换为等尺寸 `<img>`，绝对定位装饰按测量坐标放回 slide。
 - `validate_html_pptx_export` 会记录 prepared HTML 图片数量和 PPTX 图片对象数量；图片数量不匹配时写入 `pptx-image-count-mismatch` warning。
+- `validate_html_pptx_export` 会记录 `visualSmoke`，只检查空白页风险、预览页数不一致和高阈值视觉差异。
 - macOS headless LibreOffice 渲染依赖 Homebrew 运行库；当前验证环境已补齐 `little-cms2` 和 `fontconfig`。
 
 后续产品化计划：
 
-1. 增加 HTML preview 与 PPTX preview 的图像差异检测。
-2. 统计 PPTX 中可编辑文本与源 HTML 标注的对应关系。
-3. 增加字体可用性与替换风险检查。
-4. 为稳定 HTML 子集沉淀自研 mapper，继续保留局部截图回退策略。
+1. 统计 PPTX 中可编辑文本与源 HTML 标注的对应关系。
+2. 增加字体可用性与替换风险检查。
+3. 为稳定 HTML 子集沉淀自研 mapper，继续保留局部截图回退策略。

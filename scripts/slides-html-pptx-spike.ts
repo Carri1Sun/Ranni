@@ -189,6 +189,13 @@ async function verifyE2EArtifacts(
     };
     rasterFallbacks: number;
     slides: number;
+    visualSmoke?: {
+      available: boolean;
+      slides: Array<{
+        status: string;
+      }>;
+      warnings?: unknown[];
+    };
     warnings: unknown[];
   };
   const previewPngCount = qa.pptxPreview.files.filter((filePath) =>
@@ -245,6 +252,20 @@ async function verifyE2EArtifacts(
   assertCondition(
     previewPngCount === qa.slides,
     `PPTX preview PNG 数应为 ${qa.slides}，实际 ${previewPngCount}`,
+  );
+  const visualSmoke = qa.visualSmoke;
+
+  assertCondition(
+    visualSmoke?.available === true,
+    `visualSmoke 应可用：${JSON.stringify(visualSmoke)}`,
+  );
+  assertCondition(
+    (visualSmoke?.slides.length ?? 0) === qa.slides,
+    `visualSmoke 页数应为 ${qa.slides}，实际 ${visualSmoke?.slides.length ?? 0}`,
+  );
+  assertCondition(
+    visualSmoke?.slides.every((slide) => slide.status === "ok") === true,
+    `visualSmoke 存在异常：${JSON.stringify(visualSmoke)}`,
   );
 
   for (const previewPath of [...htmlPreviewPngPaths, ...pptxPreviewPngPaths]) {

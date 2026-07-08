@@ -29,7 +29,7 @@ init_slide_html_workspace
 - 确认 `npm run typecheck` 基线可运行。
 - 确认 `lib/tools.ts` export `ToolDefinition` 与 `ToolExecutionContext`。
 - 确认 `lib/workspace.ts` export `getWorkspaceRoot`、`resolveWorkspacePath`、`toWorkspaceRelative`。
-- 确认 `package.json` 包含 `dom-to-pptx`、`playwright`、`jszip`。
+- 确认 `package.json` 包含 `dom-to-pptx`、`playwright`、`jszip`、`pixelmatch`、`pngjs`。
 - 确认本机可用 Playwright Chromium 或 Google Chrome。
 - 如需 PPTX preview，确认 LibreOffice 和 Poppler 可用。
 
@@ -39,7 +39,18 @@ init_slide_html_workspace
 skills/slides/
   SKILL.md
   tools.ts
-  html-spike-template.ts
+  scripts/html-pptx/
+    lib.mjs
+    prepare.mjs
+    export.mjs
+    validate.mjs
+  templates/default-business/
+    deck.html
+    styles.css
+    manifest.json
+    tokens.json
+    guidance.md
+    assets/
 
 scripts/
   slides-html-pptx-spike.ts
@@ -50,15 +61,19 @@ docs/tech/v2-architecture/slides-skill-design/
 
 `SKILL.md` 是 agent 选择路线的主要提示来源，必须保持为 HTML-to-PPTX 单一路线说明。
 
+`tools.ts` 只保留 schema、workspace resolver、模板初始化和脚本调度；Playwright、LibreOffice、Poppler、`dom-to-pptx` 和 PPTX/PNG 检查逻辑放在 `scripts/html-pptx/*.mjs`。模板 registry 由 `lib/slides/templates.ts` 扫描 `skills/slides/templates/*/manifest.json`。
+
 ## 3. 工具实现要求
 
 ### `init_slide_html_workspace`
 
-- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`template`、`overwrite`。
+- 输入 `deckSlug`、可选 `dir`、`title`、`prompt`、`template`、`templateId`、`overwrite`。
 - 通过 workspace resolver 创建 deck 目录。
 - 创建 `deck.html`、`styles.css`、`assets/`、`fallback-assets/`、`preview-html/`、`preview-pptx/`、`final/`。
 - 传入 `prompt` 时写入 `prompt.txt` 和 `html-generation-report.json`。
-- `template: "spike-sample"` 生成 8 页示例 deck。
+- `template: "spike-sample"` 从默认模板包拷贝 8 页示例 deck。
+- `templateId` 或 `toolSettings.slides.templateId` 可指定模板包，优先级高于 `template` 默认值。
+- `html-generation-report.json` 记录 `templateId`、`templateName` 和 `templateVersion`。
 
 ### `prepare_slide_html_for_pptx`
 
@@ -86,6 +101,7 @@ docs/tech/v2-architecture/slides-skill-design/
 - 用 Playwright 输出 HTML 逐页 PNG。
 - 尝试用 LibreOffice 转 PDF，再用 Poppler 输出 PPTX 逐页 PNG。
 - 用 `jszip` 检查 PPTX slide XML、文本 run 和图片对象数量，并与 prepared HTML 图片数量对齐。
+- 用 `pixelmatch` 和 `pngjs` 执行客观视觉 smoke check，只记录空白页风险、预览页数不一致和大范围视觉漂移。
 - 写出 `qa-report.json`。
 
 ## 4. 受限 HTML 编写规则
@@ -103,7 +119,7 @@ docs/tech/v2-architecture/slides-skill-design/
 
 ## 5. Spike 示例 deck
 
-`html-spike-template.ts` 的样例应覆盖：
+`templates/default-business/` 的样例应覆盖：
 
 - 封面
 - 目录
@@ -137,6 +153,9 @@ npm run slides:html-spike
 - `qa-report.json` 无 warning。
 - `qa-report.json.designGuidelines.status` 为 `passed`。
 - `qa-report.json.preparedHtmlImages.images` 不高于 `qa-report.json.pptxInspection.pictureCount`。
+- `qa-report.json.visualSmoke.available` 在 PPTX PNG 预览可用时为 `true`。
+- 视觉 smoke check 不产生空白页、页数不一致或高差异 warning。
+- `qa-report.json.template.sourceTemplateId` 记录实际模板 ID。
 - 样例时间线保留轨道和节点等可映射视觉层级，避免合规后变成平铺卡片。
 - slide 数为 8。
 - 可编辑元素数量达到样例下限。

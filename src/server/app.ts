@@ -20,6 +20,7 @@ import {
   testComputerUseConnection,
   testTavilyConnection,
 } from "../../lib/tools";
+import { listSlidesTemplates } from "../../lib/slides/templates";
 import { listSkillIndices } from "../../lib/skills/registry";
 import { getWorkspaceRoot } from "../../lib/workspace";
 
@@ -63,6 +64,12 @@ const toolSettingsSchema = z.object({
   computerUseApiKey: optionalSecretSchema,
   computerUseModel: optionalSecretSchema,
   researchMode: z.boolean().optional().default(false),
+  slides: z
+    .object({
+      styleVariantId: optionalSecretSchema,
+      templateId: optionalSecretSchema,
+    })
+    .optional(),
   tavilyApiKey: optionalSecretSchema,
 });
 const defaultToolSettings = {
@@ -70,6 +77,7 @@ const defaultToolSettings = {
   computerUseApiKey: undefined,
   computerUseModel: undefined,
   researchMode: false,
+  slides: undefined,
   tavilyApiKey: undefined,
 };
 
@@ -601,6 +609,28 @@ export function createServerApp() {
       ok: true,
       result: {
         skills: listSkillIndices(),
+      },
+    });
+  });
+
+  app.get("/api/slides/templates", (_request, response) => {
+    response.json({
+      ok: true,
+      result: {
+        templates: listSlidesTemplates().map((template) => ({
+          compatibility: template.compatibility,
+          accentColor: template.accentColor,
+          default: template.default ?? false,
+          description: template.description,
+          fontPackages: template.fontPackages,
+          id: template.id,
+          layouts: template.layouts,
+          name: template.name,
+          preview: template.preview,
+          surfaceColor: template.surfaceColor,
+          tags: template.tags,
+          version: template.version,
+        })),
       },
     });
   });
