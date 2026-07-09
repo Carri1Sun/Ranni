@@ -1564,7 +1564,8 @@ export async function validateHtmlPptxExport(args) {
   const report = {
     deck: toWorkspaceRelative(pptxAbsolutePath, workspaceRoot),
     designGuidelines: {
-      reference: "docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md",
+      reference:
+        "skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md",
       status: designWarnings.length ? "violations" : "passed",
       warnings: designWarnings,
     },

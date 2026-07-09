@@ -36,9 +36,9 @@ lib/computer-use/  OpenAI computer tool loop 和 macOS 桌面适配器
 lib/task-state.ts  结构化任务状态
 lib/task-memory.ts .ranni 持久化任务记忆
 lib/workspace.ts   session workspace 路径边界
-lib/skills/        本地 skill 注册表
-lib/html-design/   HTML 设计风格与网页类型 catalog
-skills/            本地动态 skill 包，例如 html、html-to-pptx
+lib/skills/        本地 skill 注册表与 runtime instruction registry
+lib/html-design/   HTML design catalog loader、查询和 prompt 构建
+skills/            本地动态 skill 包与 HTML design 文件化资产
 src/renderer/      Vite 前端入口
 src/server/        Express 后端入口和 API
 public/            favicon、logo 和静态资源

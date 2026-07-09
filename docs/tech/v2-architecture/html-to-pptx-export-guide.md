@@ -108,7 +108,7 @@ slides/
 - 导出视口使用 `1280x720` 或按页截图时使用元素 bounding box。
 - 每个 `.slide` 禁止滚动。
 - `body` 背景透明或与 slide 背景一致。
-- 设计和排版遵守 `slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md`，包括固定标题节奏、Grid/Flex 主内容、主内容文本避免绝对定位、正文行高 1.5 到 1.6、内容块间距至少 30px、低圆角和静态输出。
+- 设计和排版遵守 `skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md`，包括固定标题节奏、Grid/Flex 主内容、主内容文本避免绝对定位、正文行高 1.5 到 1.6、内容块间距至少 30px、低圆角和静态输出。
 
 推荐 CSS：
 

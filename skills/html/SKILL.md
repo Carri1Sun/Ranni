@@ -21,11 +21,16 @@ HTML skill 只负责静态网页产物，不导出 PPTX。创作时先初始化 
 
 ## 设计风格和网页类型
 
-如果本次 run 选择了设计风格，必须遵守 system prompt 中的 `HTML design selection`。如果选择了网页类型模板，页面结构必须覆盖对应 section pattern。设计风格和网页类型来源见：
+如果本次 run 选择了设计风格，必须遵守 system prompt 中的 `HTML design selection`。如果选择了网页类型模板，页面结构必须覆盖对应 section pattern。产品级基础 guide 会由 runtime instruction registry 从 `skills/html-design/reference-materials/base-html-design-guide.md` 注入，设计风格和网页类型是补充约束。
 
-- `docs/product/slides-design/html-design-guide.md`
-- `docs/product/html-design/html-design-style-guidelines.md`
-- `docs/product/html-design/html-page-template-guidelines.md`
+设计内容资产存放在：
+
+- `skills/html-design/styles/*/guide.md`
+- `skills/html-design/styles/*/reference.md`
+- `skills/html-design/patterns/*/guide.md`
+- `skills/html-design/patterns/*/reference.md`
+
+system prompt 中出现“参考资料”路径时，在需要更细致的设计思路了解时，阅读参考资料；参考资料已包含本地化来源笔记，不需要访问外部 URL。
 
 ## 静态网页约束
 

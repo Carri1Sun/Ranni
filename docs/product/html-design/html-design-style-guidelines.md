@@ -6,11 +6,31 @@ date: 2026-07-08
 
 # HTML 设计风格指导
 
-本文档把 `docs/product/slides-design/html-design-guide.md` 中的 10 个风格方向整理为 agent 可执行的设计约束。公共底线适用于所有风格：响应式布局、清楚标题层级、正文可扫读、普通文本对比度至少 4.5:1、大文本至少 3:1、图片有 alt、CTA 文案明确。
+本文档说明 10 个设计风格内容资产的维护规范。公共底线适用于所有风格：响应式布局、清楚标题层级、正文可扫读、普通文本对比度至少 4.5:1、大文本至少 3:1、图片有 alt、CTA 文案明确。
+
+## 文件规范
+
+设计风格内容资产位于 `skills/html-design/styles/*/`。每个目录对应一个设计风格，目录名建议使用数字前缀保留默认排序，例如 `01-minimal-saas/`。
+
+frontmatter 必须包含：
+
+- `id`：稳定标识，用于 API、工具参数和预览文件名。
+- `name`：前端展示名称。
+- `description`：前端展示短说明。
+- `accentColor`、`surfaceColor`：6 位十六进制颜色。
+- `preview`：浏览器可访问的预览图路径。
+- `tags`：JSON 兼容的 flow 字符串数组。
+- `sources`：机器参考来源，指向同目录本地参考资料，例如 `["reference.md#来源"]`，catalog 不解析该字段，也不传给 agent。
+
+`guide.md` 正文只写 agent guidance，推荐使用 Markdown 列表。`lib/html-design/catalog.ts` 会把列表项转为 `guidance: string[]`。加载失败时该目录会被跳过；全部目录不可用时返回空列表。
+
+`skills/html-design/reference-materials/base-html-design-guide.md` 是 HTML 创作的产品级基础 guide，`html` 和 `html-to-pptx` skill 激活时会由 runtime instruction registry 注入。单个 style 的 `guide.md` 只记录本地参考资料路径，不反向引用本地 guide。
+
+每个设计风格可以在同目录放置 `reference.md`。参考资料使用本地化来源笔记、设计思路、来源链接、组件建议和常见失误；默认 prompt 只提供本地路径，并提示 agent 在需要更细致的设计思路了解时阅读参考资料。参考资料已承载来源思路，运行时不需要访问外部 URL。
 
 ## 调研来源
 
-- 本地产品输入：`docs/product/slides-design/html-design-guide.md`
+- 本地运行资料：`skills/html-design/reference-materials/base-html-design-guide.md`
 - Material Design Responsive layout grid：<https://m2.material.io/design/layout/responsive-layout-grid.html>
 - Carbon Design System 2x Grid：<https://carbondesignsystem.com/elements/2x-grid/overview/>
 - Nielsen Norman Group Homepage Design Principles：<https://www.nngroup.com/articles/homepage-design-principles/>

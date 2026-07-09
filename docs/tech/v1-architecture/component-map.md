@@ -294,6 +294,17 @@ Workspace 边界工具。
 
 `resolveWorkspacePath` 保证文件工具只能访问当前 workspace 内的路径。
 
+### `lib/skills/runtime-instructions.ts`
+
+Skill runtime instruction 统一入口。
+
+主要职责：
+
+- 按 `activeSkillNames` 选择需要注入的 runtime instruction builder。
+- 读取 `toolSettings` 中对应 skill 的选择项，并委托领域模块生成 prompt 片段。
+- 从 `skills/html-design/reference-materials/base-html-design-guide.md` 注入 HTML design 基础 guide。
+- 让 `lib/agent.ts` 只调用统一 builder，避免在 agent 主循环内拼接具体 skill 的业务字段。
+
 ### `skills/html/tools.ts`
 
 HTML skill 专属工具。
@@ -330,9 +341,25 @@ HTML 设计风格和网页类型 catalog。
 
 主要职责：
 
-- 定义 10 个设计风格和 10 个网页类型模板。
-- 为后端接口、前端选择卡片、agent system prompt 和 HTML 工具提供元信息。
-- 记录公开调研来源 URL 和本地产品指导文档位置。
+- 从 `skills/html-design/styles/*/guide.md` 和 `skills/html-design/patterns/*/guide.md` 加载文件化内容资产。
+- 用 schema 校验运行时字段，并把 Markdown 正文转换成 `guidance`。
+- 提供后端接口、前端选择卡片、HTML 工具和 runtime instruction prompt 需要的查询函数。
+- 忽略 `sources` 人工参考字段，避免外部 URL 进入 API 和默认 agent runtime prompt。
+- 在同目录 `reference.md` 存在时，为 runtime prompt 提供本地参考资料路径，参考资料正文不默认注入。
+- 加载失败时返回可用文件集合；目录缺失或全部失败时返回空数组。
+
+### `skills/html-design/`
+
+HTML design 文件化内容资产目录。
+
+主要职责：
+
+- `styles/*/guide.md` 保存设计风格，包含 `id`、`name`、`description`、颜色、预览图、标签、正文 guidance 和指向同目录参考资料的 `sources`。
+- `styles/*/reference.md` 保存与对应设计风格同目录的本地化参考资料。
+- `patterns/*/guide.md` 保存 HTML 页面 pattern，额外包含 `sections`。
+- `patterns/*/reference.md` 保存与对应页面 pattern 同目录的本地化参考资料。
+- `reference-materials/base-html-design-guide.md` 保存 runtime 注入的产品级基础 guide。
+- 文件顺序通过数字前缀表达，首个可用文件作为默认选项。
 
 ### `lib/html-to-pptx/sample-decks.ts`
 

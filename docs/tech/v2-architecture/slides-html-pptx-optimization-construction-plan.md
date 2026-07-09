@@ -43,7 +43,7 @@ related: slides-html-pptx-merge-construction-review.md、slides-html-pptx-cross-
 - 普通流 / `position: relative` 的 raster 节点原地替换，绝对定位装饰按坐标回放。
 - `svgAsVector: true`，保留 SVG 后续在 PowerPoint 中转形状的可能性。
 - `qa-report.json` 记录 slide、editable、raster、warning、PPTX 结构、PPTX preview、prepared HTML 图片数量、设计规范状态。
-- 设计指南已进入 skill 行为约束和 QA：`slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md`。
+- 设计指南已进入 skill 行为约束和 QA：`skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md`。
 - 已通过脚本 spike 和真实 Ranni agent E2E 验证。
 
 当前短板：

@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
-  htmlDesignStyles,
-  htmlPageTemplates,
+  listHtmlDesignStyles,
+  listHtmlPageTemplates,
   type HtmlDesignOption,
   type HtmlPageTemplateOption,
 } from "../lib/html-design/catalog";
@@ -62,6 +62,8 @@ async function writePreview(filePath: string, content: string) {
 
 async function main() {
   const publicRoot = path.resolve(process.cwd(), "public", "html-design-previews");
+  const htmlDesignStyles = listHtmlDesignStyles();
+  const htmlPageTemplates = listHtmlPageTemplates();
 
   await Promise.all([
     ...htmlDesignStyles.map((style) =>

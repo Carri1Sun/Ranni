@@ -41,7 +41,7 @@ npm run slides:html-spike
 
 ## 设计与排版硬性准则
 
-创作 slide HTML 时必须遵守 `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md`。以下规则属于强约束，违反时应修改 HTML/CSS，不能继续导出：
+创作 slide HTML 时必须遵守 `skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md`。以下规则属于强约束，违反时应修改 HTML/CSS，不能继续导出：
 
 - 画布和盒模型：`.deck` 固定宽度 `1280px`；`.slide` 固定 `1280px x 720px`；全局使用 `box-sizing: border-box`；页面和 slide 都禁止滚动。
 - 垂直节奏：主要内容使用固定 `padding-top` 对齐标题；主要内容流禁止 `padding-bottom`；内部内容块优先使用 `min-height`，避免正文被固定高度截断。
@@ -54,10 +54,14 @@ npm run slides:html-spike
 - PPTX 兼容：背景层使用 `z-index: 1`，主内容层使用 `z-index: 10`；图片和 canvas 必须有明确像素级宽高，并设置合适的 `object-fit`；表格使用标准 `<table>`、`<tr>`、`<td>`。
 - 装饰和复杂视觉：背景几何图形可绝对定位；复杂图表、canvas、D3/Chart.js、复杂渐变或多层视觉必须放进固定尺寸容器，并标记 `data-pptx-raster` 和 `data-pptx-alt`。
 
-如果本次 run 选择了共享 HTML 设计风格，必须遵守 system prompt 中的 `HTML design selection`。设计风格来源见：
+如果本次 run 选择了共享 HTML 设计风格，必须遵守 system prompt 中的 `HTML design selection`。产品级基础 guide 会由 runtime instruction registry 从 `skills/html-design/reference-materials/base-html-design-guide.md` 注入，设计风格是补充约束。
 
-- `docs/product/slides-design/html-design-guide.md`
-- `docs/product/html-design/html-design-style-guidelines.md`
+设计内容资产存放在：
+
+- `skills/html-design/styles/*/guide.md`
+- `skills/html-design/styles/*/reference.md`
+
+system prompt 中出现“参考资料”路径时，在需要更细致的设计思路了解时，阅读参考资料；参考资料已包含本地化来源笔记，不需要访问外部 URL。
 
 ## 创作规划
 

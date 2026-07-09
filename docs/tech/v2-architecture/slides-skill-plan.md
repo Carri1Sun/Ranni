@@ -6,7 +6,7 @@ subject: Ranni HTML-to-PPTX skill 实现方案
 audience: 执行该能力的 coding agent
 baseline: HTML-to-PPTX spike 已接入
 prerequisites: skill 动态加载机制已落地（见 skill-dynamic-loading-plan.md）
-related: html-generation-skills-plan.md、html-to-pptx-export-guide.md、slides-skill-developer-guide.md、slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md、skill-dynamic-loading-plan.md
+related: html-generation-skills-plan.md、html-to-pptx-export-guide.md、slides-skill-developer-guide.md、skill-dynamic-loading-plan.md
 ---
 
 # Ranni HTML-to-PPTX skill 实现方案
@@ -46,9 +46,9 @@ Ranni `html-to-pptx` skill 当前采用 HTML-to-PPTX 路线：agent 先创作受
 - `skills/html-to-pptx/scripts/html-pptx/*.mjs` 承载 Playwright、`dom-to-pptx`、LibreOffice、Poppler、PPTX XML 检查和视觉 smoke check。
 - `skills/html-to-pptx/examples/default-business/` 提供内部 spike 验收示例 deck。
 - `lib/html-to-pptx/sample-decks.ts` 提供示例 deck 读取能力，仅供本地 spike 脚本使用。
-- `lib/html-design/catalog.ts` 提供共享设计风格；composer 选择后通过 `toolSettings.htmlToPptx.styleId` 传入 run。
+- `lib/html-design/catalog.ts` 从 `skills/html-design/styles/*/guide.md` 读取共享设计风格；composer 选择后通过 `toolSettings.htmlToPptx.styleId` 传入 run，PPTX 路径只使用 style。
 - `scripts/slides-html-pptx-spike.ts` 提供端到端本地验收入口。
-- `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md` 提供审美、布局、排版和兼容性硬性准则。
+- `skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md` 提供 agent 运行时审美、布局、排版和兼容性硬性准则。
 
 ## 3. 工具接口
 

@@ -12,7 +12,8 @@ date: 2026-07-08
 
 - `lib/skills/registry.ts`：Ranni 通过扫描 `skills/*/SKILL.md` 注册动态 skill，并读取同目录 `tools.ts` 暴露专属工具。
 - `lib/tools.ts`：`ToolSettings` 是前端到 `/api/runs` 再到工具上下文的透传结构。
-- `lib/agent.ts`：`activeSkills` 对应的 SKILL 正文进入 system prompt，适合注入模板和风格约束。
+- `lib/agent.ts`：`activeSkills` 对应的 SKILL 正文进入 system prompt，运行时增强指令从统一 registry 注入。
+- `lib/skills/runtime-instructions.ts`：集中注册按 skill 注入的 runtime instruction builder，隔离具体 skill 的 `toolSettings` 拼装细节。
 - `src/server/app.ts`：`toolSettingsSchema` 校验前端透传，`/api/skills` 和模板列表接口向前端提供选择项。
 - `components/agent-console.tsx`：输入框快捷 skill 开关通过 `extraActiveSkills` 写入 `toolSettings.activeSkills`。
 - `skills/html-to-pptx/tools.ts`：现有 HTML-to-PPTX 工具链已经通过 workspace resolver、Playwright、dom-to-pptx 和 QA 报告稳定执行。
@@ -55,7 +56,24 @@ date: 2026-07-08
 
 ## 共享设计选择
 
-共享 catalog 位于 `lib/html-design/catalog.ts`。
+共享 catalog 的内容资产位于 `skills/html-design/`，`lib/html-design/catalog.ts` 负责加载、校验、查询和生成 prompt 片段。TypeScript 代码不保存设计内容 fallback，目录缺失、单个文件解析失败或全部文件不可用时返回空数组，前端沿用现有空态和禁用逻辑。
+
+资产目录：
+
+- `skills/html-design/styles/*/guide.md`：设计风格 guidance。
+- `skills/html-design/styles/*/reference.md`：同目录设计风格参考资料。
+- `skills/html-design/patterns/*/guide.md`：HTML 页面 pattern guidance。
+- `skills/html-design/patterns/*/reference.md`：同目录页面 pattern 参考资料。
+- `skills/html-design/reference-materials/base-html-design-guide.md`：运行时注入的产品级基础 guide。
+
+每个 Markdown 文件使用 frontmatter 保存字段：
+
+- 运行时字段：`id`、`name`、`description`、`accentColor`、`surfaceColor`、`preview`、`tags`。
+- 页面 pattern 额外字段：`sections`。
+- `sources` 是机器参考字段，指向同目录本地参考资料，例如 `["reference.md#来源"]`。catalog 不解析该字段，API 和 runtime prompt 都不返回外部 URL。
+- `tags`、`sections` 使用 JSON 兼容的 flow 数组写法，便于 loader 直接解析。
+- 正文使用 Markdown 列表保存 agent 可执行的 guidance，loader 会转成 API 返回结构中的 `guidance: string[]`。
+- 每个资产目录内的 `reference.md` 使用本地化来源笔记、设计推导、常见失误和组件建议承载参考资料。默认 runtime prompt 不注入参考资料正文，只在同目录文件存在时提供本地路径，并提示 agent 在需要更细致的设计思路了解时阅读参考资料。参考资料已包含来源思路，agent 运行时不需要访问外部 URL。
 
 设计风格：
 
@@ -83,7 +101,20 @@ date: 2026-07-08
 - `event-course`
 - `data-insight`
 
-`html` skill 同时使用设计风格和网页类型模板。`html-to-pptx` skill 只使用设计风格；agent system prompt 通过 `buildHtmlDesignRuntimeInstruction` 注入风格规则，并要求 agent 先规划 deck 叙事、页面结构和截图回退边界。
+`html` skill 同时使用设计风格和网页类型模板。`html-to-pptx` skill 只使用设计风格，并继续由 agent 根据用户内容规划 deck 叙事、页面结构和截图回退边界。
+
+## Runtime instruction registry
+
+`lib/skills/runtime-instructions.ts` 是 skill runtime instruction 的统一入口。`lib/agent.ts` 只把 `activeSkillNames` 和 `toolSettings` 传给 `buildSkillRuntimeInstructions`，不直接感知 `htmlDesign`、`htmlToPptx` 或 HTML design prompt 的拼装方式。
+
+当前 registry 包含：
+
+- `html`：先注入 `skills/html-design/reference-materials/base-html-design-guide.md` 作为产品级基础 guide，再读取 `toolSettings.htmlDesign`，注入设计风格和页面 pattern 规则，以及可选参考资料路径。
+- `html-to-pptx`：先注入同一份产品级基础 guide，再读取 `toolSettings.htmlToPptx.styleId`，只注入设计风格规则和可选参考资料路径，不提供 PPTX 模板选择。
+
+运行时资料必须放在 `skills/` 下。`docs/` 只保存开发和产品文档，不能作为 agent runtime instruction 或 SKILL 行为约束的读取来源。
+
+新增 skill 需要 runtime 增强指令时，应在 registry 中新增 builder，让 agent 主循环保持稳定。
 
 ## API
 

@@ -73,7 +73,7 @@ Codex 分支采用“单文件工具 + 内置模板生成器”的结构。
 
 Codex 分支重点补了产品约束：
 
-- `docs/tech/v2-architecture/slides-skill-design/HTML-to-PPTX-Agent-Design-Guidelines.md` 约束 agent 的审美、排版、DOM 映射兼容性。
+- `skills/html-to-pptx/reference-materials/html-to-pptx-agent-design-guidelines.md` 约束 agent runtime 的审美、排版、DOM 映射兼容性。
 - `SKILL.md` 明确 slides 当前路线只暴露 HTML-to-PPTX，并要求 agent 先画 HTML 再转换。
 - 设计合规检查进入 `prepare_slide_html_for_pptx` 和 `qa-report.json.designGuidelines`。
 - raster 替换已按定位模式处理：普通流和 `position: relative` 节点原地替换为等尺寸 `<img>`；绝对定位装饰按 slide 坐标放回。

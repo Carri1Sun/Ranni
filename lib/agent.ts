@@ -28,7 +28,7 @@ import {
   normalizeSkillNames,
   type SkillIndex,
 } from "./skills/registry";
-import { buildHtmlDesignRuntimeInstruction } from "./html-design/catalog";
+import { buildSkillRuntimeInstructions } from "./skills/runtime-instructions";
 import type {
   StreamEvent,
   TraceContextMessage,
@@ -241,9 +241,9 @@ class PacedTextEmitter {
 
 function createSystemPrompt({
   activeSkillNames,
-  htmlDesignInstruction,
   researchMode,
   runtime,
+  skillRuntimeInstructions,
   skillIndices,
   taskMemorySummary,
   taskState,
@@ -251,9 +251,9 @@ function createSystemPrompt({
   workspaceRoot,
 }: {
   activeSkillNames: string[];
-  htmlDesignInstruction: string[];
   researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
+  skillRuntimeInstructions: string[];
   skillIndices: SkillIndex[];
   taskMemorySummary: string;
   taskState: TaskState;
@@ -419,8 +419,8 @@ function createSystemPrompt({
           }),
         ]
       : []),
-    ...(htmlDesignInstruction.length > 0
-      ? [...htmlDesignInstruction, ""]
+    ...(skillRuntimeInstructions.length > 0
+      ? [...skillRuntimeInstructions, ""]
       : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
@@ -1794,24 +1794,12 @@ export async function runAgentTurn({
       const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
       const system = createSystemPrompt({
         activeSkillNames,
-        htmlDesignInstruction: [
-          ...(activeSkillNames.includes("html") && toolSettings?.htmlDesign
-            ? buildHtmlDesignRuntimeInstruction({
-                pageTemplateId: toolSettings.htmlDesign.templateId,
-                styleId: toolSettings.htmlDesign.styleId,
-                targetSkill: "html",
-              })
-            : []),
-          ...(activeSkillNames.includes("html-to-pptx") &&
-          toolSettings?.htmlToPptx?.styleId
-            ? buildHtmlDesignRuntimeInstruction({
-                styleId: toolSettings.htmlToPptx.styleId,
-                targetSkill: "html-to-pptx",
-              })
-            : []),
-        ],
         researchMode,
         runtime,
+        skillRuntimeInstructions: buildSkillRuntimeInstructions({
+          activeSkillNames,
+          toolSettings,
+        }),
         skillIndices: listSkillIndices(),
         taskMemorySummary: await taskMemory.readSummary(),
         taskState,
