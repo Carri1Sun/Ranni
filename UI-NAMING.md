@@ -211,6 +211,9 @@
 | 设置弹窗 | Settings Modal | 主设置面板。 |
 | 设置侧栏 | Settings Sidebar | 设置弹窗左侧 tab。 |
 | API 设置 | API Settings | provider、key、连接测试。 |
+| 模型 Provider 列表 | Model Provider List | API 设置中的模型服务选项列表。 |
+| MiniMax 国际 Provider | MiniMax International Provider | 使用 `api.minimax.io` 国际端点的 MiniMax Token Plan 选项。 |
+| MiniMax 中国 Provider | MiniMax China Provider | 使用 `api.minimaxi.com` 中国区端点的 MiniMax Token Plan 选项。 |
 | 能力设置 | Skills Settings | 本地 skill 能力开关，控制新 run 的强制加载能力。 |
 | 能力加载开关 | Skill Toggle | 单个本地 skill 的强制加载开关。 |
 | 能力运行状态 | Skill Runtime Status | 根据当前会话或运行 trace 展示已选或已激活的能力状态。 |

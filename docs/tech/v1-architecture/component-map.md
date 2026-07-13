@@ -470,6 +470,7 @@ MiniMax Token Plan 配置：
 - 默认 context window `1_000_000`。
 - 使用 `MINIMAX_TOKEN_PLAN_KEY` 读取 Subscription Key。
 - 全球 endpoint 鉴权区域不匹配时尝试 `https://api.minimaxi.com/anthropic`。
+- 前端模型 Provider 列表提供 MiniMax 国际和 MiniMax 中国两个选项，分别显式传入 `https://api.minimax.io/anthropic` 和 `https://api.minimaxi.com/anthropic`，并复用同一个 Token Plan Key 配置。
 
 ### `lib/llm/providers/custom-openai.ts`
 

@@ -51,7 +51,13 @@ type ActivityType =
   | "thinking";
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
-type ProviderId = "custom" | "deepseek" | "minimax-token-plan" | "openai" | "qwen";
+type ProviderId =
+  | "custom"
+  | "deepseek"
+  | "minimax-token-plan"
+  | "minimax-token-plan-cn"
+  | "openai"
+  | "qwen";
 type SettingsTab =
   | "about"
   | "account"
@@ -372,10 +378,19 @@ const PROVIDER_OPTIONS = [
   },
   {
     baseUrl: "https://api.minimax.io/anthropic",
-    description: "使用 Token Plan Subscription Key，默认调用 MiniMax-M3。",
+    description: "使用国际 Token Plan Subscription Key，默认调用 MiniMax-M3。",
     envKey: "MINIMAX_TOKEN_PLAN_KEY",
     id: "minimax-token-plan",
-    label: "MiniMax Token Plan",
+    label: "MiniMax 国际",
+    model: "MiniMax-M3",
+    provider: "minimax-token-plan",
+  },
+  {
+    baseUrl: "https://api.minimaxi.com/anthropic",
+    description: "使用中国区 Token Plan Subscription Key，默认调用 MiniMax-M3。",
+    envKey: "MINIMAX_TOKEN_PLAN_KEY",
+    id: "minimax-token-plan-cn",
+    label: "MiniMax 中国",
     model: "MiniMax-M3",
     provider: "minimax-token-plan",
   },
@@ -542,11 +557,17 @@ function isThemeMode(value: unknown): value is ThemeMode {
   return value === "dark" || value === "light" || value === "system";
 }
 
+function isMiniMaxProviderId(
+  value: unknown,
+): value is "minimax-token-plan" | "minimax-token-plan-cn" {
+  return value === "minimax-token-plan" || value === "minimax-token-plan-cn";
+}
+
 function isProviderId(value: unknown): value is ProviderId {
   return (
     value === "custom" ||
     value === "deepseek" ||
-    value === "minimax-token-plan" ||
+    isMiniMaxProviderId(value) ||
     value === "openai" ||
     value === "qwen"
   );
@@ -624,7 +645,7 @@ function sanitizeSettings(raw: unknown): AppSettings {
     minimaxTokenPlanKey:
       typeof raw.minimaxTokenPlanKey === "string"
         ? raw.minimaxTokenPlanKey.trim()
-        : provider === "minimax-token-plan"
+        : isMiniMaxProviderId(provider)
           ? legacyApiKey
           : "",
     openaiApiKey:
@@ -2246,7 +2267,7 @@ function getProviderApiKey(
     return settings.qwenApiKey.trim();
   }
 
-  if (providerId === "minimax-token-plan") {
+  if (isMiniMaxProviderId(providerId)) {
     return settings.minimaxTokenPlanKey.trim();
   }
 
@@ -2306,7 +2327,7 @@ function setProviderApiKey(
     };
   }
 
-  if (providerId === "minimax-token-plan") {
+  if (isMiniMaxProviderId(providerId)) {
     return {
       ...settings,
       minimaxTokenPlanKey: apiKey,

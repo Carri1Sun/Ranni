@@ -85,7 +85,7 @@ Ranni 的当前产品模型可以概括为五件事：
 - API 设置：
   - Tavily 搜索 API Key，支持配置、清除、测试。
   - Computer use OpenAI API Key，支持配置、清除、测试，用于 OpenAI Responses API `computer` tool loop。
-  - 模型 provider 列表，支持 DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible URL。
+  - 模型 provider 列表，支持 DeepSeek、OpenAI、Qwen、MiniMax 国际、MiniMax 中国、自定义 OpenAI-compatible URL。两个 MiniMax 选项复用 Token Plan Key，并分别连接国际端点和中国区端点。
 - Debug：支持「会话过程展示具体内容」开关。关闭时只显示优化后的过程文案；开启后每条过程项出现 info 按钮，可查看该项绑定的 run、step、tool call、tool result 和当前 agent loop trace。
 - 关于：展示当前 workspace、provider、model 和本地运行说明。
 
@@ -104,7 +104,9 @@ Ranni 的当前产品模型可以概括为五件事：
 
 - OpenAI 官方 API，默认模型 `gpt-5.5`。
 - Qwen / DashScope OpenAI-compatible API。
-- MiniMax Token Plan，默认模型 `MiniMax-M3`，使用 Anthropic-compatible Messages API。
+- MiniMax 国际，连接 `https://api.minimax.io/anthropic`，默认模型 `MiniMax-M3`。
+- MiniMax 中国，连接 `https://api.minimaxi.com/anthropic`，默认模型 `MiniMax-M3`。
+- 两个 MiniMax Provider 均使用 Token Plan Key 和 Anthropic-compatible Messages API。
 - 自定义 OpenAI-compatible Base URL。
 
 Provider 适配层在 `lib/llm/`，由 `lib/llm/index.ts` 根据配置选择 provider。
