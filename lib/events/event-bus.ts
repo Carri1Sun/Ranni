@@ -11,8 +11,8 @@
  *     publish 插入，因此天然连续、不丢事件——这是 SSE 断线续传/重连回放正确性的基础。
  *   - subscribeAll 供 event-mapper 消费所有 streamKey 的 Layer2 TraceEvent。
  *
- * 持久化范围：内存 ring buffer（容量上限），进程重启即丢。TraceRun 跨重启的持久化仍由
- * 前端 localStorage 维持（与现状一致）。已与架构文档「seq + 回放」核心对齐。
+ * 持久化范围：内存 ring buffer（容量上限），进程重启即丢。完整用户与 assistant 消息由
+ * Session workspace 的 session-history 文件保存；TraceRun 仍由前端 localStorage 压缩缓存。
  */
 
 import { isDurableEventType } from "./schema";

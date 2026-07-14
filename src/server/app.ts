@@ -11,6 +11,11 @@ import { EventBus } from "../../lib/events/event-bus";
 import { EventMapper } from "../../lib/runs/event-mapper";
 import { RunRegistry } from "../../lib/runs/run-registry";
 import {
+  listSessionHistories,
+  readSessionHistory,
+  upsertSessionHistory,
+} from "../../lib/session-history-store";
+import {
   createMessage,
   getModelRuntimeInfo,
   hasModelApiKey,
@@ -135,6 +140,26 @@ const workspaceDirectorySchema = z.object({
 const autoWorkspaceSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
+
+const sessionHistoryMessageSchema = z.object({
+  content: z.string(),
+  id: z.string().trim().min(1),
+  role: z.enum(["user", "assistant"]),
+  updatedAt: z.number().finite().nonnegative(),
+});
+
+const sessionHistoryUpsertSchema = z.object({
+  createdAt: z.number().finite().nonnegative(),
+  messages: z.array(sessionHistoryMessageSchema).max(50),
+  title: z.string(),
+  updatedAt: z.number().finite().nonnegative(),
+  workspaceRoot: requiredWorkspaceRootSchema,
+});
+
+const sessionHistoryQuerySchema = z.object({
+  workspaceRoot: requiredWorkspaceRootSchema,
+});
+const sessionHistoryIdSchema = z.string().trim().min(1);
 
 class DirectoryPickerCancelledError extends Error {
   constructor() {
@@ -597,7 +622,10 @@ export function createServerApp() {
 
     setCorsHeaders(response, origin);
     response.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    response.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,OPTIONS",
+    );
 
     if (request.method === "OPTIONS") {
       response.sendStatus(204);
@@ -637,6 +665,95 @@ export function createServerApp() {
       },
     });
   });
+
+  app.get("/api/session-history", async (_request, response) => {
+    try {
+      const sessions = await listSessionHistories(resolveDefaultWorkspaceBase());
+
+      response.json({
+        ok: true,
+        result: { sessions },
+      });
+    } catch (error) {
+      response.status(500).json({
+        error:
+          error instanceof Error ? error.message : "无法读取 Session 历史列表。",
+        ok: false,
+      });
+    }
+  });
+
+  app.get("/api/session-history/:sessionId", async (request, response) => {
+    try {
+      const sessionId = sessionHistoryIdSchema.parse(request.params.sessionId);
+      const payload = sessionHistoryQuerySchema.parse(request.query);
+      const workspaceRoot = await assertSessionWorkspaceDirectory(
+        payload.workspaceRoot,
+      );
+      const history = await readSessionHistory(workspaceRoot);
+
+      if (!history) {
+        response.status(404).json({
+          error: "尚未找到该 Session 的持久化消息历史。",
+          ok: false,
+        });
+        return;
+      }
+
+      if (history.sessionId !== sessionId) {
+        response.status(409).json({
+          error: "Session ID 与 workspace 中的历史文件不一致。",
+          ok: false,
+        });
+        return;
+      }
+
+      response.json({
+        ok: true,
+        result: { history },
+      });
+    } catch (error) {
+      response.status(400).json({
+        error:
+          error instanceof Error ? error.message : "无法读取 Session 消息历史。",
+        ok: false,
+      });
+    }
+  });
+
+  app.put(
+    "/api/session-history/:sessionId/messages",
+    async (request, response) => {
+      try {
+        const sessionId = sessionHistoryIdSchema.parse(request.params.sessionId);
+        const payload = sessionHistoryUpsertSchema.parse(request.body);
+        const workspaceRoot = await assertSessionWorkspaceDirectory(
+          payload.workspaceRoot,
+        );
+        const history = await upsertSessionHistory({
+          ...payload,
+          sessionId,
+          workspaceRoot,
+        });
+
+        response.json({
+          ok: true,
+          result: {
+            messageCount: history.messages.length,
+            updatedAt: history.updatedAt,
+          },
+        });
+      } catch (error) {
+        response.status(400).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "无法持久化 Session 消息历史。",
+          ok: false,
+        });
+      }
+    },
+  );
 
   app.get("/api/workspaces/list", async (request, response) => {
     try {
@@ -1046,6 +1163,15 @@ export function createServerApp() {
 
     if (!handle) {
       response.status(404).json({ error: "运行不存在。", ok: false });
+      return;
+    }
+
+    if (handle.status !== "running") {
+      response.status(409).json({
+        error: "运行已经结束。",
+        ok: false,
+        status: handle.status,
+      });
       return;
     }
 

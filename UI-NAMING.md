@@ -45,6 +45,7 @@
 | 新会话按钮 | New Session Button | 点击后进入草稿页。 |
 | 历史 Session 列表 | Session List | 左侧历史会话列表。 |
 | Session 条目 | Session Item | 历史列表中的单个 session。 |
+| Session 停止按钮 | Session Stop Button | 运行中的 Session 条目右侧按钮，可直接终止该 Session 的当前 run。 |
 | 设置入口 | Settings Entry | 导航栏底部设置按钮。 |
 | 导航栏浮层 | Sidebar Overlay | 窄屏下展开导航栏时的浮层形式。 |
 | 导航栏遮罩 | Sidebar Backdrop | 点击后关闭导航栏浮层。 |
@@ -78,7 +79,7 @@
 | 输入能力开关 | Composer Skill Toggle | 输入框内的临时能力开关，例如“幻灯片”；只影响下一次发送。 |
 | 研究校验开关 | Composer Research Guard Toggle | 输入框内的临时研究校验开关，启用后本次发送开启 research 信号校验与完整性打回；默认关闭。 |
 | 发送按钮 | Send Button | 提交当前输入。 |
-| 停止按钮 | Stop Button | 运行中替换发送按钮。 |
+| 当前 Session 停止按钮 | Current Session Stop Button | 当前 Session 运行中时替换发送按钮。 |
 
 ## 消息流展示触发类型
 

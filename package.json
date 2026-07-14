@@ -13,6 +13,8 @@
     "slides:html-spike": "tsx scripts/slides-html-pptx-spike.ts",
     "build": "rimraf dist && vite build && tsc -p tsconfig.node.json",
     "start": "node dist/src/server/index.js",
+    "test:artifact-writing": "tsx --test skills/html-to-pptx/tools.test.ts lib/agent-tool-allowlist.test.ts lib/llm/providers/anthropic-compatible.test.ts",
+    "test:session-history": "tsx --test lib/session-history-store.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit"
   },

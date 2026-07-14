@@ -72,7 +72,7 @@ Sidebar 应从“会话列表”升级为“本地 agent 档案馆”。
 
 - Ranni brand：月牙抽象 logo、`Ranni`、`Local AI Agent`。
 - New Session / New Task 按钮。
-- Sessions 列表：标题、更新时间、active 状态。
+- Sessions 列表：标题、更新时间、active 状态；运行中条目提供独立停止按钮。
 - Starter prompts：保留现有 starter prompt，但做成更精致的小卡或按钮。
 - Local status card：显示 API key、模型名、workspace root 简写。
 - Collapse button：保留现有 sidebar collapse 行为。

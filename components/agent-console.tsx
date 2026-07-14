@@ -13,6 +13,7 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Square,
   SquareTerminal,
   Wrench,
   type LucideIcon,
@@ -118,10 +119,25 @@ type FeedItem = FeedMessage | FeedActivity;
 type SessionRecord = {
   createdAt: number;
   feed: FeedItem[];
+  historyHydrated: boolean;
   id: string;
   messages: ChatMessage[];
   researchContext?: string;
   runs: TraceRun[];
+  title: string;
+  updatedAt: number;
+  workspaceRoot: string;
+};
+
+type SessionHistoryMessage = ChatMessage & {
+  updatedAt: number;
+};
+
+type SessionHistorySummary = {
+  createdAt: number;
+  messageCount: number;
+  schema: "ranni.session-history.v1";
+  sessionId: string;
   title: string;
   updatedAt: number;
   workspaceRoot: string;
@@ -539,6 +555,7 @@ function createSession({
     createdAt: now,
     updatedAt: now,
     workspaceRoot,
+    historyHydrated: true,
     researchContext: "",
     messages: initialAssistantMessage ? [initialAssistantMessage] : [],
     runs: [],
@@ -1863,6 +1880,7 @@ function sanitizeSessions(raw: unknown, defaultWorkspaceRoot: string) {
         title: candidate.title,
         createdAt: candidate.createdAt,
         updatedAt: candidate.updatedAt,
+        historyHydrated: false,
         workspaceRoot:
           typeof candidate.workspaceRoot === "string" &&
           candidate.workspaceRoot.trim()
@@ -3192,6 +3210,140 @@ function persistSessionsToStorage(
   );
 }
 
+function sanitizeSessionHistoryMessages(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((value): SessionHistoryMessage | null => {
+      if (!isObject(value)) {
+        return null;
+      }
+
+      if (
+        typeof value.id !== "string" ||
+        typeof value.content !== "string" ||
+        !isValidMessageRole(value.role)
+      ) {
+        return null;
+      }
+
+      return {
+        content: value.content,
+        id: value.id,
+        role: value.role,
+        updatedAt:
+          typeof value.updatedAt === "number" ? value.updatedAt : 0,
+      };
+    })
+    .filter((message): message is SessionHistoryMessage => message !== null);
+}
+
+function sanitizeSessionHistorySummaries(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((value): SessionHistorySummary | null => {
+      if (!isObject(value)) {
+        return null;
+      }
+
+      if (
+        value.schema !== "ranni.session-history.v1" ||
+        typeof value.sessionId !== "string" ||
+        typeof value.title !== "string" ||
+        typeof value.workspaceRoot !== "string" ||
+        typeof value.createdAt !== "number" ||
+        typeof value.updatedAt !== "number" ||
+        typeof value.messageCount !== "number"
+      ) {
+        return null;
+      }
+
+      return {
+        createdAt: value.createdAt,
+        messageCount: value.messageCount,
+        schema: value.schema,
+        sessionId: value.sessionId,
+        title: value.title,
+        updatedAt: value.updatedAt,
+        workspaceRoot: value.workspaceRoot,
+      };
+    })
+    .filter((summary): summary is SessionHistorySummary => summary !== null);
+}
+
+function mergeSessionHistoryMessages(
+  persistedMessages: SessionHistoryMessage[],
+  localMessages: ChatMessage[],
+) {
+  const localById = new Map(localMessages.map((message) => [message.id, message]));
+  const merged = persistedMessages.map((persistedMessage) => {
+    const message: ChatMessage = {
+      content: persistedMessage.content,
+      id: persistedMessage.id,
+      role: persistedMessage.role,
+    };
+    const local = localById.get(message.id);
+
+    localById.delete(message.id);
+
+    if (local && local.content.length > message.content.length) {
+      return local;
+    }
+
+    return message;
+  });
+
+  for (const local of localMessages) {
+    if (localById.has(local.id)) {
+      merged.push(local);
+      localById.delete(local.id);
+    }
+  }
+
+  return merged;
+}
+
+function mergeFeedWithHistoryMessages(
+  feed: FeedItem[],
+  messages: ChatMessage[],
+) {
+  const messagesById = new Map(messages.map((message) => [message.id, message]));
+  const existingMessageIds = new Set(
+    feed
+      .filter((item): item is FeedMessage => item.kind === "message")
+      .map((item) => item.id),
+  );
+  const missingMessages = messages
+    .filter((message) => !existingMessageIds.has(message.id))
+    .map((message) => ({ kind: "message" as const, ...message }));
+  const updatedFeed = feed.map((item) => {
+    if (item.kind !== "message") {
+      return item;
+    }
+
+    const message = messagesById.get(item.id);
+
+    return message ? { kind: "message" as const, ...message } : item;
+  });
+
+  return [...missingMessages, ...updatedFeed];
+}
+
+function chunkMessages<T>(messages: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < messages.length; index += size) {
+    chunks.push(messages.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
 export function AgentConsole({
   apiBaseUrl,
   hasApiKey,
@@ -3205,6 +3357,8 @@ export function AgentConsole({
   const [selectedStepId, setSelectedStepId] = useState<string>("");
   const [input, setInput] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isSessionHistoryIndexLoaded, setIsSessionHistoryIndexLoaded] =
+    useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isWorkspacePickerOpen, setIsWorkspacePickerOpen] = useState(false);
@@ -3214,6 +3368,9 @@ export function AgentConsole({
     useState<ActivityDebugTarget | null>(null);
   const [activeAgentRuns, setActiveAgentRuns] =
     useState<ActiveAgentRunState>({});
+  const [stoppingAgentRuns, setStoppingAgentRuns] = useState<
+    Record<string, boolean>
+  >({});
   const [agentLimitNotice, setAgentLimitNotice] =
     useState<AgentLimitNotice | null>(null);
   const [thinkingStreams, setThinkingStreams] =
@@ -3313,9 +3470,19 @@ export function AgentConsole({
   const thinkingStreamsRef = useRef<ThinkingStreamState>({});
   const streamEventLogRef = useRef<Record<string, StreamEventLogEntry[]>>({});
   const streamEventSequenceRef = useRef(0);
+  const sessionsRef = useRef<SessionRecord[]>([]);
+  const persistedHistoryMessagesRef = useRef<
+    Map<string, Map<string, string>>
+  >(new Map());
+  const persistedHistoryMetadataRef = useRef<Map<string, string>>(new Map());
+  const historyPersistTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+  const historyPersistInFlightRef = useRef<Set<string>>(new Set());
   const activeAgentRequestsRef = useRef<Map<string, ActiveAgentRequest>>(
     new Map(),
   );
+  const abortCommandRunIdsRef = useRef<Set<string>>(new Set());
 
   const isNearBottom = (node: HTMLDivElement) =>
     node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
@@ -3424,6 +3591,374 @@ export function AgentConsole({
       setIsHydrated(true);
     }
   }, [workspaceRoot]);
+
+  const persistSessionHistory = useCallback(
+    async function persist(sessionId: string) {
+      if (historyPersistInFlightRef.current.has(sessionId)) {
+        const existingTimer = historyPersistTimersRef.current.get(sessionId);
+
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+
+        historyPersistTimersRef.current.set(
+          sessionId,
+          setTimeout(() => {
+            historyPersistTimersRef.current.delete(sessionId);
+            void persist(sessionId);
+          }, 250),
+        );
+        return;
+      }
+
+      const session = sessionsRef.current.find(
+        (candidate) => candidate.id === sessionId,
+      );
+
+      if (!session?.historyHydrated) {
+        return;
+      }
+
+      const persistedMessages =
+        persistedHistoryMessagesRef.current.get(sessionId) ?? new Map();
+      const changedMessages = session.messages.filter(
+        (message) => persistedMessages.get(message.id) !== message.content,
+      );
+      const metadataSignature = [
+        session.title,
+        session.createdAt,
+        session.updatedAt,
+        session.workspaceRoot,
+      ].join("\u0000");
+      const metadataChanged =
+        persistedHistoryMetadataRef.current.get(sessionId) !== metadataSignature;
+
+      if (!metadataChanged && changedMessages.length === 0) {
+        return;
+      }
+
+      historyPersistInFlightRef.current.add(sessionId);
+
+      try {
+        const chunks =
+          changedMessages.length > 0
+            ? chunkMessages(changedMessages, 25)
+            : [[] as ChatMessage[]];
+
+        for (const messages of chunks) {
+          const response = await fetch(
+            `${apiBaseUrl}/api/session-history/${encodeURIComponent(
+              session.id,
+            )}/messages`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                createdAt: session.createdAt,
+                messages: messages.map((message) => ({
+                  ...message,
+                  updatedAt: session.updatedAt,
+                })),
+                title: session.title,
+                updatedAt: session.updatedAt,
+                workspaceRoot: session.workspaceRoot,
+              }),
+            },
+          );
+
+          if (!response.ok) {
+            const detail = await response.text();
+            throw new Error(
+              detail || `Session 历史写入失败：HTTP ${response.status}`,
+            );
+          }
+        }
+
+        const nextPersistedMessages = new Map(persistedMessages);
+
+        for (const message of changedMessages) {
+          nextPersistedMessages.set(message.id, message.content);
+        }
+
+        persistedHistoryMessagesRef.current.set(
+          sessionId,
+          nextPersistedMessages,
+        );
+        persistedHistoryMetadataRef.current.set(sessionId, metadataSignature);
+      } catch (error) {
+        console.warn(
+          `Failed to persist Session history: ${sessionId}`,
+          error instanceof Error ? error.message : error,
+        );
+      } finally {
+        historyPersistInFlightRef.current.delete(sessionId);
+      }
+    },
+    [apiBaseUrl],
+  );
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    void (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/session-history`, {
+          signal: controller.signal,
+        });
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: { sessions?: unknown };
+        };
+
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "无法加载 Session 历史索引。");
+        }
+
+        const summaries = sanitizeSessionHistorySummaries(
+          payload.result?.sessions,
+        );
+        const persistedSessionIds = new Set(
+          summaries.map((summary) => summary.sessionId),
+        );
+
+        setSessions((current) => {
+          const currentById = new Map(
+            current.map((session) => [session.id, session]),
+          );
+          const merged = current.map((session) =>
+            persistedSessionIds.has(session.id)
+              ? session
+              : { ...session, historyHydrated: true },
+          );
+
+          for (const summary of summaries) {
+            const existing = currentById.get(summary.sessionId);
+
+            if (existing) {
+              const index = merged.findIndex(
+                (session) => session.id === summary.sessionId,
+              );
+
+              if (index >= 0) {
+                merged[index] = {
+                  ...merged[index],
+                  createdAt: Math.min(existing.createdAt, summary.createdAt),
+                  historyHydrated: false,
+                  title:
+                    summary.updatedAt > existing.updatedAt
+                      ? summary.title
+                      : existing.title,
+                  updatedAt: Math.max(existing.updatedAt, summary.updatedAt),
+                  workspaceRoot: summary.workspaceRoot,
+                };
+              }
+              continue;
+            }
+
+            merged.push({
+              createdAt: summary.createdAt,
+              feed: [],
+              historyHydrated: false,
+              id: summary.sessionId,
+              messages: [],
+              researchContext: "",
+              runs: [],
+              title: summary.title,
+              updatedAt: summary.updatedAt,
+              workspaceRoot: summary.workspaceRoot,
+            });
+          }
+
+          return merged;
+        });
+
+        if (summaries.length > 0) {
+          setActiveSessionId((current) => current || summaries[0]!.sessionId);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn(
+            "Failed to load Session history index.",
+            error instanceof Error ? error.message : error,
+          );
+          setSessions((current) =>
+            current.map((session) => ({
+              ...session,
+              historyHydrated: true,
+            })),
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsSessionHistoryIndexLoaded(true);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [apiBaseUrl, isHydrated]);
+
+  useEffect(() => {
+    if (!isSessionHistoryIndexLoaded || !activeSessionId) {
+      return;
+    }
+
+    const session = sessionsRef.current.find(
+      (candidate) => candidate.id === activeSessionId,
+    );
+
+    if (!session || session.historyHydrated) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    void (async () => {
+      try {
+        const query = new URLSearchParams({
+          workspaceRoot: session.workspaceRoot,
+        });
+        const response = await fetch(
+          `${apiBaseUrl}/api/session-history/${encodeURIComponent(
+            session.id,
+          )}?${query.toString()}`,
+          { signal: controller.signal },
+        );
+
+        if (response.status === 404) {
+          setSessions((current) =>
+            current.map((candidate) =>
+              candidate.id === session.id
+                ? { ...candidate, historyHydrated: true }
+                : candidate,
+            ),
+          );
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: { history?: unknown };
+        };
+
+        if (!response.ok || payload.ok === false || !isObject(payload.result?.history)) {
+          throw new Error(payload.error || "无法加载完整 Session 消息历史。");
+        }
+
+        const history = payload.result.history;
+
+        if (
+          history.sessionId !== session.id ||
+          typeof history.title !== "string" ||
+          typeof history.createdAt !== "number" ||
+          typeof history.updatedAt !== "number"
+        ) {
+          throw new Error("Session 历史响应格式无效。");
+        }
+
+        const persistedMessages = sanitizeSessionHistoryMessages(
+          history.messages,
+        );
+        const historyCreatedAt = history.createdAt;
+        const historyTitle = history.title;
+        const historyUpdatedAt = history.updatedAt;
+
+        persistedHistoryMessagesRef.current.set(
+          session.id,
+          new Map(
+            persistedMessages.map((message) => [message.id, message.content]),
+          ),
+        );
+
+        setSessions((current) =>
+          current.map((candidate) => {
+            if (candidate.id !== session.id) {
+              return candidate;
+            }
+
+            const messages = mergeSessionHistoryMessages(
+              persistedMessages,
+              candidate.messages,
+            );
+
+            return {
+              ...candidate,
+              createdAt: Math.min(candidate.createdAt, historyCreatedAt),
+              feed: mergeFeedWithHistoryMessages(candidate.feed, messages),
+              historyHydrated: true,
+              messages,
+              title:
+                historyUpdatedAt > candidate.updatedAt
+                  ? historyTitle
+                  : candidate.title,
+              updatedAt: Math.max(candidate.updatedAt, historyUpdatedAt),
+            };
+          }),
+        );
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn(
+            `Failed to hydrate Session history: ${session.id}`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeSessionId, apiBaseUrl, isSessionHistoryIndexLoaded]);
+
+  useEffect(() => {
+    if (!isSessionHistoryIndexLoaded) {
+      return;
+    }
+
+    for (const session of sessions) {
+      if (!session.historyHydrated) {
+        continue;
+      }
+
+      const existingTimer = historyPersistTimersRef.current.get(session.id);
+
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      historyPersistTimersRef.current.set(
+        session.id,
+        setTimeout(() => {
+          historyPersistTimersRef.current.delete(session.id);
+          void persistSessionHistory(session.id);
+        }, 500),
+      );
+    }
+  }, [isSessionHistoryIndexLoaded, persistSessionHistory, sessions]);
+
+  useEffect(
+    () => () => {
+      for (const timer of historyPersistTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      historyPersistTimersRef.current.clear();
+    },
+    [],
+  );
 
   useEffect(() => {
     const inspectorQuery = window.matchMedia(INSPECTOR_OVERLAY_MEDIA_QUERY);
@@ -4335,6 +4870,24 @@ export function AgentConsole({
     });
   };
 
+  const setAgentRunStopping = (sessionId: string, stopping: boolean) => {
+    setStoppingAgentRuns((current) => {
+      if (stopping) {
+        return current[sessionId]
+          ? current
+          : { ...current, [sessionId]: true };
+      }
+
+      if (!current[sessionId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
   // 以后端 RunRegistry 为权威源，对齐本地 session.runs：在跑则保留、已结束则修正、查不到则标 interrupted。
   // 同时清理 activeAgentRuns / activeAgentRequestsRef —— 它们只作 UI 缓存，不能当长期事实来源。
   const reconcileSessionRuns = useCallback(
@@ -4400,6 +4953,14 @@ export function AgentConsole({
           return next;
         });
         activeAgentRequestsRef.current.delete(sessionId);
+        setStoppingAgentRuns((current) => {
+          if (!current[sessionId]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
       }
     },
     [apiBaseUrl],
@@ -4749,6 +5310,9 @@ export function AgentConsole({
       if (activeRequest) {
         activeRequest.runId = event.runId;
         setActiveAgentRun(sessionId, event.runId);
+        if (activeRequest.stopped) {
+          void abortAgentRunCommand(sessionId, event.runId);
+        }
       }
 
       if (
@@ -4771,34 +5335,9 @@ export function AgentConsole({
     }
   };
 
-  const stopAgentRun = (sessionId: string) => {
-    const activeRequest = activeAgentRequestsRef.current.get(sessionId);
-
-    if (!activeRequest) {
-      return;
-    }
-
-    activeRequest.stopped = true;
-    appendStreamEventLog({
-      action: "stop_requested",
-      detail: {
-        runId: activeRequest.runId,
-      },
-      phase: "system",
-      sessionId,
-    });
-
-    // v2：中断走 Command 通道（POST /api/runs/:id/abort），EventSource 是 session 级长连接不受影响。
-    if (activeRequest.runId) {
-      void fetch(`${apiBaseUrl}/api/runs/${activeRequest.runId}/abort`, {
-        method: "POST",
-      }).catch((error) => {
-        console.warn("Failed to abort agent run.", error);
-      });
-    }
-
+  const finalizeStoppedAgentRun = (sessionId: string, runId?: string) => {
     appendActivity(
-      activeRequest.sessionId,
+      sessionId,
       "status",
       "状态",
       "已手动终止当前运行。",
@@ -4811,15 +5350,91 @@ export function AgentConsole({
           title: "终止当前运行",
         },
         eventType: "manual",
-        runId: activeRequest.runId,
+        runId,
       },
     );
-    markRunningRunCancelled(activeRequest.sessionId, activeRequest.runId);
-    if (activeRequest.runId) {
-      finalizeRunThinkingStreams(activeRequest.sessionId, activeRequest.runId);
+    markRunningRunCancelled(sessionId, runId);
+    if (runId) {
+      finalizeRunThinkingStreams(sessionId, runId);
     }
     activeAgentRequestsRef.current.delete(sessionId);
     clearActiveAgentRun(sessionId);
+    setAgentRunStopping(sessionId, false);
+  };
+
+  const abortAgentRunCommand = async (sessionId: string, runId: string) => {
+    if (abortCommandRunIdsRef.current.has(runId)) {
+      return;
+    }
+
+    abortCommandRunIdsRef.current.add(runId);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/runs/${runId}/abort`, {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        ok?: boolean;
+      };
+
+      if (response.status === 404 || response.status === 409) {
+        await reconcileSessionRuns(sessionId);
+        setAgentRunStopping(sessionId, false);
+        return;
+      }
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "停止运行失败。");
+      }
+
+      finalizeStoppedAgentRun(sessionId, runId);
+    } catch (error) {
+      const activeRequest = activeAgentRequestsRef.current.get(sessionId);
+      if (activeRequest) {
+        activeRequest.stopped = false;
+      }
+      setAgentRunStopping(sessionId, false);
+      appendActivity(sessionId, "error", "错误", "停止运行失败，请重试。", {
+        display: createErrorDisplay("停止运行失败，请重试。"),
+        eventType: "manual",
+        runId,
+      });
+      console.warn("Failed to abort agent run.", error);
+    } finally {
+      abortCommandRunIdsRef.current.delete(runId);
+    }
+  };
+
+  const stopAgentRun = (sessionId: string, preferredRunId?: string) => {
+    if (stoppingAgentRuns[sessionId]) {
+      return;
+    }
+
+    const activeRequest = activeAgentRequestsRef.current.get(sessionId);
+    const session = sessionsRef.current.find((item) => item.id === sessionId);
+    const runId =
+      preferredRunId ||
+      activeRequest?.runId ||
+      session?.runs.find((run) => run.status === "running")?.id;
+
+    if (!activeRequest && !runId) {
+      return;
+    }
+
+    if (activeRequest) {
+      activeRequest.stopped = true;
+    }
+    setAgentRunStopping(sessionId, true);
+    appendStreamEventLog({
+      action: "stop_requested",
+      detail: { runId },
+      phase: "system",
+      sessionId,
+    });
+
+    if (runId) {
+      void abortAgentRunCommand(sessionId, runId);
+    }
   };
 
   // ---- v2 事件订阅：session 级 SSE + 只读渲染 ----
@@ -4916,6 +5531,7 @@ export function AgentConsole({
     if (e.type === "lifecycle") {
       if (e.phase === "run_completed") {
         finalizeRunThinkingStreams(sessionId, String(e.runId ?? ""));
+        setAgentRunStopping(sessionId, false);
         if (activeAgentRequestsRef.current.get(sessionId)) {
           activeAgentRequestsRef.current.delete(sessionId);
           clearActiveAgentRun(sessionId);
@@ -5431,6 +6047,10 @@ export function AgentConsole({
       return;
     }
 
+    if (!sessionForRun.historyHydrated) {
+      return;
+    }
+
     const sessionId = sessionForRun.id;
 
     if (activeAgentRequestsRef.current.has(sessionId)) {
@@ -5555,6 +6175,7 @@ export function AgentConsole({
 
       const runResponse = (await response.json()) as { runId?: string };
       activeRequest.runId = runResponse.runId;
+      setActiveAgentRun(sessionId, runResponse.runId);
       setIsHtmlComposerSkillEnabled(false);
       setIsHtmlToPptxComposerSkillEnabled(false);
       setIsResearchModeEnabled(false);
@@ -5564,6 +6185,11 @@ export function AgentConsole({
         phase: "system",
         sessionId,
       });
+
+      if (activeRequest.stopped && runResponse.runId) {
+        await abortAgentRunCommand(sessionId, runResponse.runId);
+        return;
+      }
       // 后续事件经 session 级 SSE 下发，由 dispatchEventRef 派发为只读渲染。
     } catch (caughtError) {
       const message =
@@ -5584,6 +6210,7 @@ export function AgentConsole({
       }
       activeAgentRequestsRef.current.delete(sessionId);
       clearActiveAgentRun(sessionId);
+      setAgentRunStopping(sessionId, false);
     }
   };
 
@@ -6051,7 +6678,11 @@ export function AgentConsole({
   const currentSessionRun = !isDraftSessionActive
     ? activeAgentRuns[activeSession.id]
     : undefined;
-  const currentSessionIsRunning = Boolean(currentSessionRun);
+  const currentSessionIsRunning = Boolean(
+    currentSessionRun ||
+      (!isDraftSessionActive &&
+        activeSession.runs.some((run) => run.status === "running")),
+  );
   const latestProcessActivityId =
     !isDraftSessionActive && currentSessionIsRunning
       ? [...activeSession.feed]
@@ -6157,39 +6788,64 @@ export function AgentConsole({
                 const sessionIsRunning =
                   Boolean(activeAgentRuns[session.id]) ||
                   session.runs.some((run) => run.status === "running");
+                const runningRunId =
+                  activeAgentRuns[session.id]?.runId ??
+                  session.runs.find((run) => run.status === "running")?.id;
+                const sessionIsStopping = Boolean(
+                  stoppingAgentRuns[session.id],
+                );
 
                 return (
-                  <button
+                  <div
                     key={session.id}
                     className={`${styles.sessionItem} ${
                       isActive ? styles.sessionItemActive : ""
                     } ${sessionIsRunning ? styles.sessionItemRunning : ""}`}
-                    type="button"
-                    onClick={() => {
-                      setActiveSessionId(session.id);
-                      setIsDraftSessionActive(false);
-                      setDraftSessionError("");
-                      setActiveView("chat");
-
-                      if (isSidebarOverlayMode) {
-                        collapseSidebar();
-                      }
-                    }}
                     title={session.title}
                   >
-                    <div className={styles.sessionIndex}>{index + 1}</div>
-                    <div className={styles.sessionMeta}>
-                      <strong>{session.title}</strong>
-                      <span>{formatSessionTime(session.updatedAt)}</span>
-                      <small>{createWorkspaceLabel(session.workspaceRoot)}</small>
-                    </div>
+                    <button
+                      className={styles.sessionSelectButton}
+                      type="button"
+                      onClick={() => {
+                        setActiveSessionId(session.id);
+                        setIsDraftSessionActive(false);
+                        setDraftSessionError("");
+                        setActiveView("chat");
+
+                        if (isSidebarOverlayMode) {
+                          collapseSidebar();
+                        }
+                      }}
+                    >
+                      <div className={styles.sessionIndex}>{index + 1}</div>
+                      <div className={styles.sessionMeta}>
+                        <strong>{session.title}</strong>
+                        <span>{formatSessionTime(session.updatedAt)}</span>
+                        <small>{createWorkspaceLabel(session.workspaceRoot)}</small>
+                      </div>
+                    </button>
                     {sessionIsRunning ? (
-                      <span className={styles.sessionRunningBadge}>
-                        <span />
-                        运行中
-                      </span>
+                      <div className={styles.sessionRunActions}>
+                        <span className={styles.sessionRunningBadge}>
+                          <span />
+                          {sessionIsStopping ? "停止中" : "运行中"}
+                        </span>
+                        <button
+                          aria-label={`停止 Session：${session.title}`}
+                          className={styles.sessionStopButton}
+                          disabled={sessionIsStopping}
+                          title="停止这个 Session 的当前运行"
+                          type="button"
+                          onClick={() =>
+                            stopAgentRun(session.id, runningRunId)
+                          }
+                        >
+                          <Square size={10} fill="currentColor" aria-hidden="true" />
+                          <span>{sessionIsStopping ? "停止中" : "停止"}</span>
+                        </button>
+                      </div>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -6263,7 +6919,10 @@ export function AgentConsole({
               className={styles.draftSession}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!composerSkillSendBlocked) {
+                if (
+                  activeSession.historyHydrated &&
+                  !composerSkillSendBlocked
+                ) {
                   void sendMessage(input);
                 }
               }}
@@ -6378,6 +7037,9 @@ export function AgentConsole({
           ) : activeView === "chat" ? (
             <div className={styles.feedWrap}>
               <div className={styles.feed} ref={feedRef}>
+                {!activeSession.historyHydrated ? (
+                  <div className={styles.traceEmpty}>正在加载完整历史消息…</div>
+                ) : null}
                 {activeSession.feed.map((item) =>
                   item.kind === "message" ? (
                     <article
@@ -6939,6 +7601,7 @@ export function AgentConsole({
                   name="prompt"
                   placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
                   rows={3}
+                  disabled={!activeSession.historyHydrated}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -6951,6 +7614,7 @@ export function AgentConsole({
 
                       if (
                         !currentSessionIsRunning &&
+                        activeSession.historyHydrated &&
                         input.trim() &&
                         !composerSkillSendBlocked
                       ) {
@@ -7011,16 +7675,18 @@ export function AgentConsole({
                 {currentSessionIsRunning ? (
                   <button
                     className={`${styles.submitButton} ${styles.stopButton}`}
+                    disabled={Boolean(stoppingAgentRuns[activeSession.id])}
                     type="button"
                     onClick={() => stopAgentRun(activeSession.id)}
                   >
-                    停止
+                    {stoppingAgentRuns[activeSession.id] ? "停止中" : "停止"}
                   </button>
                 ) : (
                   <button
                     className={styles.submitButton}
                     disabled={
                       !input.trim() ||
+                      !activeSession.historyHydrated ||
                       !effectiveHasApiKey ||
                       composerSkillSendBlocked
                     }

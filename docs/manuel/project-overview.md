@@ -35,7 +35,9 @@ Ranni 的当前产品模型可以概括为五件事：
 - 展示历史 session。
 - 底部进入设置。
 
-新建 session 草稿不会进入历史列表。用户发送首条消息后才会创建 session。历史 session 会显示 session 名称、更新时间和 workspace 简称。Session 名称默认是 `新研究会话`，首条消息发送后会异步请求模型生成十五字以内标题。
+新建 session 草稿不会进入历史列表。用户发送首条消息后才会创建 session。历史 session 会显示 session 名称、更新时间和 workspace 简称。运行中的 Session 同时显示运行状态和停止按钮，可以在不切换 Session 的情况下终止当前 run。Session 名称默认是 `新研究会话`，首条消息发送后会异步请求模型生成十五字以内标题。
+
+用户与 assistant 的完整消息会保存在 Session 专属目录的 `.ranni/session-history.json`。页面启动时从后端加载历史 Session 摘要，打开 Session 时按需读取完整消息。前端 localStorage 继续作为兼容缓存和界面状态存储，刷新页面、重启后端或重新启动 Ranni 后均可从 Session workspace 恢复已经持久化的消息。
 
 ### 中间：会话栏
 
@@ -56,7 +58,7 @@ Ranni 的当前产品模型可以概括为五件事：
 - 支持导出前端流事件顺序，用于排查接收顺序和展示顺序。
 - 支持导出消息流 UI 顺序，用于对照最终展示列表。
 - 支持 `Enter` 发送、`Shift + Enter` 换行。
-- 当前 session 运行中时，输入区会变成终止按钮。
+- 当前 Session 运行中时，输入区会变成停止按钮；导航栏的对应 Session 条目也提供停止入口。
 - 最多支持 3 个 agent run 并行；达到上限时弹出任务数量上限提醒。
 - 最新过程项在当前 session 运行中显示扫光动效；左侧 session 会显示运行态。
 
@@ -168,5 +170,6 @@ Trace 导出挂在 session 上，不再依赖某条 assistant 回复。点击顶
 
 - Ranni 是本地优先应用，设置密钥保存在 localStorage，不适合作为多用户远端服务直接部署。
 - 草稿页发送首条消息时，后端会在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` session 专属目录，同一秒内重复创建会追加数字后缀。
+- Session 的用户与 assistant 消息保存在专属目录的 `.ranni/session-history.json`；工具过程、thinking 和 TraceRun 继续使用前端压缩缓存与现有 trace 机制。
 - `write_file` 是全文件写入工具，适合小文件或完整重写，不适合盲目局部 patch。
 - `.ranni` 用于 agent 任务记忆，避免作为用户文档归档区。
