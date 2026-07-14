@@ -182,7 +182,24 @@
 
 | 中文名 | 英文名 | 说明 |
 | --- | --- | --- |
-| 运行详情页 | Trace View | 查看 run、step、request、response、tool trace。 |
+| 运行详情页 | Run Detail View | 查看运行概览，以及 run、step、request、response、tool trace。 |
+| 运行概览 | Run Overview | 运行详情页默认视图，展示当前路线、交付缺口、验收结果、阻塞和完成依据。 |
+| 当前路线 | Current Attempt | 当前采用的任务完成路径，以及最近一次路线替代原因。 |
+| 验收清单 | Acceptance Checklist | 按用户要求列出已通过、待处理、失败、未知和已豁免的验收项。 |
+| 交付缺口 | Deliverable Gap | 当前仍未满足的必需工件、验证和用户要求。 |
+| 完成依据 | Completion Evidence | 支撑验收项通过和 Run 完成判定的文件、工件、命令或验证回执。 |
+| 运行控制区 | Run Controls | 发送补充要求、暂停、从检查点恢复和进入 Step 详情的控制区。 |
+| 恢复检查点按钮 | Resume From Checkpoint Button | 从已保存现场创建新的策略尝试并继续执行。 |
+| Step 输入输出查看器 | Step I/O Viewer | 结构化查看每个 Step 的实际输入、输出、工具配对、状态和进展回执。 |
+| 输入构成列表 | Input Composition List | 按语义区块展示 Step 输入。 |
+| 输入构成项 | Input Composition Item | 输入构成列表中的单个语义区块。 |
+| 输出构成列表 | Output Composition List | 按语义区块展示 Step 输出。 |
+| 输出构成项 | Output Composition Item | 输出构成列表中的单个语义区块。 |
+| 上下文健康检查 | Context Health | 展示因果链、交付推进、失效假设和稳定前缀等事实指标。 |
+| Step 对比 | Step Diff | 对比相邻 Step 的 Context、状态、路线、验收和进展变化。 |
+| 原始数据 | Raw Data | 查看脱敏后的模型请求、响应、Trace 事件和 Provider Metadata。 |
+| 进展回执 | Progress Receipt | 展示交付推进、信息增量、结果回退和连续停滞计数。 |
+| 因果链完整性 | Causal Integrity | 展示上一轮 reasoning、tool call、tool result 和回执是否完整保留。 |
 | Run 列表 | Run List | 左侧 run 列表。 |
 | Run 卡片 | Run Card | 单个 run。 |
 | Step 列表 | Step List | 当前 run 下的 step。 |

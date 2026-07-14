@@ -167,6 +167,26 @@ Agent 主循环。
 - 保持安全观察工具与 `currentMode` 解耦，并把 mode 作为认知提示和 trace 字段。
 - 处理 abort/cancel。
 
+#### V2 目标拆分（规划中）
+
+当前 `lib/agent.ts` 仍以上述职责运行。后续按照 [通用 Agent Harness Runtime 与质量闭环开发方案](../v2-architecture/agent-arch/general-agent-harness/02-runtime-and-quality.md) 拆分，目标所有权如下：
+
+| 路径 | 目标职责 |
+| --- | --- |
+| `lib/agent.ts` | 稳定公共 facade，只导出 `runAgentTurn` 和公开类型 |
+| `lib/agent/run-controller.ts` | Run 初始化、Steering、Step 循环、终止和预算 |
+| `lib/agent/step-runner.ts` | 单 Step 的 Context、模型请求、响应解析和委托 |
+| `lib/agent/run-state.ts` | `AgentRunState`、reducer、guard counter、chunk state 和 checkpoint |
+| `lib/agent/event-sink.ts` | v2 运行事件发布与 legacy 兼容隔离 |
+| `lib/agent/tool-batch-executor.ts` | 工具请求校验、安全检查、执行和回执批次 |
+| `lib/agent/finalization-controller.ts` | 最终回答修复、Guard 链和完成决策 |
+| `lib/agent/recovery-controller.ts` | Provider、协议和无进展恢复决策 |
+| `lib/receipts/registry.ts` | Tool Receipt、Observed State 和内容引用 |
+| `lib/research/runtime-policy.ts` | Research signals 与完成质量策略 |
+| `lib/html-to-pptx/artifact-policy.ts` | HTML-to-PPTX 工件状态、能力约束和 Artifact Guard |
+
+拆分完成前，本节上方的现有职责列表仍代表当前代码事实。
+
 ### `lib/session-history-store.ts`
 
 Session 消息历史存储层。负责读取和校验 `ranni.session-history.v1`、扫描默认 workspace 下的 Session 摘要、按消息 ID 增量合并，并通过串行写入队列与原子 rename 保存 `<session-workspace>/.ranni/session-history.json`。
