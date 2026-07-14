@@ -1,6 +1,6 @@
 :root { color-scheme: light; }
 html, body { margin: 0; padding: 0; background: #e8edf5; overflow: hidden; }
-body { font-family: Inter, Arial, 'PingFang SC', sans-serif; color: #172033; }
+body { font-family: Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; color: #172033; }
 *, *::before, *::after { box-sizing: border-box; }
 .deck { width: 1280px; }
 .slide { position: relative; width: 1280px; height: 720px; overflow: hidden; background: #fbfcff; padding: 58px 78px 0; }
@@ -75,3 +75,4 @@ blockquote { width: 940px; margin: 42px 0 0 20px; padding: 28px 36px; color: #10
 .summary-grid strong { display: block; color: #ffffff; font-size: 28px; line-height: 1.5; }
 .summary-grid span { display: block; margin-top: 24px; color: #dbeafe; font-size: 18px; line-height: 1.55; }
 .summary-footer { position: relative; z-index: 10; width: 900px; margin: 50px 0 0; color: #fff7ed; font-size: 20px; line-height: 1.55; }
+.eyebrow, .cover-meta, .metric-card span, .metric-card strong, .timeline-item span, .timeline-item strong, .chart-label { white-space: nowrap; word-break: keep-all; overflow-wrap: normal; }

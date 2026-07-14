@@ -12,8 +12,16 @@ import { PNG } from "pngjs";
 
 export const SLIDE_WIDTH_PX = 1280;
 export const SLIDE_HEIGHT_PX = 720;
-export const SLIDE_WIDTH_IN = 13.333;
-export const SLIDE_HEIGHT_IN = 7.5;
+export const CSS_PX_PER_INCH = 96;
+export const SLIDE_WIDTH_IN = SLIDE_WIDTH_PX / CSS_PX_PER_INCH;
+export const SLIDE_HEIGHT_IN = SLIDE_HEIGHT_PX / CSS_PX_PER_INCH;
+
+const EMU_PER_INCH = 914400;
+const TEXT_WIDTH_BUFFER_RATIO = 0.05;
+const TEXT_WIDTH_BUFFER_MIN_PX = 8;
+const TEXT_WIDTH_BUFFER_MAX_PX = 16;
+const PORTABLE_CJK_FONT_FAMILY = "Noto Sans SC";
+const PORTABLE_CJK_FONT_PACKAGE = "@fontsource-variable/noto-sans-sc";
 
 const requireFromScript = createRequire(import.meta.url);
 
@@ -188,6 +196,1040 @@ export async function openSlideHtml(browserContext, htmlAbsolutePath) {
   return page;
 }
 
+function diagnosticType(code) {
+  return String(code || "slide-diagnostic")
+    .toLowerCase()
+    .replace(/_/g, "-");
+}
+
+export async function collectSlideDiagnostics(page, slideSelector = ".slide", options = {}) {
+  const result = await page.evaluate(
+    ({ expectedHeight, expectedSlideId, expectedWidth, requireOrigin, selector }) => {
+      const round = (value) => Math.round(value * 100) / 100;
+      const rectOutside = (rect, boundary) =>
+        rect.left < boundary.left - 1 ||
+        rect.top < boundary.top - 1 ||
+        rect.right > boundary.right + 1 ||
+        rect.bottom > boundary.bottom + 1;
+      const visible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          Number.parseFloat(style.opacity || "1") > 0 &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const selectorFor = (element, slide) => {
+        const parts = [];
+        let current = element;
+
+        while (current && current !== slide && parts.length < 5) {
+          let part = current.tagName.toLowerCase();
+
+          if (current.id) {
+            part += `#${CSS.escape(current.id)}`;
+            parts.unshift(part);
+            break;
+          }
+
+          const stableClass = Array.from(current.classList).find(
+            (className) => className && !/^ranni-|^pptx-/i.test(className),
+          );
+
+          if (stableClass) {
+            part += `.${CSS.escape(stableClass)}`;
+          } else if (current.parentElement) {
+            const siblings = Array.from(current.parentElement.children).filter(
+              (sibling) => sibling.tagName === current.tagName,
+            );
+
+            if (siblings.length > 1) {
+              part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+            }
+          }
+
+          parts.unshift(part);
+          current = current.parentElement;
+        }
+
+        return parts.join(" > ") || element.tagName.toLowerCase();
+      };
+      const relevantStyles = (style) => ({
+        bottom: style.bottom,
+        height: style.height,
+        left: style.left,
+        overflowX: style.overflowX,
+        overflowY: style.overflowY,
+        position: style.position,
+        right: style.right,
+        top: style.top,
+        width: style.width,
+      });
+      const rectDetails = (rect, slideRect) => ({
+        bottom: round(rect.bottom - slideRect.top),
+        height: round(rect.height),
+        left: round(rect.left - slideRect.left),
+        right: round(rect.right - slideRect.left),
+        top: round(rect.top - slideRect.top),
+        width: round(rect.width),
+      });
+      const issues = [];
+      const issueKeys = new Set();
+      const addIssue = (issue) => {
+        const key = `${issue.code}:${issue.slideId || ""}:${issue.selector || ""}`;
+
+        if (!issueKeys.has(key) && issues.length < 24) {
+          issueKeys.add(key);
+          issues.push(issue);
+        }
+      };
+      const slides = Array.from(document.querySelectorAll(selector));
+      const seenSlideIds = new Set();
+      const measurements = [];
+
+      if (!slides.length) {
+        addIssue({
+          code: "SLIDE_NOT_FOUND",
+          message: `未找到 slide selector：${selector}`,
+          severity: "error",
+        });
+      }
+
+      if (expectedSlideId && slides.length !== 1) {
+        addIssue({
+          code: "SLIDE_COUNT_INVALID",
+          message: `预检需要且只能包含一个 .slide，实际为 ${slides.length}。`,
+          severity: "error",
+        });
+      }
+
+      for (const [index, slide] of slides.entries()) {
+        const slideRect = slide.getBoundingClientRect();
+        const slideStyle = window.getComputedStyle(slide);
+        const slideId = slide.dataset.slideId || `slide-${index + 1}`;
+        const width = round(slideRect.width);
+        const height = round(slideRect.height);
+        const overflowWidth = Math.max(0, slide.scrollWidth - slide.clientWidth);
+        const overflowHeight = Math.max(0, slide.scrollHeight - slide.clientHeight);
+
+        if (!slide.dataset.slideId) {
+          addIssue({
+            code: "SLIDE_ID_MISSING",
+            message: "slide 缺少 data-slide-id。",
+            severity: "error",
+            slideId,
+          });
+        }
+
+        if (seenSlideIds.has(slideId)) {
+          addIssue({
+            code: "SLIDE_ID_DUPLICATE",
+            message: `slide id ${slideId} 重复。`,
+            severity: "error",
+            slideId,
+          });
+        }
+        seenSlideIds.add(slideId);
+
+        if (expectedSlideId && slide.dataset.slideId !== expectedSlideId) {
+          addIssue({
+            code: "SLIDE_ID_MISMATCH",
+            message: `预检 slideId 不一致：预期 ${expectedSlideId}，实际 ${slide.dataset.slideId || "空"}。`,
+            severity: "error",
+            slideId,
+          });
+        }
+
+        if (Math.abs(width - expectedWidth) > 1 || Math.abs(height - expectedHeight) > 1) {
+          addIssue({
+            code: "SLIDE_SIZE_MISMATCH",
+            message: `slide 尺寸为 ${width}x${height}，预期为 ${expectedWidth}x${expectedHeight}。`,
+            severity: "error",
+            slideId,
+          });
+        }
+
+        if (slideStyle.overflowX !== "hidden" || slideStyle.overflowY !== "hidden") {
+          addIssue({
+            code: "SLIDE_OVERFLOW_POLICY_INVALID",
+            message: "slide 必须设置 overflow: hidden。",
+            severity: "error",
+            slideId,
+          });
+        }
+
+        if (requireOrigin && (Math.abs(slideRect.left) > 1 || Math.abs(slideRect.top) > 1)) {
+          addIssue({
+            code: "SLIDE_ORIGIN_MISMATCH",
+            message: `slide 起点为 (${round(slideRect.left)}, ${round(slideRect.top)})，预期为 (0, 0)；请清除 html/body 默认 margin。`,
+            severity: "error",
+            slideId,
+          });
+        }
+
+        const elements = Array.from(slide.querySelectorAll("*")).filter(
+          (element) =>
+            visible(element) &&
+            !element.closest("[data-pptx-ignore]") &&
+            !element.hasAttribute("data-pptx-ignore"),
+        );
+        const outsideElements = elements.filter((element) =>
+          rectOutside(element.getBoundingClientRect(), slideRect),
+        );
+        const boundaryElements = outsideElements.filter(
+          (element) =>
+            !Array.from(element.children).some((child) =>
+              outsideElements.includes(child),
+            ),
+        );
+        let attributedOverflow = false;
+
+        for (const element of boundaryElements) {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          const text = (element.textContent || "").replace(/\s+/g, " ").trim();
+          const hasMedia = Boolean(
+            element.matches("img, video, canvas, svg, [data-pptx-raster]") ||
+              element.querySelector("img, video, canvas, svg, [data-pptx-raster]"),
+          );
+          const explicitlyDecorative =
+            element.getAttribute("aria-hidden") === "true" ||
+            element.getAttribute("role") === "presentation" ||
+            element.hasAttribute("data-slide-decoration") ||
+            element.hasAttribute("data-pptx-decoration");
+          const positioned = style.position === "absolute" || style.position === "fixed";
+          const decorative = positioned && !text && (!hasMedia || explicitlyDecorative);
+          const selectorPath = selectorFor(element, slide);
+
+          attributedOverflow = true;
+          addIssue({
+            clippedBySlide:
+              slideStyle.overflowX === "hidden" && slideStyle.overflowY === "hidden",
+            code: decorative ? "SLIDE_DECORATION_CLIPPED" : "SLIDE_CONTENT_OUTSIDE_CANVAS",
+            element: rectDetails(rect, slideRect),
+            message: decorative
+              ? `无文本绝对定位装饰 ${selectorPath} 延伸到画布外，将由 slide 裁切。`
+              : `内容元素 ${selectorPath} 延伸到 slide 画布外。`,
+            selector: selectorPath,
+            severity: decorative ? "warning" : "error",
+            slideId,
+            styles: relevantStyles(style),
+            text: text.slice(0, 160),
+          });
+        }
+
+        for (const element of elements) {
+          const style = window.getComputedStyle(element);
+          const clipsContent = [style.overflowX, style.overflowY].some((value) =>
+            ["hidden", "clip", "scroll", "auto"].includes(value),
+          );
+          const hasText = Boolean((element.textContent || "").trim());
+          const internalOverflow =
+            element.scrollWidth > element.clientWidth + 1 ||
+            element.scrollHeight > element.clientHeight + 1;
+
+          if (clipsContent && hasText && internalOverflow) {
+            const selectorPath = selectorFor(element, slide);
+
+            addIssue({
+              code: "SLIDE_TEXT_CLIPPED",
+              element: rectDetails(element.getBoundingClientRect(), slideRect),
+              message: `文本容器 ${selectorPath} 的内容超出自身边界并被裁切。`,
+              selector: selectorPath,
+              severity: "error",
+              slideId,
+              styles: relevantStyles(style),
+              text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            });
+          }
+
+          const directTextNodes = Array.from(element.childNodes).filter(
+            (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+          );
+
+          if (!directTextNodes.length) {
+            continue;
+          }
+
+          const range = document.createRange();
+          range.setStartBefore(directTextNodes[0]);
+          range.setEndAfter(directTextNodes[directTextNodes.length - 1]);
+          const textRect = range.getBoundingClientRect();
+
+          if (textRect.width > 0 && textRect.height > 0 && rectOutside(textRect, slideRect)) {
+            const selectorPath = selectorFor(element, slide);
+
+            addIssue({
+              code: "SLIDE_TEXT_OUTSIDE_CANVAS",
+              element: rectDetails(textRect, slideRect),
+              message: `文本 ${selectorPath} 延伸到 slide 画布外。`,
+              selector: selectorPath,
+              severity: "error",
+              slideId,
+              styles: relevantStyles(style),
+              text: directTextNodes.map((node) => node.textContent || "").join(" ").trim().slice(0, 160),
+            });
+          }
+        }
+
+        if ((overflowWidth > 1 || overflowHeight > 1) && !attributedOverflow) {
+          addIssue({
+            code: "SLIDE_SCROLL_OVERFLOW_UNATTRIBUTED",
+            message: `slide 的滚动尺寸超出画布 ${overflowWidth}px x ${overflowHeight}px，但未定位到可见责任元素；请检查伪元素或浏览器生成内容。`,
+            severity: "warning",
+            slideId,
+          });
+        }
+
+        measurements.push({
+          height,
+          id: slideId,
+          index,
+          overflowHeight,
+          overflowWidth,
+          scrollHeight: slide.scrollHeight,
+          scrollWidth: slide.scrollWidth,
+          width,
+        });
+      }
+
+      return { issues, slides: measurements };
+    },
+    {
+      expectedHeight: Number(options.expectedHeight || SLIDE_HEIGHT_PX),
+      expectedSlideId: String(options.expectedSlideId || ""),
+      expectedWidth: Number(options.expectedWidth || SLIDE_WIDTH_PX),
+      requireOrigin: Boolean(options.requireOrigin),
+      selector: slideSelector,
+    },
+  );
+  const issues = result.issues.map((issue) => ({
+    ...issue,
+    category: "slide-diagnostic",
+    type: diagnosticType(issue.code),
+  }));
+  const errors = issues.filter((issue) => issue.severity === "error");
+  const warnings = issues.filter((issue) => issue.severity === "warning");
+
+  return {
+    errors,
+    issues,
+    schema: "ranni.html-to-pptx.slide-diagnostics.v1",
+    slides: result.slides,
+    status: errors.length ? "failed" : warnings.length ? "warning" : "passed",
+    summary: {
+      errors: errors.length,
+      warnings: warnings.length,
+    },
+    warnings,
+  };
+}
+
+function parseUnicodeRange(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/^U\+/i, ""))
+    .filter(Boolean)
+    .map((entry) => {
+      if (entry.includes("?")) {
+        return {
+          end: Number.parseInt(entry.replace(/\?/g, "f"), 16),
+          start: Number.parseInt(entry.replace(/\?/g, "0"), 16),
+        };
+      }
+
+      const [start, end = start] = entry.split("-");
+
+      return {
+        end: Number.parseInt(end, 16),
+        start: Number.parseInt(start, 16),
+      };
+    })
+    .filter((entry) => Number.isFinite(entry.start) && Number.isFinite(entry.end));
+}
+
+function unicodeRangeContainsAny(ranges, codePoints) {
+  return codePoints.some((codePoint) => ranges.some((range) => codePoint >= range.start && codePoint <= range.end));
+}
+
+async function installPortableCjkFont(page, slideSelector) {
+  const pageText = await page.evaluate((selector) => {
+    const slides = Array.from(document.querySelectorAll(selector));
+
+    return slides.map((slide) => slide.textContent || "").join("\n");
+  }, slideSelector);
+
+  if (!/[\u2e80-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(pageText)) {
+    return {
+      appliedElements: 0,
+      available: true,
+      bytes: 0,
+      family: undefined,
+      fonts: [],
+      subsetCount: 0,
+      subsets: [],
+    };
+  }
+
+  try {
+    const unicodePath = requireFromScript.resolve(`${PORTABLE_CJK_FONT_PACKAGE}/unicode.json`);
+    const packageDirectory = path.dirname(unicodePath);
+    const unicodeRanges = JSON.parse(await fs.readFile(unicodePath, "utf8"));
+    const codePoints = Array.from(new Set(Array.from(pageText, (character) => character.codePointAt(0)))).filter(Number.isFinite);
+    const selectedSubsets = Object.entries(unicodeRanges)
+      .filter(([, unicodeRange]) => unicodeRangeContainsAny(parseUnicodeRange(unicodeRange), codePoints))
+      .map(([subset, unicodeRange]) => ({
+        fileStem: subset.replace(/^\[|\]$/g, ""),
+        subset,
+        unicodeRange,
+      }));
+    const fontSources = [];
+    let bytes = 0;
+
+    for (const subset of selectedSubsets) {
+      const fileName = `noto-sans-sc-${subset.fileStem}-wght-normal.woff2`;
+      const filePath = path.join(packageDirectory, "files", fileName);
+      const buffer = await fs.readFile(filePath);
+      const dataUri = `data:font/woff2;base64,${buffer.toString("base64")}#${fileName}`;
+
+      bytes += buffer.byteLength;
+      fontSources.push({
+        dataUri,
+        fileName,
+        subset: subset.subset,
+        unicodeRange: subset.unicodeRange,
+      });
+    }
+
+    if (!fontSources.length) {
+      throw new Error("没有找到覆盖当前文稿字符的 Noto Sans SC 字体子集。");
+    }
+
+    const css = [
+      ...fontSources.map(
+        (font) => `@font-face {
+  font-family: "${PORTABLE_CJK_FONT_FAMILY}";
+  font-style: normal;
+  font-display: block;
+  font-weight: 100 900;
+  src: url("${font.dataUri}") format("woff2-variations");
+  unicode-range: ${font.unicodeRange};
+}`,
+      ),
+      `[data-ranni-portable-cjk-font="true"] {
+  font-family: "${PORTABLE_CJK_FONT_FAMILY}" !important;
+}`,
+    ].join("\n");
+    const appliedElements = await page.evaluate(
+      ({ cssText, selector }) => {
+        const hasCjk = (value) => /[\u2e80-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(value || "");
+        const customFontFamilies = new Set();
+        const style = document.createElement("style");
+
+        for (const sheet of Array.from(document.styleSheets)) {
+          try {
+            for (const rule of Array.from(sheet.cssRules || [])) {
+              if (rule.constructor.name !== "CSSFontFaceRule" && rule.type !== 5) {
+                continue;
+              }
+
+              const family = rule.style.getPropertyValue("font-family").replace(/["']/g, "").trim();
+
+              if (family) {
+                customFontFamilies.add(family.toLowerCase());
+              }
+            }
+          } catch {
+            // Cross-origin stylesheets may not expose cssRules.
+          }
+        }
+
+        style.setAttribute("data-ranni-portable-cjk-font-style", "true");
+        style.textContent = cssText;
+        document.head.appendChild(style);
+
+        let applied = 0;
+
+        for (const element of document.querySelectorAll(`${selector}, ${selector} *`)) {
+          if (
+            element.closest("[data-pptx-ignore]") ||
+            element.closest("[data-pptx-raster]") ||
+            element.closest('[data-pptx-fallback="true"]')
+          ) {
+            continue;
+          }
+
+          const directText = Array.from(element.childNodes)
+            .filter((node) => node.nodeType === Node.TEXT_NODE)
+            .map((node) => node.textContent || "")
+            .join("");
+          const leafText = element.children.length === 0 ? element.textContent || "" : "";
+          const beforeContent = window.getComputedStyle(element, "::before").content.replace(/^['"]|['"]$/g, "");
+          const afterContent = window.getComputedStyle(element, "::after").content.replace(/^['"]|['"]$/g, "");
+          const combinedText = `${directText}${leafText}${beforeContent}${afterContent}`;
+          const computedFamily = window.getComputedStyle(element).fontFamily.split(",")[0]?.replace(/["']/g, "").trim() || "";
+          const customSourceFont = customFontFamilies.has(computedFamily.toLowerCase());
+          const iconFont = /(?:font\s*awesome|material\s*icons?|icon)/i.test(computedFamily);
+
+          if (!combinedText.trim() || iconFont || (customSourceFont && !hasCjk(combinedText))) {
+            continue;
+          }
+
+          element.setAttribute("data-ranni-portable-cjk-font", "true");
+          applied += 1;
+        }
+
+        return applied;
+      },
+      { cssText: css, selector: slideSelector },
+    );
+
+    await page.evaluate(
+      async ({ family, sample }) => {
+        const text = Array.from(new Set(Array.from(sample))).join("").slice(0, 4096);
+
+        await Promise.all([
+          document.fonts.load(`400 16px "${family}"`, text),
+          document.fonts.load(`700 16px "${family}"`, text),
+          document.fonts.ready,
+        ]);
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      },
+      { family: PORTABLE_CJK_FONT_FAMILY, sample: pageText },
+    );
+
+    return {
+      appliedElements,
+      available: true,
+      bytes,
+      family: PORTABLE_CJK_FONT_FAMILY,
+      fonts: [
+        {
+          name: PORTABLE_CJK_FONT_FAMILY,
+          style: "normal",
+          urls: fontSources.map((font) => font.dataUri),
+          weight: "400",
+        },
+      ],
+      subsetCount: fontSources.length,
+      subsets: fontSources.map((font) => font.subset),
+    };
+  } catch (error) {
+    return {
+      appliedElements: 0,
+      available: false,
+      bytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+      family: undefined,
+      fonts: [],
+      subsetCount: 0,
+      subsets: [],
+    };
+  }
+}
+
+async function removePortableCjkFont(page) {
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-ranni-portable-cjk-font-style="true"]').forEach((style) => style.remove());
+    document.querySelectorAll('[data-ranni-portable-cjk-font="true"]').forEach((element) => {
+      element.removeAttribute("data-ranni-portable-cjk-font");
+    });
+  });
+}
+
+function summarizePortableFont(font) {
+  return {
+    appliedElements: font.appliedElements,
+    available: font.available,
+    bytes: font.bytes,
+    error: font.error,
+    family: font.family,
+    subsetCount: font.subsetCount,
+    subsets: font.subsets,
+  };
+}
+
+async function collectTextLayoutDiagnostics(page, slideSelector, options = {}) {
+  return page.evaluate(
+    ({ bufferMaxPx, bufferMinPx, bufferRatio, selector, stabilize }) => {
+      const compactAtomicClassPattern =
+        /(^|[-_])(badge|chip|eyebrow|kicker|kpi|label|metric|num|number|pill|score|stat|tag|value)([-_]|$)/i;
+      const titleAtomicClassPattern = /(^|[-_])(heading|title)([-_]|$)/i;
+      const headingPattern = /^H[1-6]$/;
+      const numericAtomPattern = /^[+-]?\d[\d,.]*(?:\s*(?:%|×|x|[A-Za-z]{1,8}))?(?:\s*[·:/→-]\s*[\w.+%×-]+)*$/u;
+      const round = (value) => Math.round(value * 1000) / 1000;
+      const slides = Array.from(document.querySelectorAll(selector));
+      const items = [];
+      let stabilizedElements = 0;
+
+      for (const [slideIndex, slide] of slides.entries()) {
+        const slideId = slide.dataset.slideId || `slide-${slideIndex + 1}`;
+        const candidates = Array.from(slide.querySelectorAll("*")).filter((element) => {
+          if (
+            element.closest("[data-pptx-ignore]") ||
+            element.closest("[data-pptx-raster]") ||
+            element.closest('[data-pptx-fallback="true"]')
+          ) {
+            return false;
+          }
+
+          const text = element.textContent?.trim();
+
+          if (!text) {
+            return false;
+          }
+
+          return Array.from(element.children).every(
+            (child) => child.tagName === "BR" || !(child.textContent || "").trim(),
+          );
+        });
+
+        for (const [elementIndex, element] of candidates.entries()) {
+          const style = window.getComputedStyle(element);
+          const parentStyle = element.parentElement ? window.getComputedStyle(element.parentElement) : undefined;
+          const rect = element.getBoundingClientRect();
+
+          if (rect.width < 0.5 || rect.height < 0.5 || style.visibility === "hidden" || style.display === "none") {
+            continue;
+          }
+
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const rangeRect = range.getBoundingClientRect();
+          const lineTops = [];
+
+          for (const fragment of Array.from(range.getClientRects())) {
+            if (fragment.width < 0.1 || fragment.height < 0.1) {
+              continue;
+            }
+
+            if (!lineTops.some((top) => Math.abs(top - fragment.top) < 1)) {
+              lineTops.push(fragment.top);
+            }
+          }
+
+          const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+          const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+          const contentWidth = Math.max(0, rect.width - paddingLeft - paddingRight);
+          const textWidth = Math.min(contentWidth, rangeRect.width);
+          const widthSlack = contentWidth - textWidth;
+          const explicitLineCount = element.querySelectorAll("br").length + 1;
+          const renderedLineCount = Math.max(1, lineTops.length);
+          const normalizedText = (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+          const parentDisplay = parentStyle?.display || "";
+          const isFlexOrGridItem = /(?:flex|grid)/.test(parentDisplay);
+          const standaloneTextBox = style.display !== "inline" || isFlexOrGridItem;
+          const compactClassSignal = compactAtomicClassPattern.test(element.className || "");
+          const titleClassSignal = titleAtomicClassPattern.test(element.className || "");
+          const classSignal = compactClassSignal || titleClassSignal;
+          const shortTitleAtom = titleClassSignal && normalizedText.length <= 20;
+          const shortFlexAtom = isFlexOrGridItem && normalizedText.length <= 20;
+          const strictAtomic =
+            element.hasAttribute("data-pptx-atomic") ||
+            numericAtomPattern.test(normalizedText) ||
+            compactClassSignal ||
+            shortTitleAtom ||
+            (headingPattern.test(element.tagName) && normalizedText.length <= 20);
+          const atomic =
+            strictAtomic ||
+            headingPattern.test(element.tagName) ||
+            classSignal ||
+            shortFlexAtom;
+          const sourceKeepsLines = renderedLineCount <= explicitLineCount;
+          const zeroSlack = widthSlack <= 1.5;
+          const unintendedAtomicWrap = strictAtomic && explicitLineCount === 1 && renderedLineCount > 1;
+          const proactiveShortAtom = strictAtomic && explicitLineCount === 1;
+          let unwrappedWidth = rect.width;
+
+          if (standaloneTextBox && atomic) {
+            const clone = element.cloneNode(true);
+
+            Object.assign(clone.style, {
+              flex: "none",
+              left: "-100000px",
+              maxWidth: "none",
+              minWidth: "0",
+              overflowWrap: "normal",
+              pointerEvents: "none",
+              position: "fixed",
+              top: "0",
+              visibility: "hidden",
+              whiteSpace: "nowrap",
+              width: "max-content",
+              wordBreak: "keep-all",
+            });
+            element.parentElement?.appendChild(clone);
+            unwrappedWidth = clone.getBoundingClientRect().width || rect.width;
+            clone.remove();
+          }
+
+          const stabilizationCandidate =
+            standaloneTextBox && atomic && ((sourceKeepsLines && zeroSlack) || unintendedAtomicWrap || proactiveShortAtom);
+          const alreadyNoWrap = style.whiteSpace === "nowrap" || style.whiteSpace === "pre";
+          let bufferPx = 0;
+          let buffered = false;
+
+          if (stabilize && stabilizationCandidate) {
+            const baseWidth = Math.max(rect.width, unwrappedWidth);
+
+            bufferPx = Math.max(bufferMinPx, Math.min(bufferMaxPx, baseWidth * bufferRatio));
+            element.style.setProperty("white-space", "nowrap", "important");
+            element.style.setProperty("word-break", "keep-all", "important");
+            element.style.setProperty("overflow-wrap", "normal", "important");
+            element.setAttribute("data-ranni-text-stabilized", "true");
+
+            if (isFlexOrGridItem || ["inline-block", "inline-flex", "flex"].includes(style.display)) {
+              const bufferedWidth = baseWidth + bufferPx;
+
+              element.style.setProperty("width", `${bufferedWidth}px`, "important");
+              element.style.setProperty("min-width", `${bufferedWidth}px`, "important");
+              element.style.setProperty("flex-shrink", "0", "important");
+              buffered = true;
+            }
+
+            stabilizedElements += 1;
+          }
+
+          if (stabilizationCandidate) {
+            items.push({
+              alreadyNoWrap,
+              bufferPx: round(bufferPx),
+              buffered,
+              className: element.className || "",
+              contentWidth: round(contentWidth),
+              elementIndex,
+              explicitLineCount,
+              renderedLineCount,
+              slideId,
+              tagName: element.tagName.toLowerCase(),
+              text: normalizedText.slice(0, 120),
+              textWidth: round(textWidth),
+              unintendedAtomicWrap,
+              unwrappedWidth: round(unwrappedWidth),
+              width: round(rect.width),
+              widthSlack: round(widthSlack),
+            });
+          }
+        }
+      }
+
+      const overflowSlides = stabilize
+        ? slides
+            .filter((slide) => slide.scrollWidth > slide.clientWidth || slide.scrollHeight > slide.clientHeight)
+            .map((slide, index) => slide.dataset.slideId || `slide-${index + 1}`)
+        : [];
+
+      return {
+        buffer: {
+          maxPx: bufferMaxPx,
+          minPx: bufferMinPx,
+          ratio: bufferRatio,
+        },
+        items,
+        overflowSlides,
+        riskCount: items.length,
+        stabilizedElements,
+      };
+    },
+    {
+      bufferMaxPx: TEXT_WIDTH_BUFFER_MAX_PX,
+      bufferMinPx: TEXT_WIDTH_BUFFER_MIN_PX,
+      bufferRatio: TEXT_WIDTH_BUFFER_RATIO,
+      selector: slideSelector,
+      stabilize: Boolean(options.stabilize),
+    },
+  );
+}
+
+async function resolvePlatformFontsForPage(page, slideSelector, options = {}) {
+  const apply = Boolean(options.apply);
+  const compatibleCjkFamilies = [
+    "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "Source Han Sans SC",
+    "Arial Unicode MS",
+    "Microsoft YaHei",
+    "Hiragino Sans GB",
+    "PingFang SC",
+  ];
+  const probes = await page.evaluate((selector) => {
+    const hasCjk = (value) => /[\u2e80-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(value);
+    const probeHost = document.createElement("div");
+
+    probeHost.setAttribute("data-ranni-font-probe-host", "true");
+    document.body.appendChild(probeHost);
+
+    const elements = Array.from(document.querySelectorAll(`${selector}, ${selector} *`)).filter((element) => {
+      if (
+        element.closest("[data-pptx-ignore]") ||
+        element.closest("[data-pptx-raster]") ||
+        element.closest('[data-pptx-fallback="true"]')
+      ) {
+        return false;
+      }
+
+      const directText = Array.from(element.childNodes).some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      );
+
+      return directText || (element.children.length === 0 && element.textContent?.trim());
+    });
+
+    return elements.map((element, index) => {
+      const id = String(index);
+      const text = element.textContent?.trim() || "";
+      const style = window.getComputedStyle(element);
+      const cjk = hasCjk(text);
+
+      element.setAttribute("data-ranni-font-probe", id);
+
+      if (cjk) {
+        const probe = document.createElement("span");
+        const cjkText = Array.from(text)
+          .filter((character) => hasCjk(character))
+          .join("") || "中文";
+
+        probe.setAttribute("data-ranni-font-glyph-probe", id);
+        probe.textContent = cjkText;
+        Object.assign(probe.style, {
+          fontFamily: style.fontFamily,
+          fontSize: style.fontSize,
+          fontStretch: style.fontStretch,
+          fontStyle: style.fontStyle,
+          fontVariant: style.fontVariant,
+          fontWeight: style.fontWeight,
+          left: "-100000px",
+          letterSpacing: style.letterSpacing,
+          opacity: "0",
+          pointerEvents: "none",
+          position: "fixed",
+          top: "0",
+          whiteSpace: "nowrap",
+        });
+        probeHost.appendChild(probe);
+      }
+
+      return {
+        cjk,
+        cssFontFamily: style.fontFamily,
+        id,
+        text: text.replace(/\s+/g, " ").slice(0, 120),
+      };
+    });
+  }, slideSelector);
+
+  await page.evaluate((families) => {
+    const probeHost = document.querySelector('[data-ranni-font-probe-host="true"]');
+
+    if (!probeHost) {
+      return;
+    }
+
+    for (const [index, family] of families.entries()) {
+      const probe = document.createElement("span");
+
+      probe.setAttribute("data-ranni-compatible-font-probe", String(index));
+      probe.textContent = "中文排版 ABC 123";
+      Object.assign(probe.style, {
+        fontFamily: `"${family}", monospace`,
+        fontSize: "16px",
+        fontWeight: "400",
+        left: "-100000px",
+        opacity: "0",
+        pointerEvents: "none",
+        position: "fixed",
+        top: "0",
+        whiteSpace: "nowrap",
+      });
+      probeHost.appendChild(probe);
+    }
+  }, compatibleCjkFamilies);
+
+  const cleanup = async () => {
+    await page
+      .evaluate(() => {
+        document.querySelector('[data-ranni-font-probe-host="true"]')?.remove();
+        document.querySelectorAll("[data-ranni-font-probe]").forEach((element) => {
+          element.removeAttribute("data-ranni-font-probe");
+        });
+      })
+      .catch(() => undefined);
+  };
+
+  if (!probes.length) {
+    await cleanup();
+
+    return {
+      available: true,
+      cjkFamilies: [],
+      customFontCount: 0,
+      fallbackElements: 0,
+      families: [],
+      resolvedElements: 0,
+      totalElements: 0,
+    };
+  }
+
+  let cdp;
+
+  try {
+    cdp = await page.context().newCDPSession(page);
+    await cdp.send("DOM.enable");
+    await cdp.send("CSS.enable");
+    const { root } = await cdp.send("DOM.getDocument");
+    const resolved = [];
+    const availableCompatibleFonts = [];
+
+    for (const [index, configuredFamily] of compatibleCjkFamilies.entries()) {
+      const { nodeId } = await cdp.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: `[data-ranni-compatible-font-probe="${index}"]`,
+      });
+
+      if (!nodeId) {
+        continue;
+      }
+
+      const response = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+      const selected = [...(response.fonts || [])].sort((left, right) => right.glyphCount - left.glyphCount)[0];
+      const configuredName = configuredFamily.toLowerCase().replace(/\s+/g, "");
+      const actualName = selected?.familyName?.toLowerCase().replace(/\s+/g, "") || "";
+
+      if (!selected?.familyName || !(actualName.includes(configuredName) || configuredName.includes(actualName))) {
+        continue;
+      }
+
+      availableCompatibleFonts.push({
+        custom: Boolean(selected.isCustomFont),
+        family: selected.isCustomFont ? configuredFamily : selected.familyName,
+      });
+    }
+
+    for (const probe of probes) {
+      const probeSelector = probe.cjk
+        ? `[data-ranni-font-glyph-probe="${probe.id}"]`
+        : `[data-ranni-font-probe="${probe.id}"]`;
+      const { nodeId } = await cdp.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: probeSelector,
+      });
+
+      if (!nodeId) {
+        continue;
+      }
+
+      const response = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+      const fonts = [...(response.fonts || [])].sort((left, right) => right.glyphCount - left.glyphCount);
+      const selected = fonts[0];
+
+      if (!selected?.familyName) {
+        continue;
+      }
+
+      const configuredFirstFamily = probe.cssFontFamily.split(",")[0]?.replace(/["']/g, "").trim() || "";
+
+      resolved.push({
+        actualFamily: selected.familyName,
+        cjk: probe.cjk,
+        configuredFirstFamily,
+        custom: Boolean(selected.isCustomFont),
+        glyphCount: selected.glyphCount,
+        id: probe.id,
+        text: probe.text,
+      });
+    }
+
+    const customCjkEntry = resolved.find((entry) => entry.cjk && entry.custom);
+    const preferredCjkFont = customCjkEntry
+      ? { custom: true, family: customCjkEntry.configuredFirstFamily || customCjkEntry.actualFamily }
+      : availableCompatibleFonts[0];
+    const deckHasCjk = resolved.some((entry) => entry.cjk);
+
+    for (const entry of resolved) {
+      if (entry.custom && entry.configuredFirstFamily) {
+        entry.exportFamily = entry.configuredFirstFamily;
+        entry.exportCustom = true;
+      } else {
+        entry.exportFamily = entry.cjk && preferredCjkFont ? preferredCjkFont.family : entry.actualFamily;
+        entry.exportCustom = entry.cjk && preferredCjkFont ? preferredCjkFont.custom : entry.custom;
+      }
+    }
+
+    if (apply && resolved.length) {
+      await page.evaluate((entries) => {
+        for (const entry of entries) {
+          const element = document.querySelector(`[data-ranni-font-probe="${entry.id}"]`);
+
+          if (!element) {
+            continue;
+          }
+
+          const escapedFamily = entry.exportFamily.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+          element.style.setProperty("font-family", `"${escapedFamily}"`, "important");
+          element.setAttribute("data-ranni-resolved-font", entry.exportFamily);
+        }
+      }, resolved);
+    }
+
+    const familyMap = new Map();
+    const actualFamilyMap = new Map();
+
+    for (const entry of resolved) {
+      const current = familyMap.get(entry.exportFamily) || {
+        cjkElements: 0,
+        custom: entry.exportCustom,
+        elements: 0,
+        family: entry.exportFamily,
+      };
+
+      current.elements += 1;
+      current.cjkElements += entry.cjk ? 1 : 0;
+      current.custom ||= entry.exportCustom;
+      familyMap.set(entry.exportFamily, current);
+      actualFamilyMap.set(entry.actualFamily, (actualFamilyMap.get(entry.actualFamily) || 0) + 1);
+    }
+
+    const families = Array.from(familyMap.values()).sort((left, right) => right.elements - left.elements);
+    const dominantFamily = families[0]?.family;
+
+    return {
+      available: true,
+      actualFamilies: Array.from(actualFamilyMap, ([family, elements]) => ({ elements, family })).sort(
+        (left, right) => right.elements - left.elements,
+      ),
+      cjkFamilies: deckHasCjk && preferredCjkFont ? [preferredCjkFont.family] : [],
+      customFontCount: resolved.filter((entry) => entry.exportCustom).length,
+      dominantFamily,
+      fallbackElements: resolved.filter(
+        (entry) => !entry.custom && entry.configuredFirstFamily.toLowerCase() !== entry.actualFamily.toLowerCase(),
+      ).length,
+      families,
+      preferredCjkFamily: preferredCjkFont?.family,
+      resolvedElements: resolved.length,
+      totalElements: probes.length,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      cjkFamilies: [],
+      customFontCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+      fallbackElements: 0,
+      families: [],
+      resolvedElements: 0,
+      totalElements: probes.length,
+    };
+  } finally {
+    await cdp?.detach().catch(() => undefined);
+    await cleanup();
+  }
+}
+
 async function inlineLocalImagesForDomToPptx(browserContext, htmlAbsolutePath, workspaceRoot) {
   const page = await openSlideHtml(browserContext, htmlAbsolutePath);
 
@@ -303,35 +1345,35 @@ async function collectSourceDesignWarnings(htmlAbsolutePath, workspaceRoot) {
 
   if (/\bpadding-bottom\s*:/i.test(css)) {
     warnings.push({
-      message: "设计规范禁止在主要内容流中使用 padding-bottom。",
+      message: "主要内容流使用了 padding-bottom，请确认没有改变 PPTX 高度测量。",
       type: "design-padding-bottom",
     });
   }
 
   if (/@keyframes\b|\banimation(?:-[a-z]+)?\s*:/i.test(css)) {
     warnings.push({
-      message: "设计规范禁止 CSS 动画和 @keyframes。",
+      message: "检测到 CSS 动画或 @keyframes，请确认最终静态状态可稳定导出。",
       type: "design-animation",
     });
   }
 
   if (/\btransition(?:-[a-z]+)?\s*:/i.test(css)) {
     warnings.push({
-      message: "设计规范禁止 transition。",
+      message: "检测到 transition，请确认最终静态状态可稳定导出。",
       type: "design-transition",
     });
   }
 
   if (/:hover\b/i.test(css)) {
     warnings.push({
-      message: "设计规范禁止 :hover 伪类。",
+      message: "检测到 :hover，请确认关键信息不依赖交互状态。",
       type: "design-hover",
     });
   }
 
   if (/\bbox-shadow\s*:/i.test(css)) {
     warnings.push({
-      message: "设计规范禁止使用卡片阴影，避免网页 UI 感和 PPTX 映射偏差。",
+      message: "检测到卡片阴影，请确认视觉效果和 PPTX 映射结果符合预期。",
       type: "design-box-shadow",
     });
   }
@@ -345,7 +1387,7 @@ async function collectSourceDesignWarnings(htmlAbsolutePath, workspaceRoot) {
 
   if (injectedTextValues.length) {
     warnings.push({
-      message: "设计规范禁止用 CSS 伪元素 content 注入关键文字。",
+      message: "检测到 CSS 伪元素文字，请确认关键信息仍以可编辑 DOM 文本保留。",
       type: "design-pseudo-content-text",
     });
   }
@@ -357,7 +1399,7 @@ async function collectSourceDesignWarnings(htmlAbsolutePath, workspaceRoot) {
 
   if (largeRadius) {
     warnings.push({
-      message: `设计规范要求 UI 圆角不超过 8px，检测到 ${largeRadius}。`,
+      message: `检测到较大圆角 ${largeRadius}，请确认视觉风格符合当前 deck。`,
       type: "design-large-radius",
     });
   }
@@ -368,7 +1410,7 @@ async function collectSourceDesignWarnings(htmlAbsolutePath, workspaceRoot) {
 
   if (fontFamilyCount > 2) {
     warnings.push({
-      message: `设计规范要求每套 deck 最多使用 2 种字体，检测到 ${fontFamilyCount} 种 font-family 声明。`,
+      message: `检测到 ${fontFamilyCount} 种 font-family 声明，请确认字体系统保持一致。`,
       type: "design-too-many-fonts",
     });
   }
@@ -429,7 +1471,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
         if (absoluteTextCount) {
           warnings.push({
-            message: `设计规范禁止主内容文本使用绝对定位，检测到 ${absoluteTextCount} 个文本节点。`,
+            message: `检测到 ${absoluteTextCount} 个绝对定位文本节点，请确认其位置和 PPTX 映射稳定。`,
             slideId,
             type: "design-main-text-absolute",
           });
@@ -441,7 +1483,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
         if (denseParagraphs) {
           warnings.push({
-            message: `设计规范要求长文本提炼为列表或小标题块，检测到 ${denseParagraphs} 个过长段落。`,
+            message: `检测到 ${denseParagraphs} 个较长段落，请确认页面仍易于扫读。`,
             slideId,
             type: "design-long-paragraph",
           });
@@ -453,7 +1495,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
         if (paragraphCount > 3) {
           warnings.push({
-            message: `设计规范要求每页正文段落不超过 3 段，检测到 ${paragraphCount} 段。`,
+            message: `检测到 ${paragraphCount} 段正文，请确认页面密度符合叙事任务。`,
             slideId,
             type: "design-too-many-paragraphs",
           });
@@ -472,7 +1514,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
         if (lowLineHeightCount) {
           warnings.push({
-            message: `设计规范要求正文 line-height 接近 1.5 到 1.6，检测到 ${lowLineHeightCount} 个文本节点行高偏紧。`,
+            message: `检测到 ${lowLineHeightCount} 个正文节点行高偏紧，请确认阅读舒适度。`,
             slideId,
             type: "design-tight-line-height",
           });
@@ -485,7 +1527,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
           if (fontSize < 30 || fontSize > 36) {
             warnings.push({
-              message: `设计规范要求内容页标题约 32px，当前为 ${fontSize}px。`,
+              message: `内容页标题当前为 ${fontSize}px，请确认字号层级清晰。`,
               slideId,
               type: "design-content-heading-size",
             });
@@ -506,7 +1548,7 @@ async function collectRuntimeDesignWarnings(browserContext, htmlAbsolutePath, sl
 
         if (deepEditableCount) {
           warnings.push({
-            message: `设计规范要求 DOM 结构扁平，检测到 ${deepEditableCount} 个关键文本节点嵌套过深。`,
+            message: `检测到 ${deepEditableCount} 个关键文本节点嵌套较深，请确认 PPTX 映射稳定。`,
             slideId,
             type: "design-deep-text-nesting",
           });
@@ -560,6 +1602,7 @@ export async function collectHtmlMeasurements(browserContext, htmlAbsolutePath, 
   const page = await openSlideHtml(browserContext, htmlAbsolutePath);
 
   try {
+    const portableFont = await installPortableCjkFont(page, slideSelector);
     const measured = await page.evaluate(
       ({ expectedHeight, expectedWidth, selector }) => {
         const warnings = [];
@@ -597,14 +1640,6 @@ export async function collectHtmlMeasurements(browserContext, htmlAbsolutePath, 
             });
           }
 
-          if (slide.scrollWidth > slide.clientWidth || slide.scrollHeight > slide.clientHeight) {
-            warnings.push({
-              message: "slide 内部出现滚动尺寸，导出可能裁切。",
-              slideId: id,
-              type: "slide-overflow",
-            });
-          }
-
           return {
             height,
             id,
@@ -635,7 +1670,13 @@ export async function collectHtmlMeasurements(browserContext, htmlAbsolutePath, 
         selector: slideSelector,
       },
     );
+    const slideDiagnostics = await collectSlideDiagnostics(page, slideSelector);
+    const textLayout = await collectTextLayoutDiagnostics(page, slideSelector);
+    const platformFonts = await resolvePlatformFontsForPage(page, slideSelector);
     const designWarnings = await collectDesignGuidelineWarnings(browserContext, htmlAbsolutePath, slideSelector, workspaceRoot);
+
+    textLayout.platformFonts = platformFonts;
+    textLayout.portableFont = summarizePortableFont(portableFont);
 
     return {
       editableElements: measured.editableElements,
@@ -647,7 +1688,9 @@ export async function collectHtmlMeasurements(browserContext, htmlAbsolutePath, 
       slides: measured.slideMeasurements,
       slideWidth: SLIDE_WIDTH_PX,
       sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
-      warnings: [...measured.warnings, ...designWarnings],
+      textLayout,
+      slideDiagnostics,
+      warnings: [...measured.warnings, ...slideDiagnostics.issues, ...designWarnings],
     };
   } finally {
     await page.close();
@@ -667,6 +1710,8 @@ export async function prepareSlideHtmlForPptx(args) {
 
   try {
     const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+    const portableFont = await installPortableCjkFont(page, slideSelector);
+    const slideDiagnostics = await collectSlideDiagnostics(page, slideSelector);
     const state = await page.evaluate(
       ({ expectedHeight, expectedWidth, selector }) => {
         const warnings = [];
@@ -701,14 +1746,6 @@ export async function prepareSlideHtmlForPptx(args) {
               message: `slide 尺寸为 ${width}x${height}，预期为 ${expectedWidth}x${expectedHeight}。`,
               slideId: id,
               type: "slide-size-mismatch",
-            });
-          }
-
-          if (slide.scrollWidth > slide.clientWidth || slide.scrollHeight > slide.clientHeight) {
-            warnings.push({
-              message: "slide 内部出现滚动尺寸，导出可能裁切。",
-              slideId: id,
-              type: "slide-overflow",
             });
           }
 
@@ -787,8 +1824,13 @@ export async function prepareSlideHtmlForPptx(args) {
         selector: slideSelector,
       },
     );
+    const textLayout = await collectTextLayoutDiagnostics(page, slideSelector);
+    const platformFonts = await resolvePlatformFontsForPage(page, slideSelector);
     const designWarnings = await collectDesignGuidelineWarnings(browserContext, htmlAbsolutePath, slideSelector, workspaceRoot);
-    const warnings = [...state.warnings, ...designWarnings];
+
+    textLayout.platformFonts = platformFonts;
+    textLayout.portableFont = summarizePortableFont(portableFont);
+    const warnings = [...state.warnings, ...slideDiagnostics.issues, ...designWarnings];
     const replacements = [];
 
     await fs.mkdir(fallbackAssetsDirectory, { recursive: true });
@@ -874,6 +1916,7 @@ export async function prepareSlideHtmlForPptx(args) {
       },
     );
 
+    await removePortableCjkFont(page);
     const preparedHtml = await page.content();
     const measurements = {
       editableElements: state.editableElements,
@@ -892,10 +1935,12 @@ export async function prepareSlideHtmlForPptx(args) {
         zIndex: replacement.zIndex,
       })),
       slideHeight: SLIDE_HEIGHT_PX,
+      slideDiagnostics,
       slideSelector,
       slides: state.slideMeasurements,
       slideWidth: SLIDE_WIDTH_PX,
       sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
+      textLayout,
       warnings,
     };
 
@@ -905,9 +1950,12 @@ export async function prepareSlideHtmlForPptx(args) {
     await page.close();
 
     return {
+      diagnostics: slideDiagnostics,
       measurementsPath: toWorkspaceRelative(measurementsAbsolutePath, workspaceRoot),
       outHtml: toWorkspaceRelative(outHtmlAbsolutePath, workspaceRoot),
+      errors: slideDiagnostics.errors.length,
       rasterFallbacks: replacements.length,
+      textLayoutRisks: textLayout.riskCount,
       warnings: warnings.length,
     };
   } finally {
@@ -965,16 +2013,30 @@ export async function exportHtmlToPptx(args) {
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
-        consoleErrors.push(message.text());
+        const text = message.text();
+        const selfFileOriginMatch = text.match(/^Unsafe attempt to load URL (file:.+?) from frame with URL (file:.+?)\. 'file:'/s);
+
+        if (selfFileOriginMatch?.[1] === selfFileOriginMatch?.[2]) {
+          return;
+        }
+
+        const location = message.location();
+        const source = location.url ? ` (${location.url}:${location.lineNumber}:${location.columnNumber})` : "";
+
+        consoleErrors.push(`${text}${source}`);
       }
     });
 
+    const portableFont = await installPortableCjkFont(page, slideSelector);
+    const fontResolution = await resolvePlatformFontsForPage(page, slideSelector, { apply: true });
+    const textStabilization = await collectTextLayoutDiagnostics(page, slideSelector, { stabilize: true });
+    const autoEmbedFonts = fontResolution.available && fontResolution.customFontCount > 0;
     const bundlePath = resolveDomToPptxBundlePath();
 
     await page.addScriptTag({ path: bundlePath });
 
     const bytes = await page.evaluate(
-      async ({ author: deckAuthor, height, selector, title: deckTitle, width }) => {
+      async ({ author: deckAuthor, autoEmbedFonts: embedFonts, fonts, height, selector, title: deckTitle, width }) => {
         const api = window.domToPptx;
 
         if (!api?.exportToPptx) {
@@ -989,8 +2051,9 @@ export async function exportHtmlToPptx(args) {
 
         const blob = await api.exportToPptx(slideElements, {
           author: deckAuthor,
-          autoEmbedFonts: false,
+          autoEmbedFonts: embedFonts,
           fileName: "deck.pptx",
+          fonts,
           height,
           layout: "LAYOUT_WIDE",
           skipDownload: true,
@@ -1004,6 +2067,8 @@ export async function exportHtmlToPptx(args) {
       },
       {
         author,
+        autoEmbedFonts,
+        fonts: portableFont.fonts,
         height: SLIDE_HEIGHT_IN,
         selector: slideSelector,
         title,
@@ -1017,10 +2082,16 @@ export async function exportHtmlToPptx(args) {
 
     return {
       consoleErrors,
+      fontResolution: {
+        ...fontResolution,
+        autoEmbedFonts,
+      },
       html: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
       inlined,
       outPptx: toWorkspaceRelative(outPptxAbsolutePath, workspaceRoot),
       pageErrors,
+      portableFont: summarizePortableFont(portableFont),
+      textStabilization,
     };
   } finally {
     await closeBrowser(browser, browserContext);
@@ -1034,6 +2105,7 @@ export async function renderHtmlPreviews(htmlAbsolutePath, previewDirectory, sli
 
   try {
     const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+    await installPortableCjkFont(page, slideSelector);
     const slideIds = await page.evaluate((selector) => {
       return Array.from(document.querySelectorAll(selector)).map((slide, index) => slide.dataset.slideId || `slide-${index + 1}`);
     }, slideSelector);
@@ -1069,6 +2141,13 @@ export async function inspectPptxFile(pptxAbsolutePath) {
   let mediaBytes = 0;
   let textRuns = 0;
   let pictureCount = 0;
+  let textBoxes = 0;
+  let wrapNoneTextBoxes = 0;
+  let wrapSquareTextBoxes = 0;
+  let autoFitTextBoxes = 0;
+  const typefaceCounts = new Map();
+  const cjkTypefaceCounts = new Map();
+  const shortWrapSquareTextBoxes = [];
 
   for (const mediaFile of mediaFiles) {
     const content = await zip.file(mediaFile)?.async("uint8array");
@@ -1085,14 +2164,100 @@ export async function inspectPptxFile(pptxAbsolutePath) {
 
     textRuns += xml.match(/<a:t>/g)?.length ?? 0;
     pictureCount += xml.match(/<p:pic>/g)?.length ?? 0;
+
+    for (const match of xml.matchAll(/<a:(?:latin|ea|cs)\s+typeface="([^"]+)"/g)) {
+      const family = match[1];
+
+      typefaceCounts.set(family, (typefaceCounts.get(family) || 0) + 1);
+    }
+
+    for (const run of xml.matchAll(/<a:r>.*?<\/a:r>/gs)) {
+      const text = Array.from(run[0].matchAll(/<a:t>(.*?)<\/a:t>/gs))
+        .map((textMatch) => textMatch[1])
+        .join("");
+
+      if (!/[\u2e80-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(text)) {
+        continue;
+      }
+
+      const eastAsiaTypeface = run[0].match(/<a:ea\s+typeface="([^"]+)"/)?.[1];
+
+      if (eastAsiaTypeface) {
+        cjkTypefaceCounts.set(eastAsiaTypeface, (cjkTypefaceCounts.get(eastAsiaTypeface) || 0) + 1);
+      }
+    }
+
+    for (const shape of xml.matchAll(/<p:sp>.*?<\/p:sp>/gs)) {
+      if (!shape[0].includes("<p:txBody>")) {
+        continue;
+      }
+
+      textBoxes += 1;
+      const bodyProperties = shape[0].match(/<a:bodyPr([^>]*)>/)?.[1] || "";
+      const wrap = bodyProperties.match(/\bwrap="([^"]+)"/)?.[1] || "default";
+
+      if (wrap === "none") {
+        wrapNoneTextBoxes += 1;
+      }
+
+      if (wrap === "square") {
+        wrapSquareTextBoxes += 1;
+      }
+
+      if (shape[0].includes("<a:spAutoFit/>")) {
+        autoFitTextBoxes += 1;
+      }
+
+      const text = Array.from(shape[0].matchAll(/<a:t>(.*?)<\/a:t>/gs))
+        .map((textMatch) => textMatch[1])
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (wrap === "square" && text && text.length <= 40) {
+        const widthEmu = Number(shape[0].match(/<a:ext cx="(\d+)" cy="\d+"/)?.[1] || 0);
+
+        shortWrapSquareTextBoxes.push({
+          slide: Number(slideFile.match(/slide(\d+)\.xml$/)?.[1] || 0),
+          text: text.slice(0, 120),
+          widthPx: Math.round((widthEmu / (EMU_PER_INCH / CSS_PX_PER_INCH)) * 1000) / 1000,
+        });
+      }
+    }
   }
 
+  const presentationXml = await zip.file("ppt/presentation.xml")?.async("string");
+  const slideSizeMatch = presentationXml?.match(/<p:sldSz\s+cx="(\d+)"\s+cy="(\d+)"/);
+  const slideSize = slideSizeMatch
+    ? {
+        cx: Number(slideSizeMatch[1]),
+        cy: Number(slideSizeMatch[2]),
+        expectedCx: Math.round(SLIDE_WIDTH_IN * EMU_PER_INCH),
+        expectedCy: Math.round(SLIDE_HEIGHT_IN * EMU_PER_INCH),
+      }
+    : undefined;
+  const fontFiles = Object.keys(zip.files).filter((fileName) => /^ppt\/fonts\/.+/.test(fileName) && !zip.files[fileName]?.dir);
+  const toCountList = (counts) =>
+    Array.from(counts, ([family, count]) => ({ count, family })).sort((left, right) => right.count - left.count);
+
   return {
+    autoFitTextBoxes,
+    cjkTypefaces: toCountList(cjkTypefaceCounts),
+    embeddedFonts: {
+      files: fontFiles.length,
+      listed: Boolean(presentationXml?.includes("<p:embeddedFontLst")),
+    },
     mediaBytes,
     mediaFiles: mediaFiles.length,
     pictureCount,
+    shortWrapSquareTextBoxes,
+    slideSize,
     slideFiles: slideFiles.length,
+    textBoxes,
     textRuns,
+    typefaces: toCountList(typefaceCounts),
+    wrapNoneTextBoxes,
+    wrapSquareTextBoxes,
   };
 }
 
@@ -1418,7 +2583,7 @@ function absoluteFromWorkspaceRelative(workspaceRoot, relativePath) {
 export async function collectVisualSmoke(htmlPreviews, pptxPreview, workspaceRoot) {
   const warnings = [];
   const htmlPngs = htmlPreviews.filter((filePath) => filePath.endsWith(".png"));
-  const pptxPngs = pptxPreview.files.filter((filePath) => /preview-pptx\/slide-\d+\.png$/.test(filePath));
+  const pptxPngs = pptxPreview.files.filter((filePath) => /(?:^|\/)slide-\d+\.png$/.test(filePath));
 
   if (pptxPreview.status !== "rendered") {
     return {
@@ -1503,10 +2668,32 @@ export async function validateHtmlPptxExport(args) {
   } = args;
   const { browser, browserContext } = await launchHtmlPptxBrowser();
   let measurements = await readMeasurements(measurementsAbsolutePath);
+  let slideDiagnostics;
 
   try {
     if (!measurements) {
       measurements = await collectHtmlMeasurements(browserContext, htmlAbsolutePath, slideSelector, workspaceRoot, preparedHtmlAbsolutePath);
+    } else if (!measurements.textLayout) {
+      const page = await openSlideHtml(browserContext, htmlAbsolutePath);
+
+      try {
+        const portableFont = await installPortableCjkFont(page, slideSelector);
+        const textLayout = await collectTextLayoutDiagnostics(page, slideSelector);
+
+        textLayout.platformFonts = await resolvePlatformFontsForPage(page, slideSelector);
+        textLayout.portableFont = summarizePortableFont(portableFont);
+        measurements.textLayout = textLayout;
+      } finally {
+        await page.close();
+      }
+    }
+
+    const diagnosticsPage = await openSlideHtml(browserContext, htmlAbsolutePath);
+
+    try {
+      slideDiagnostics = await collectSlideDiagnostics(diagnosticsPage, slideSelector);
+    } finally {
+      await diagnosticsPage.close();
     }
   } finally {
     await closeBrowser(browser, browserContext);
@@ -1537,7 +2724,66 @@ export async function validateHtmlPptxExport(args) {
     ],
   }));
 
-  const warnings = [...(measurements?.warnings ?? []), ...pptxPreview.warnings, ...visualSmoke.warnings];
+  const measurementWarnings = (measurements?.warnings ?? []).filter(
+    (warning) => warning.category !== "slide-diagnostic",
+  );
+  const warnings = [
+    ...measurementWarnings,
+    ...(slideDiagnostics?.issues ?? []),
+    ...pptxPreview.warnings,
+    ...visualSmoke.warnings,
+  ];
+  const portableFont = measurements.textLayout?.portableFont;
+
+  if (portableFont?.available === false) {
+    warnings.push({
+      message: `可移植 CJK 字体加载失败：${portableFont.error || "unknown error"}`,
+      type: "portable-cjk-font-unavailable",
+    });
+  }
+
+  const expectedSlideCx = Math.round(SLIDE_WIDTH_IN * EMU_PER_INCH);
+  const expectedSlideCy = Math.round(SLIDE_HEIGHT_IN * EMU_PER_INCH);
+  const actualSlideSize = pptxInspection.slideSize;
+
+  if (!actualSlideSize || actualSlideSize.cx !== expectedSlideCx || actualSlideSize.cy !== expectedSlideCy) {
+    warnings.push({
+      message: `PPTX 画布尺寸为 ${actualSlideSize?.cx ?? "unknown"}x${actualSlideSize?.cy ?? "unknown"} EMU，预期为 ${expectedSlideCx}x${expectedSlideCy} EMU。`,
+      type: "pptx-slide-size-mismatch",
+    });
+  }
+
+  const sourceTextRisks = Number(measurements.textLayout?.riskCount || 0);
+  const minimumExpectedNoWrap = sourceTextRisks ? Math.max(1, Math.ceil(sourceTextRisks * 0.8)) : 0;
+
+  if (minimumExpectedNoWrap && pptxInspection.wrapNoneTextBoxes < minimumExpectedNoWrap) {
+    warnings.push({
+      message: `检测到 ${sourceTextRisks} 个单行文本稳定化候选，但 PPTX 仅有 ${pptxInspection.wrapNoneTextBoxes} 个禁止自动换行文本框。`,
+      type: "text-wrap-stabilization-missing",
+    });
+  }
+
+  const expectedCjkFamilies = measurements.textLayout?.platformFonts?.cjkFamilies || [];
+  const actualCjkFamilies = new Set(pptxInspection.cjkTypefaces.map((entry) => entry.family.toLowerCase()));
+  const missingCjkFamilies = expectedCjkFamilies.filter((family) => !actualCjkFamilies.has(family.toLowerCase()));
+
+  if (missingCjkFamilies.length) {
+    warnings.push({
+      message: `PPTX 东亚字体没有保留 Chromium 实际字体：${missingCjkFamilies.join(", ")}。`,
+      type: "pptx-font-mapping-drift",
+    });
+  }
+
+  if (
+    Number(measurements.textLayout?.platformFonts?.customFontCount || 0) > 0 &&
+    !pptxInspection.embeddedFonts.listed &&
+    pptxInspection.embeddedFonts.files === 0
+  ) {
+    warnings.push({
+      message: "HTML 使用了自定义 Web 字体，但 PPTX 中未检测到嵌入字体。",
+      type: "pptx-font-embedding-missing",
+    });
+  }
 
   if (pptxInspection.slideFiles !== measurements.slides.length) {
     warnings.push({
@@ -1579,12 +2825,32 @@ export async function validateHtmlPptxExport(args) {
     pptxInspection,
     pptxPreview,
     rasterFallbacks: measurements.rasterFallbacks.length,
-    schema: "ranni.html-to-pptx.qa.v1",
+    schema: "ranni.html-to-pptx.qa.v2",
+    slideDiagnostics,
     slideHeight: SLIDE_HEIGHT_PX,
     slideSelector,
     slides: measurements.slides.length,
     slideWidth: SLIDE_WIDTH_PX,
     sourceHtml: toWorkspaceRelative(htmlAbsolutePath, workspaceRoot),
+    textLayout: {
+      output: {
+        cjkTypefaces: pptxInspection.cjkTypefaces,
+        shortWrapSquareTextBoxes: pptxInspection.shortWrapSquareTextBoxes,
+        wrapNoneTextBoxes: pptxInspection.wrapNoneTextBoxes,
+        wrapSquareTextBoxes: pptxInspection.wrapSquareTextBoxes,
+      },
+      source: measurements.textLayout,
+      status: warnings.some((warning) =>
+        [
+          "portable-cjk-font-unavailable",
+          "pptx-font-embedding-missing",
+          "pptx-font-mapping-drift",
+          "text-wrap-stabilization-missing",
+        ].includes(warning.type),
+      )
+        ? "warning"
+        : "passed",
+    },
     visualSmoke,
     warnings,
   };
@@ -1593,7 +2859,9 @@ export async function validateHtmlPptxExport(args) {
   await fs.writeFile(qaReportAbsolutePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
   return {
+    diagnostics: slideDiagnostics,
     editableElements: report.editableElements,
+    errors: slideDiagnostics?.errors.length ?? 0,
     qaReport: toWorkspaceRelative(qaReportAbsolutePath, workspaceRoot),
     rasterFallbacks: report.rasterFallbacks,
     slides: report.slides,

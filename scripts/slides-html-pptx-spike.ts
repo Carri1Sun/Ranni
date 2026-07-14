@@ -179,9 +179,22 @@ async function verifyE2EArtifacts(
     generatedPptxPath: string;
     htmlPreviewPaths: string[];
     pptxInspection: {
+      cjkTypefaces: Array<{
+        count: number;
+        family: string;
+      }>;
+      embeddedFonts: {
+        files: number;
+        listed: boolean;
+      };
       pictureCount: number;
+      slideSize?: {
+        cx: number;
+        cy: number;
+      };
       slideFiles: number;
       textRuns: number;
+      wrapNoneTextBoxes: number;
     };
     pptxPreview: {
       files: string[];
@@ -189,6 +202,9 @@ async function verifyE2EArtifacts(
     };
     rasterFallbacks: number;
     slides: number;
+    textLayout?: {
+      status: string;
+    };
     visualSmoke?: {
       available: boolean;
       slides: Array<{
@@ -236,6 +252,27 @@ async function verifyE2EArtifacts(
   assertCondition(
     qa.pptxInspection.textRuns > 0,
     "PPTX 中未检测到可编辑文本 run。",
+  );
+  assertCondition(
+    qa.pptxInspection.slideSize?.cx === 12_192_000 &&
+      qa.pptxInspection.slideSize?.cy === 6_858_000,
+    `PPTX 画布尺寸不精确：${JSON.stringify(qa.pptxInspection.slideSize)}`,
+  );
+  assertCondition(
+    qa.textLayout?.status === "passed",
+    `文本稳定性检查未通过：${JSON.stringify(qa.textLayout)}`,
+  );
+  assertCondition(
+    qa.pptxInspection.cjkTypefaces.some((entry) => entry.family === "Noto Sans SC"),
+    `PPTX 未记录 Noto Sans SC 字体映射：${JSON.stringify(qa.pptxInspection.cjkTypefaces)}`,
+  );
+  assertCondition(
+    qa.pptxInspection.embeddedFonts.listed && qa.pptxInspection.embeddedFonts.files > 0,
+    `PPTX 未嵌入 CJK 字体：${JSON.stringify(qa.pptxInspection.embeddedFonts)}`,
+  );
+  assertCondition(
+    qa.pptxInspection.wrapNoneTextBoxes > 0,
+    "PPTX 未生成禁止自动换行的原子文本框。",
   );
   assertCondition(
     qa.pptxInspection.pictureCount >= qa.rasterFallbacks,

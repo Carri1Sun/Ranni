@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-sc": "^5.2.10",
     "@mozilla/readability": "^0.6.0",
     "cheerio": "^1.1.2",
     "dom-to-pptx": "^2.0.3",
