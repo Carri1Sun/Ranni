@@ -1,6 +1,7 @@
 import type {
   CreateAgentMessageOptions,
   AgentMessage,
+  AgentProvider,
   AgentToolDefinition,
   ModelConnectionConfig,
 } from "./types";
@@ -9,10 +10,13 @@ import { deepseekOpenAIProvider } from "./providers/deepseek-openai";
 import { minimaxTokenPlanProvider } from "./providers/minimax-token-plan";
 import { openAIProvider } from "./providers/openai";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
+import { chatGPTSubscriptionProvider } from "./providers/chatgpt-subscription";
 
 const DEFAULT_PROVIDER = "deepseek";
 
 const providers = {
+  "chatgpt-subscription": chatGPTSubscriptionProvider,
+  "chatgpt-subscription-local": chatGPTSubscriptionProvider,
   custom: customOpenAIProvider,
   "custom-openai": customOpenAIProvider,
   "custom-openai-compatible": customOpenAIProvider,
@@ -30,7 +34,7 @@ const providers = {
   "qwen-openai-compatible": qwenOpenAIProvider,
 } as const;
 
-function resolveProvider(modelConfig?: ModelConnectionConfig) {
+function resolveProvider(modelConfig?: ModelConnectionConfig): AgentProvider {
   const requested =
     modelConfig?.provider?.trim() || process.env.LLM_PROVIDER?.trim() || DEFAULT_PROVIDER;
 
@@ -43,8 +47,11 @@ export type {
   AgentToolDefinition,
   AgentToolUseBlock,
   AgentToolResultBlock,
+  ModelCatalog,
   ModelConnectionConfig,
   ModelConnectionTestResult,
+  ModelOption,
+  ReasoningEffort,
 } from "./types";
 
 export function hasModelApiKey(modelConfig?: ModelConnectionConfig) {
@@ -80,4 +87,14 @@ export function createMessage(options: CreateAgentMessageOptions) {
 
 export function testModelConnection(modelConfig?: ModelConnectionConfig) {
   return resolveProvider(modelConfig).testConnection(modelConfig);
+}
+
+export function listProviderModels(modelConfig?: ModelConnectionConfig) {
+  const provider = resolveProvider(modelConfig);
+
+  if (!provider.listModels) {
+    throw new Error("当前 Provider 不支持动态模型目录。");
+  }
+
+  return provider.listModels(modelConfig);
 }

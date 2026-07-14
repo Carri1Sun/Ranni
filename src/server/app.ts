@@ -19,6 +19,7 @@ import {
   createMessage,
   getModelRuntimeInfo,
   hasModelApiKey,
+  listProviderModels,
   testModelConnection,
 } from "../../lib/llm";
 import {
@@ -58,6 +59,9 @@ const modelSettingsSchema = z
     model: optionalSecretSchema,
     provider: optionalSecretSchema,
     qwenApiKey: optionalSecretSchema,
+    reasoningEffort: z
+      .enum(["none", "low", "medium", "high", "xhigh", "max"])
+      .optional(),
   })
   .transform((settings) => ({
     apiKey:
@@ -71,6 +75,7 @@ const modelSettingsSchema = z
     model: settings.model,
     provider: settings.provider,
     qwenApiKey: settings.qwenApiKey,
+    reasoningEffort: settings.reasoningEffort,
   }));
 
 const toolSettingsSchema = z.object({
@@ -1211,6 +1216,35 @@ export function createServerApp() {
         error: message,
         ok: false,
       });
+    }
+  });
+
+  app.post("/api/model/catalog", async (request, response) => {
+    let payload: z.infer<typeof testModelSchema>;
+
+    try {
+      payload = testModelSchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message, ok: false });
+      return;
+    }
+
+    try {
+      const result = await listProviderModels(payload.modelSettings);
+      response.json({
+        ok: true,
+        result: {
+          ...result,
+          runtime: getModelRuntimeInfo(payload.modelSettings),
+        },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "模型目录读取失败。";
+      response.status(502).json({ error: message, ok: false });
     }
   });
 

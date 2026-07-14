@@ -455,6 +455,17 @@ OpenAI 官方 API 配置：
 - 使用 `max_completion_tokens` 控制输出上限。
 - 环境变量覆盖项为 `OPENAI_MODEL` 和 `OPENAI_BASE_URL`。
 
+### `lib/llm/providers/chatgpt-subscription.ts`
+
+本机 ChatGPT 订阅配置：
+
+- 通过 `CODEX_API_PORT` 连接 CLIProxyAPI BFF，默认端口 `8790`。
+- 从 `/api/models` 读取当前 OAuth 账号的模型和 effort 目录。
+- 通过 `/api/agent` 调用 Responses API 语义的 SSE、function calling 和 reasoning summary。
+- 将 thinking、正文和 function call 规范化为 Ranni 的 assistant blocks。
+- 在 `store=false` 模式下保留加密 reasoning item，并随工具结果回传给后续模型请求。
+- 无需在 Ranni 浏览器设置中保存 API Key。
+
 ### `lib/llm/providers/qwen-openai.ts`
 
 Qwen / DashScope 配置：

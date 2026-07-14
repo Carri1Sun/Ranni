@@ -175,6 +175,16 @@ Composer 固定在主区域底部。
 - 右侧 submit button 使用月光蓝 primary。
 - loading 时显示 `Ranni is working...`。
 
+### 3.6 API Settings
+
+模型 Provider 列表需要包含「ChatGPT 订阅（本机）」：
+
+- Provider 地址展示为 `127.0.0.1:$CODEX_API_PORT`。
+- 展开后自动读取本机订阅服务返回的模型目录。
+- 模型选择变化后，只展示该模型支持的 reasoning effort。
+- 此 Provider 使用本机 OAuth 服务，不展示 API Key 输入框。
+- 「测试连接」需要校验模型与 effort，并发起真实模型请求。
+
 ## 4. Implementation Plan
 
 ### Phase 1: Replace Global Design Tokens

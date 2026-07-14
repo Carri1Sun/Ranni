@@ -16,7 +16,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
 - 设置页包含账号、外观、API 设置、Debug、关于。API 设置分为 Tavily 搜索 key 和模型 provider 列表。
 - 设置页包含能力设置；输入框内的“网页 / PPTX”开关可在下一次发送时临时启用 `html` 或 `html-to-pptx` skill。
-- 模型 provider 支持 DeepSeek、OpenAI、Qwen、MiniMax 国际、MiniMax 中国、自定义 OpenAI-compatible URL。两个 MiniMax 选项均使用 Token Plan，并分别连接国际端点和中国区端点。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
+- 模型 provider 支持本机 ChatGPT 订阅、DeepSeek、OpenAI、Qwen、MiniMax 国际、MiniMax 中国、自定义 OpenAI-compatible URL。本机 ChatGPT 订阅通过 `CODEX_API_PORT` 连接 CLIProxyAPI BFF，模型和 reasoning effort 来自实时目录。两个 MiniMax 选项均使用 Token Plan，并分别连接国际端点和中国区端点。默认 provider 是 DeepSeek，默认模型是 `deepseek-v4-pro`。
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `html` 和 `html-to-pptx` skill，分别用于静态网页创作，以及通过受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
@@ -95,6 +95,9 @@ LLM_MAX_TOKENS=4096
 LLM_ENABLE_THINKING=true
 LLM_REASONING_EFFORT=high
 LLM_PRESERVE_THINKING=false
+CODEX_API_PORT=8790
+CHATGPT_SUBSCRIPTION_MODEL=gpt-5.6-terra
+CHATGPT_SUBSCRIPTION_REASONING_EFFORT=high
 MINIMAX_TOKEN_PLAN_KEY=
 MINIMAX_TOKEN_PLAN_BASE_URL=https://api.minimax.io/anthropic
 MINIMAX_TOKEN_PLAN_MODEL=MiniMax-M3
@@ -126,6 +129,10 @@ VITE_API_BASE_URL=
 | `LLM_ENABLE_THINKING` | 是否启用 thinking mode |
 | `LLM_REASONING_EFFORT` | DeepSeek reasoning effort |
 | `LLM_PRESERVE_THINKING` | provider 是否保留 thinking |
+| `CODEX_API_PORT` | 本机 ChatGPT 订阅 BFF 端口，默认 `8790`；建议由启动 shell 的全局环境提供 |
+| `CHATGPT_SUBSCRIPTION_BASE_URL` | 本机订阅 BFF 完整地址；设置后覆盖 `CODEX_API_PORT` |
+| `CHATGPT_SUBSCRIPTION_MODEL` | 本机订阅 provider 默认模型，默认 `gpt-5.6-terra` |
+| `CHATGPT_SUBSCRIPTION_REASONING_EFFORT` | 本机订阅 provider 默认 reasoning effort，默认 `high` |
 | `MINIMAX_TOKEN_PLAN_KEY` | MiniMax Token Plan Subscription Key |
 | `MINIMAX_TOKEN_PLAN_BASE_URL` | MiniMax Anthropic-compatible Token Plan 地址，默认 `https://api.minimax.io/anthropic` |
 | `MINIMAX_TOKEN_PLAN_MODEL` | MiniMax Token Plan 模型，默认 `MiniMax-M3` |
@@ -141,6 +148,15 @@ VITE_API_BASE_URL=
 也可以在左侧导航栏底部进入设置页配置 provider key、Tavily key 和 Computer use OpenAI key。浏览器内配置保存在 localStorage，适合本地个人使用。
 
 设置页提供 MiniMax 国际和 MiniMax 中国两个 Provider 选项。MiniMax 国际连接 `https://api.minimax.io/anthropic`，MiniMax 中国连接 `https://api.minimaxi.com/anthropic`，两者复用同一个 MiniMax Token Plan Key 配置。
+
+本机 ChatGPT 订阅 Provider 不需要在 Ranni 中填写 API Key。先启动 CLIProxyAPI BFF，并在启动 Ranni 的 shell 中提供相同端口：
+
+```bash
+export CODEX_API_PORT=8790
+npm run dev
+```
+
+展开「ChatGPT 订阅（本机）」后，Ranni 会读取当前 OAuth 账号的模型目录，按模型展示可用 effort，并通过连接测试发起一次真实模型请求。Agent 请求走 BFF 的 `/api/agent`，支持 Responses function calling、thinking summary 和多步工具结果回传。
 
 Computer use 走 OpenAI Responses API 的 `computer` tool，并由本机 Node 后端通过 macOS Screen Recording 和 Accessibility 权限截图、点击、滚动和输入。首次使用前需要在系统设置中允许运行 Ranni 的终端或 Node 进程进行屏幕录制和辅助功能控制。
 
@@ -191,6 +207,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
 - `POST /api/runs/:runId/abort`：中断运行中的 run。
 - `POST /api/model/test`：测试当前模型 provider 配置。
+- `POST /api/model/catalog`：读取支持动态目录的 provider 模型与 effort 列表。
 - `POST /api/tavily/test`：测试 Tavily 搜索 key。
 - `POST /api/computer-use/test`：测试 Computer use 模块的 OpenAI key 和 `computer` tool 可用性。
 

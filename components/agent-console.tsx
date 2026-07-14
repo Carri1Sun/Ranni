@@ -53,6 +53,7 @@ type ActivityType =
 type ViewMode = "chat" | "report" | "trace";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId =
+  | "chatgpt-subscription"
   | "custom"
   | "deepseek"
   | "minimax-token-plan"
@@ -152,6 +153,8 @@ type AgentConsoleProps = {
 
 type AppSettings = {
   activeSkills: string[];
+  chatgptSubscriptionModel: string;
+  chatgptSubscriptionReasoningEffort: ReasoningEffort;
   customApiKey: string;
   customBaseUrl: string;
   customModel: string;
@@ -170,6 +173,28 @@ type AppSettings = {
   tavilyApiKey: string;
   theme: ThemeMode;
 };
+
+type ReasoningEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
+type ProviderModelCatalogState =
+  | { status: "idle" | "loading" }
+  | { message: string; status: "error" }
+  | {
+      baseUrl: string;
+      defaults: { model: string; reasoningEffort: ReasoningEffort };
+      models: Array<{
+        displayName: string;
+        efforts: ReasoningEffort[];
+        id: string;
+      }>;
+      status: "success";
+    };
 
 type SkillIndex = {
   description: string;
@@ -350,6 +375,8 @@ const SETTINGS_NAV_ITEMS = [
 }>;
 const DEFAULT_SETTINGS: AppSettings = {
   activeSkills: [],
+  chatgptSubscriptionModel: "gpt-5.6-terra",
+  chatgptSubscriptionReasoningEffort: "high",
   customApiKey: "",
   customBaseUrl: "",
   customModel: "",
@@ -383,6 +410,15 @@ const PROCESS_ICON_IDS = [
   "tool",
 ] as const satisfies ProcessIconId[];
 const PROVIDER_OPTIONS = [
+  {
+    baseUrl: "CODEX_API_PORT",
+    description: "连接本机 ChatGPT/Codex OAuth 订阅服务，可选择模型和 effort。",
+    envKey: "CODEX_API_PORT",
+    id: "chatgpt-subscription",
+    label: "ChatGPT 订阅（本机）",
+    model: "gpt-5.6-terra",
+    provider: "chatgpt-subscription",
+  },
   {
     baseUrl: "https://api.deepseek.com",
     description: "默认使用 deepseek-v4-pro，只需要提供 DeepSeek API Key。",
@@ -582,11 +618,23 @@ function isMiniMaxProviderId(
 
 function isProviderId(value: unknown): value is ProviderId {
   return (
+    value === "chatgpt-subscription" ||
     value === "custom" ||
     value === "deepseek" ||
     isMiniMaxProviderId(value) ||
     value === "openai" ||
     value === "qwen"
+  );
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return (
+    value === "none" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
   );
 }
 
@@ -637,6 +685,16 @@ function sanitizeSettings(raw: unknown): AppSettings {
 
   return {
     activeSkills: sanitizeSkillNames(raw.activeSkills),
+    chatgptSubscriptionModel:
+      typeof raw.chatgptSubscriptionModel === "string" &&
+      raw.chatgptSubscriptionModel.trim()
+        ? raw.chatgptSubscriptionModel.trim()
+        : DEFAULT_SETTINGS.chatgptSubscriptionModel,
+    chatgptSubscriptionReasoningEffort: isReasoningEffort(
+      raw.chatgptSubscriptionReasoningEffort,
+    )
+      ? raw.chatgptSubscriptionReasoningEffort
+      : DEFAULT_SETTINGS.chatgptSubscriptionReasoningEffort,
     customApiKey:
       typeof raw.customApiKey === "string"
         ? raw.customApiKey.trim()
@@ -2277,6 +2335,10 @@ function getProviderApiKey(
   settings: AppSettings,
   providerId: ProviderId = settings.provider,
 ) {
+  if (providerId === "chatgpt-subscription") {
+    return "";
+  }
+
   if (providerId === "custom") {
     return settings.customApiKey.trim();
   }
@@ -2315,6 +2377,10 @@ function getProviderModel(
 ) {
   const provider = getProviderOption(providerId);
 
+  if (providerId === "chatgpt-subscription") {
+    return settings.chatgptSubscriptionModel.trim() || provider.model;
+  }
+
   if (providerId === "custom") {
     return settings.customModel.trim();
   }
@@ -2331,6 +2397,10 @@ function setProviderApiKey(
   providerId: ProviderId,
   apiKey: string,
 ) {
+  if (providerId === "chatgpt-subscription") {
+    return settings;
+  }
+
   if (providerId === "custom") {
     return {
       ...settings,
@@ -2373,9 +2443,16 @@ function buildModelSettings(
 
   return {
     apiKey: getProviderApiKey(settings, providerId),
-    baseUrl: getProviderBaseUrl(settings, providerId),
+    baseUrl:
+      providerId === "chatgpt-subscription"
+        ? undefined
+        : getProviderBaseUrl(settings, providerId),
     model: getProviderModel(settings, providerId),
     provider: provider.provider,
+    reasoningEffort:
+      providerId === "chatgpt-subscription"
+        ? settings.chatgptSubscriptionReasoningEffort
+        : undefined,
   };
 }
 
@@ -2428,6 +2505,16 @@ function getProviderValidationMessage(
 ) {
   const hasApiKey =
     Boolean(getProviderApiKey(settings, providerId)) || hasEnvironmentApiKey;
+
+  if (providerId === "chatgpt-subscription") {
+    if (!getProviderModel(settings, providerId)) {
+      return "请先选择本地 ChatGPT 订阅模型。";
+    }
+    if (!isReasoningEffort(settings.chatgptSubscriptionReasoningEffort)) {
+      return "请先选择有效的 reasoning effort。";
+    }
+    return "";
+  }
 
   if (providerId === "custom") {
     if (!getProviderBaseUrl(settings, providerId)) {
@@ -3421,6 +3508,8 @@ export function AgentConsole({
     useState<TestConnectionState>({
       status: "idle",
     });
+  const [chatgptSubscriptionCatalog, setChatgptSubscriptionCatalog] =
+    useState<ProviderModelCatalogState>({ status: "idle" });
   const [messageActionState, setMessageActionState] = useState<{
     action: "copied" | "exported";
     id: string;
@@ -3591,6 +3680,132 @@ export function AgentConsole({
       setIsHydrated(true);
     }
   }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (!isHydrated || expandedProviderId !== "chatgpt-subscription") {
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setChatgptSubscriptionCatalog({ status: "loading" });
+
+    void fetch(`${apiBaseUrl}/api/model/catalog`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        modelSettings: buildModelSettings(settings, "chatgpt-subscription"),
+      }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as {
+          error?: string;
+          ok?: boolean;
+          result?: {
+            defaults?: {
+              model?: string;
+              reasoningEffort?: ReasoningEffort;
+            };
+            models?: Array<{
+              displayName?: string;
+              efforts?: ReasoningEffort[];
+              id?: string;
+            }>;
+            runtime?: {
+              baseUrl?: string;
+            };
+          };
+        };
+        if (!response.ok || payload.ok === false) {
+          throw new Error(payload.error || "本地订阅模型目录读取失败。");
+        }
+
+        const models = (payload.result?.models ?? []).filter(
+          (
+            model,
+          ): model is {
+            displayName: string;
+            efforts: ReasoningEffort[];
+            id: string;
+          } =>
+            typeof model.id === "string" &&
+            typeof model.displayName === "string" &&
+            Array.isArray(model.efforts) &&
+            model.efforts.length > 0,
+        );
+        if (models.length === 0) {
+          throw new Error("本地订阅服务没有返回可选模型。");
+        }
+
+        const defaultModel =
+          payload.result?.defaults?.model?.trim() || models[0].id;
+        const defaultEffort = isReasoningEffort(
+          payload.result?.defaults?.reasoningEffort,
+        )
+          ? payload.result.defaults.reasoningEffort
+          : models[0].efforts[0];
+        if (!active) return;
+
+        setChatgptSubscriptionCatalog({
+          baseUrl:
+            payload.result?.runtime?.baseUrl?.trim() ||
+            "127.0.0.1:$CODEX_API_PORT",
+          defaults: {
+            model: defaultModel,
+            reasoningEffort: defaultEffort,
+          },
+          models,
+          status: "success",
+        });
+        setSettings((current) => {
+          const selectedModel =
+            models.find(
+              (model) => model.id === current.chatgptSubscriptionModel,
+            ) ?? models.find((model) => model.id === defaultModel) ?? models[0];
+          const effort = selectedModel.efforts.includes(
+            current.chatgptSubscriptionReasoningEffort,
+          )
+            ? current.chatgptSubscriptionReasoningEffort
+            : selectedModel.efforts.includes(defaultEffort)
+              ? defaultEffort
+              : selectedModel.efforts[0];
+
+          if (
+            current.chatgptSubscriptionModel === selectedModel.id &&
+            current.chatgptSubscriptionReasoningEffort === effort
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            chatgptSubscriptionModel: selectedModel.id,
+            chatgptSubscriptionReasoningEffort: effort,
+          };
+        });
+      })
+      .catch((error) => {
+        if (!active || controller.signal.aborted) return;
+        setChatgptSubscriptionCatalog({
+          message:
+            error instanceof Error
+              ? error.message
+              : "本地订阅模型目录读取失败。",
+          status: "error",
+        });
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    apiBaseUrl,
+    expandedProviderId,
+    isHydrated,
+    settings.chatgptSubscriptionModel,
+    settings.chatgptSubscriptionReasoningEffort,
+  ]);
 
   const persistSessionHistory = useCallback(
     async function persist(sessionId: string) {
@@ -6355,6 +6570,10 @@ export function AgentConsole({
   const canUseEnvironmentApiKeyForProvider = (providerId: ProviderId) => {
     const provider = getProviderOption(providerId);
 
+    if (providerId === "chatgpt-subscription") {
+      return true;
+    }
+
     return (
       providerId !== "custom" &&
       hasApiKey &&
@@ -8475,6 +8694,13 @@ export function AgentConsole({
                               canUseProviderEnvironmentKey,
                               provider.id,
                             );
+                          const subscriptionModelOption =
+                            provider.id === "chatgpt-subscription" &&
+                            chatgptSubscriptionCatalog.status === "success"
+                              ? chatgptSubscriptionCatalog.models.find(
+                                  (model) => model.id === providerModel,
+                                )
+                              : undefined;
 
                           return (
                             <article
@@ -8502,7 +8728,7 @@ export function AgentConsole({
                                   <small>
                                     {provider.id === "custom"
                                       ? "Custom URL"
-                                      : provider.model}{" "}
+                                      : providerModel}{" "}
                                     · {provider.description}
                                   </small>
                                 </button>
@@ -8523,7 +8749,124 @@ export function AgentConsole({
 
                               {isExpanded ? (
                                 <div className={styles.providerOptionBody}>
-                                  {provider.id === "custom" ? (
+                                  {provider.id === "chatgpt-subscription" ? (
+                                    <>
+                                      <div className={styles.settingsInfoGrid}>
+                                        <div>
+                                          <span>Provider URL</span>
+                                          <strong>
+                                            {chatgptSubscriptionCatalog.status ===
+                                            "success"
+                                              ? chatgptSubscriptionCatalog.baseUrl
+                                              : "127.0.0.1:$CODEX_API_PORT"}
+                                          </strong>
+                                        </div>
+                                        <div>
+                                          <span>授权方式</span>
+                                          <strong>ChatGPT / Codex OAuth</strong>
+                                        </div>
+                                      </div>
+
+                                      <label className={styles.settingsField}>
+                                        <span>Model</span>
+                                        <select
+                                          disabled={
+                                            chatgptSubscriptionCatalog.status !==
+                                            "success"
+                                          }
+                                          value={settings.chatgptSubscriptionModel}
+                                          onChange={(event) => {
+                                            const nextModel = event.target.value;
+                                            const option =
+                                              chatgptSubscriptionCatalog.status ===
+                                              "success"
+                                                ? chatgptSubscriptionCatalog.models.find(
+                                                    (model) =>
+                                                      model.id === nextModel,
+                                                  )
+                                                : undefined;
+                                            setSettings((current) => ({
+                                              ...current,
+                                              chatgptSubscriptionModel: nextModel,
+                                              chatgptSubscriptionReasoningEffort:
+                                                option?.efforts.includes(
+                                                  current.chatgptSubscriptionReasoningEffort,
+                                                )
+                                                  ? current.chatgptSubscriptionReasoningEffort
+                                                  : option?.efforts[0] ??
+                                                    current.chatgptSubscriptionReasoningEffort,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        >
+                                          {chatgptSubscriptionCatalog.status ===
+                                          "success" ? (
+                                            chatgptSubscriptionCatalog.models.map(
+                                              (model) => (
+                                                <option key={model.id} value={model.id}>
+                                                  {model.displayName} · {model.id}
+                                                </option>
+                                              ),
+                                            )
+                                          ) : (
+                                            <option
+                                              value={
+                                                settings.chatgptSubscriptionModel
+                                              }
+                                            >
+                                              {settings.chatgptSubscriptionModel}
+                                            </option>
+                                          )}
+                                        </select>
+                                      </label>
+
+                                      <label className={styles.settingsField}>
+                                        <span>Reasoning effort</span>
+                                        <select
+                                          disabled={!subscriptionModelOption}
+                                          value={
+                                            settings.chatgptSubscriptionReasoningEffort
+                                          }
+                                          onChange={(event) => {
+                                            const effort = event.target
+                                              .value as ReasoningEffort;
+                                            setSettings((current) => ({
+                                              ...current,
+                                              chatgptSubscriptionReasoningEffort:
+                                                effort,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        >
+                                          {(subscriptionModelOption?.efforts ?? [
+                                            settings.chatgptSubscriptionReasoningEffort,
+                                          ]).map((effort) => (
+                                            <option key={effort} value={effort}>
+                                              {effort}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+
+                                      {chatgptSubscriptionCatalog.status ===
+                                      "loading" ? (
+                                        <p className={styles.connectionNotice}>
+                                          正在读取本机订阅模型目录...
+                                        </p>
+                                      ) : chatgptSubscriptionCatalog.status ===
+                                        "error" ? (
+                                        <p
+                                          className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+                                        >
+                                          {chatgptSubscriptionCatalog.message}
+                                        </p>
+                                      ) : null}
+                                    </>
+                                  ) : provider.id === "custom" ? (
                                     <>
                                       <label className={styles.settingsField}>
                                         <span>Provider URL</span>
@@ -8601,29 +8944,31 @@ export function AgentConsole({
                                     </div>
                                   )}
 
-                                  <label className={styles.settingsField}>
-                                    <span>API Key</span>
-                                    <input
-                                      type="password"
-                                      autoComplete="off"
-                                      placeholder="sk-..."
-                                      value={providerApiKey}
-                                      onChange={(event) => {
-                                        const nextApiKey = event.target.value;
+                                  {provider.id !== "chatgpt-subscription" ? (
+                                    <label className={styles.settingsField}>
+                                      <span>API Key</span>
+                                      <input
+                                        type="password"
+                                        autoComplete="off"
+                                        placeholder="sk-..."
+                                        value={providerApiKey}
+                                        onChange={(event) => {
+                                          const nextApiKey = event.target.value;
 
-                                        setSettings((current) =>
-                                          setProviderApiKey(
-                                            current,
-                                            provider.id,
-                                            nextApiKey,
-                                          ),
-                                        );
-                                        setTestConnectionState({
-                                          status: "idle",
-                                        });
-                                      }}
-                                    />
-                                  </label>
+                                          setSettings((current) =>
+                                            setProviderApiKey(
+                                              current,
+                                              provider.id,
+                                              nextApiKey,
+                                            ),
+                                          );
+                                          setTestConnectionState({
+                                            status: "idle",
+                                          });
+                                        }}
+                                      />
+                                    </label>
+                                  ) : null}
 
                                   <div className={styles.settingsActions}>
                                     {!isSelected ? (
@@ -8644,6 +8989,10 @@ export function AgentConsole({
                                       disabled={
                                         testConnectionState.status ===
                                           "testing" ||
+                                        (provider.id ===
+                                          "chatgpt-subscription" &&
+                                          chatgptSubscriptionCatalog.status !==
+                                            "success") ||
                                         Boolean(providerValidationMessage)
                                       }
                                       type="button"
@@ -8659,24 +9008,26 @@ export function AgentConsole({
                                         ? "测试中..."
                                         : "测试连接"}
                                     </button>
-                                    <button
-                                      className={styles.secondarySettingsButton}
-                                      type="button"
-                                      onClick={() => {
-                                        setSettings((current) =>
-                                          setProviderApiKey(
-                                            current,
-                                            provider.id,
-                                            "",
-                                          ),
-                                        );
-                                        setTestConnectionState({
-                                          status: "idle",
-                                        });
-                                      }}
-                                    >
-                                      清空 Key
-                                    </button>
+                                    {provider.id !== "chatgpt-subscription" ? (
+                                      <button
+                                        className={styles.secondarySettingsButton}
+                                        type="button"
+                                        onClick={() => {
+                                          setSettings((current) =>
+                                            setProviderApiKey(
+                                              current,
+                                              provider.id,
+                                              "",
+                                            ),
+                                          );
+                                          setTestConnectionState({
+                                            status: "idle",
+                                          });
+                                        }}
+                                      >
+                                        清空 Key
+                                      </button>
+                                    ) : null}
                                   </div>
 
                                   {testConnectionState.status !== "idle" ? (

@@ -53,7 +53,7 @@ Test harness 通常包含：
 在 Ranni / numas-agent 中，harness 主要对应以下部分：
 
 - `lib/agent.ts`：agent 主循环，负责多步执行、工具调用、上下文快照和 trace 事件。
-- `lib/llm/`：模型 provider 层，负责 DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible API 的请求和响应适配。
+- `lib/llm/`：模型 provider 层，负责本机 ChatGPT 订阅、DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible API 的请求和响应适配。
 - `lib/tools.ts`：工具定义和执行入口。
 - `lib/trace.ts`：运行状态、模型请求、工具调用、thinking、响应等结构化记录。
 - `src/server/app.ts`：把前端会话请求接入 agent 运行流程。
@@ -72,6 +72,8 @@ The reasoning_content in the thinking mode must be passed back to the API.
 ```
 
 这不是模型不会回答，而是 harness 没有遵守该 provider 的上下文协议。修复点也不在 prompt，而在 provider 适配层：需要把内部 thinking block 重新序列化为 DeepSeek 需要的 `reasoning_content`。
+
+本机 ChatGPT 订阅 Provider 也需要维护 provider 协议字段。它使用 `store=false` 的 Responses function calling，每次请求显式获取加密 reasoning item；模型返回工具调用后，Ranni 将这些 opaque item 与 function call、function call output 一起放入下一次请求，thinking summary 只用于可见过程展示。
 
 ## 和相近概念的区别
 

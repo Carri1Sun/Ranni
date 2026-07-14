@@ -213,6 +213,9 @@
 | 设置侧栏 | Settings Sidebar | 设置弹窗左侧 tab。 |
 | API 设置 | API Settings | provider、key、连接测试。 |
 | 模型 Provider 列表 | Model Provider List | API 设置中的模型服务选项列表。 |
+| 本机 ChatGPT 订阅 Provider | Local ChatGPT Subscription Provider | 通过 `CODEX_API_PORT` 连接本机 ChatGPT/Codex OAuth 订阅服务的选项。 |
+| 订阅模型选择器 | Subscription Model Select | 从本机订阅服务实时模型目录中选择模型。 |
+| 推理强度选择器 | Reasoning Effort Select | 选择当前订阅模型支持的 reasoning effort。 |
 | MiniMax 国际 Provider | MiniMax International Provider | 使用 `api.minimax.io` 国际端点的 MiniMax Token Plan 选项。 |
 | MiniMax 中国 Provider | MiniMax China Provider | 使用 `api.minimaxi.com` 中国区端点的 MiniMax Token Plan 选项。 |
 | 能力设置 | Skills Settings | 本地 skill 能力开关，控制新 run 的强制加载能力。 |

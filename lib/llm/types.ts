@@ -26,6 +26,9 @@ export type AgentToolUseBlock = {
   inputComplete: boolean;
   inputParseError?: string;
   name: string;
+  providerMetadata?: {
+    responsesReasoningItems?: unknown[];
+  };
   rawInput?: string;
   type: "tool_use";
 };
@@ -85,6 +88,29 @@ export type ModelConnectionConfig = {
   model?: string;
   provider?: string;
   qwenApiKey?: string;
+  reasoningEffort?: ReasoningEffort;
+};
+
+export type ReasoningEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
+export type ModelOption = {
+  displayName: string;
+  efforts: ReasoningEffort[];
+  id: string;
+};
+
+export type ModelCatalog = {
+  defaults: {
+    model: string;
+    reasoningEffort: ReasoningEffort;
+  };
+  models: ModelOption[];
 };
 
 export type ModelConnectionTestResult = {
@@ -104,5 +130,6 @@ export type AgentProvider = {
   createMessage: (payload: CreateAgentMessageOptions) => Promise<CreateAgentMessageResult>;
   getRuntimeInfo: (modelConfig?: ModelConnectionConfig) => TraceRuntimeInfo;
   hasApiKey: (modelConfig?: ModelConnectionConfig) => boolean;
+  listModels?: (modelConfig?: ModelConnectionConfig) => Promise<ModelCatalog>;
   testConnection: (modelConfig?: ModelConnectionConfig) => Promise<ModelConnectionTestResult>;
 };
