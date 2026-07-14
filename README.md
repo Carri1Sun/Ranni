@@ -6,7 +6,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 
 ## 当前能力
 
-- 多 session 对话，历史 session 保存在本机浏览器 localStorage。
+- 多 session 对话，完整用户与 assistant 消息保存在各 Session workspace 的 `.ranni/session-history.json`，前端按需从后端加载；localStorage 用于兼容缓存和界面状态。
 - 点击新建 session 会先进入空白草稿页，发送首条消息时才创建 session。
 - 发送首条消息时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-YYYY-MM-DD_HH-mm-ss` 下自动创建一个 session 专属目录作为执行边界；中间文件、运行产物和终端命令默认都在该目录内，同一秒内重复创建会追加数字后缀。
 - 左侧导航栏包含新建 session、历史 session 和底部设置入口。
@@ -20,6 +20,8 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `html` 和 `html-to-pptx` skill，分别用于静态网页创作，以及通过受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
+- Agent harness 遵循 “Guard invariants, expose reality, preserve agency”：工具回执提供派生观察状态，run 内 Event Log 来源保留过程事实，Active Context Projection 提供当前工作视图；安全观察工具不受 `currentMode` 限制。
+- HTML-to-PPTX 页面采用 draft / accepted 语义，失败草稿和诊断可继续检查与修补，通过硬性检查后再原子提升为正式页面。
 - 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
 - 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
@@ -29,12 +31,13 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 ```text
 components/        React UI 组件，核心是 agent-console
 docs/              产品、架构和核心概念文档
-lib/agent.ts       Agent 主循环、状态同步、guard、chunked final、trace 事件
+lib/agent.ts       Agent 主循环、活动上下文投影、guard、chunked final、trace 事件
 lib/llm/           模型 provider 适配层
 lib/tools.ts       本地工具、网页工具、computer-use 工具、task memory 工具
 lib/computer-use/  OpenAI computer tool loop 和 macOS 桌面适配器
-lib/task-state.ts  结构化任务状态
+lib/task-state.ts  TaskIntent 与派生 ObservedState 结构化任务状态
 lib/task-memory.ts .ranni 持久化任务记忆
+lib/session-history-store.ts Session 完整消息历史的读取、合并和原子写入
 lib/workspace.ts   session workspace 路径边界
 lib/skills/        本地 skill 注册表与 runtime instruction registry
 lib/html-design/   HTML design catalog loader、查询和 prompt 构建
@@ -96,7 +99,7 @@ MINIMAX_TOKEN_PLAN_KEY=
 MINIMAX_TOKEN_PLAN_BASE_URL=https://api.minimax.io/anthropic
 MINIMAX_TOKEN_PLAN_MODEL=MiniMax-M3
 MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW=1000000
-MINIMAX_TOKEN_PLAN_MAX_TOKENS=4096
+MINIMAX_TOKEN_PLAN_MAX_TOKENS=32768
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=3001
 VITE_API_BASE_URL=
@@ -127,7 +130,7 @@ VITE_API_BASE_URL=
 | `MINIMAX_TOKEN_PLAN_BASE_URL` | MiniMax Anthropic-compatible Token Plan 地址，默认 `https://api.minimax.io/anthropic` |
 | `MINIMAX_TOKEN_PLAN_MODEL` | MiniMax Token Plan 模型，默认 `MiniMax-M3` |
 | `MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW` | MiniMax Token Plan 上下文窗口估计值，默认 `1000000` |
-| `MINIMAX_TOKEN_PLAN_MAX_TOKENS` | MiniMax Token Plan 单次模型输出上限，默认 `4096` |
+| `MINIMAX_TOKEN_PLAN_MAX_TOKENS` | MiniMax Token Plan 单次模型输出上限，默认 `32768`，优先于通用 `LLM_MAX_TOKENS` |
 | `TAVILY_API_KEY` | 网页搜索能力所需 key |
 | `AGENT_WORKSPACE_ROOT` | 低层工具缺少 workspaceRoot 时的后备工作区；产品主路径不依赖它 |
 | `RANNI_DEFAULT_WORKSPACE` | 自动创建 session 专属目录的根目录，默认 `~/Documents/Ranni-Workspace` |
@@ -180,6 +183,9 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `POST /api/workspaces/validate`：校验目录是否可作为 workspace。
 - `POST /api/workspaces/pick`：调用系统文件夹选择器。
 - `POST /api/session/title`：根据首条消息异步生成 session 标题。
+- `GET /api/session-history`：扫描默认 workspace 下已经持久化的 Session，并返回历史摘要。
+- `GET /api/session-history/:sessionId`：从对应 Session workspace 读取完整用户与 assistant 消息。
+- `PUT /api/session-history/:sessionId/messages`：按消息 ID 增量持久化完整消息和 Session 元数据。
 - `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），必须携带自动创建的 session 专属 `workspaceRoot`；服务端要求该目录位于默认 session 根目录下且名称为 `ranni-session-*`，立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
 - `GET /api/events`：Event 通道，SSE 单向下行广播三层事件（`streamKey`=session、`lastSeq` 续传）。
 - `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
@@ -192,7 +198,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
 - `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis、judge rubric、claim audit、style judge、pairwise judge 和 comparison，已忽略。
-- `.ranni/`：每个 session 专属目录下的 agent durable task memory 和本地运行产物，例如 slides deck 产物目录，已忽略。
+- `.ranni/`：每个 session 专属目录下的完整消息历史、agent durable task memory 和本地运行产物，例如 slides deck 产物目录，已忽略。
 - `dist/`：构建产物，已忽略。
 
 需要长期保存的资料应整理到 `docs/` 或其他受版本控制的目录。
@@ -205,6 +211,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - [Agent 编排理念](docs/agent-orchestration.md)
 - [Harness 核心概念](docs/core-concept/harness.md)
 - [Agent 架构文档](docs/agent-arch/agent-arch-optimize.md)
+- [Agent 架构防线](docs/tech/v1-architecture/agent-arch/architecture-defenses.md)
 - [Ranni UI Design System](docs/v1-ranni-design.md)
 - [Ranni UI Requirements](docs/v1-ranni-ui-requirements.md)
 

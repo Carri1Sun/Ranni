@@ -17,7 +17,9 @@ flowchart LR
   User["用户"] --> UI["React/Vite UI（只读渲染器）"]
   UI -->|"Command: POST /api/runs /:id/steer /:id/abort"| Server["Express API"]
   UI -->|"Event: GET /api/events (SSE)"| Server
+  UI -->|"History: GET/PUT /api/session-history"| Server
   Server --> Registry["RunRegistry"]
+  Server --> History[".ranni/session-history.json"]
   Server --> Agent["lib/agent.ts（runAgentTurn）"]
   Agent -->|"publish Layer2 TraceEvent + Layer1 delta"| Bus["EventBus（per-session）"]
   Bus -->|"subscribeAll"| Mapper["EventMapper（投影层）"]
@@ -100,7 +102,30 @@ sequenceDiagram
 - `subscribe(streamKey, fromSeq, cb)`：同步回放 buffer 中 `seq > fromSeq` 的 durable 事件，再切到实时。JS 单线程下同步回放与注册之间无并发缺口，天然不丢事件。
 - `subscribeAll(cb)`：供 EventMapper 消费所有 streamKey 的 Layer2 事件。
 
-持久化范围是**进程内内存 ring buffer**（重启即丢），满足断线续传/重连回放；TraceRun 的跨重启持久化仍由前端 localStorage 维持。
+EventBus 的持久化范围是进程内内存 ring buffer，重启后清空；它用于运行期间断线续传和重连回放。完整用户与 assistant 消息由 Session workspace 下的 `.ranni/session-history.json` 持久化，TraceRun 和过程活动仍使用前端 localStorage 压缩缓存。
+
+## Agent 状态与活动上下文
+
+Agent runtime 将结构化状态按来源分成两个逻辑区域：
+
+- TaskIntent 保存目标、约束、计划、假设、`currentMode` 和 `nextAction`，由用户与 Agent 表达。
+- ObservedState 保存文件、hash、draft / accepted 工件、工具错误和验证回执，由 harness 根据工具执行事实更新。
+
+当前首版从既有 TaskState、工具回执和 workspace 文件事实派生观察状态，独立 ObservedState registry 留到后续防线。run 内 conversation、TraceEvent 和 task memory 形成 Event Log 来源。下一次模型请求通过 Active Context Projection 选择当前决策需要的工作视图：用户约束、最新状态、当前 draft、最新失败因果链、相关证据和已完成工件 receipt。旧候选与原始材料继续保存在现有 trace、task memory 或 workspace，可按需读取；上下文压缩在投影后仍接近窗口上限时启用。
+
+状态和上下文遵循三个不变量：失败工具不会更新成功文件集合；当前 draft 和最新诊断保持完整；tool call 与 tool result 在活动上下文中保持协议配对。跨进程 durable Event Log、完整 ObservedState registry 和统一 SideEffectGate 仍属于后续防线。详细契约见 [`agent-arch/architecture-defenses.md`](agent-arch/architecture-defenses.md)。
+
+## Session 消息历史
+
+`lib/session-history-store.ts` 管理版本化的 `ranni.session-history.v1` 文件。每个自动创建的 Session 独立保存到 `<workspaceRoot>/.ranni/session-history.json`：
+
+- 用户和 assistant 消息按消息 ID 增量 upsert，保留完整正文与原始顺序。
+- 同一 Session 的写入通过进程内队列串行执行，并使用临时文件加原子 rename，避免并发覆盖和半写文件。
+- `GET /api/session-history` 扫描默认 workspace 下的 `ranni-session-*` 目录并返回轻量摘要。
+- `GET /api/session-history/:sessionId` 按需返回完整消息。
+- `PUT /api/session-history/:sessionId/messages` 批量写入新增或更新的消息，并同步标题和更新时间。
+
+前端启动时先读取 localStorage 兼容缓存，再拉取后端 Session 索引。当前 Session 或用户切换到的历史 Session 会按需加载完整消息，并按消息 ID 与本地缓存合并。旧版本只有 localStorage 的 Session 会在首次加载后迁移到 workspace 历史文件。localStorage 继续保存压缩后的运行详情、过程活动和界面状态，不再承担完整消息的权威存储职责。
 
 ## EventMapper（展示逻辑后移）
 
@@ -183,7 +208,7 @@ EventSource 是 session 级长连接，不受 run 级 abort 影响；abort 后 `
 
 OpenAI provider 走官方 `https://api.openai.com/v1/chat/completions`，默认模型是 `gpt-5.5`，并使用 `max_completion_tokens` 适配 OpenAI Chat Completions 当前参数名。它读取 `OPENAI_BASE_URL` / `OPENAI_MODEL`，避免误用其他 provider 的 `LLM_BASE_URL` / `LLM_MODEL`。
 
-MiniMax Token Plan provider 走 Anthropic-compatible Messages API，默认模型是 `MiniMax-M3`，默认 context window 是 `1_000_000`。它读取 `MINIMAX_TOKEN_PLAN_KEY`、`MINIMAX_TOKEN_PLAN_BASE_URL`、`MINIMAX_TOKEN_PLAN_MODEL`、`MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW` 和 `MINIMAX_TOKEN_PLAN_MAX_TOKENS`，使用 Token Plan Subscription Key 调用，不复用普通 pay-as-you-go key 语义。设置页提供 MiniMax 国际和 MiniMax 中国两个 Provider 选项，分别显式传入 `https://api.minimax.io/anthropic` 和 `https://api.minimaxi.com/anthropic`，两者复用同一个 Token Plan Key 配置。若全球 endpoint 返回鉴权区域错误，provider 仍会尝试中国区端点。
+MiniMax Token Plan provider 走 Anthropic-compatible Messages API，默认模型是 `MiniMax-M3`，默认 context window 是 `1_000_000`，默认单次输出预算是 `32_768` tokens。它读取 `MINIMAX_TOKEN_PLAN_KEY`、`MINIMAX_TOKEN_PLAN_BASE_URL`、`MINIMAX_TOKEN_PLAN_MODEL`、`MINIMAX_TOKEN_PLAN_CONTEXT_WINDOW` 和 `MINIMAX_TOKEN_PLAN_MAX_TOKENS`；provider 专用输出预算优先于通用 `LLM_MAX_TOKENS`，给 thinking 与完整工具参数留出同一响应内的空间。设置页提供 MiniMax 国际和 MiniMax 中国两个 Provider 选项，分别显式传入 `https://api.minimax.io/anthropic` 和 `https://api.minimaxi.com/anthropic`，两者复用同一个 Token Plan Key 配置。若全球 endpoint 返回鉴权区域错误，provider 仍会尝试中国区端点。
 
 Computer use 属于工具层能力。`operate_computer` 使用 OpenAI Responses API 的 `computer` tool，默认模型 `gpt-5.5`，key 从前端 tool settings、`OPENAI_COMPUTER_API_KEY` 或 `OPENAI_API_KEY` 读取。模型返回 `computer_call` 后，Node 后端通过 macOS 适配器执行截图、点击、滚动、输入、按键和拖拽，再以 `computer_call_output` 回传 `computer_screenshot`。这条链路控制的是用户实际桌面，需要 Screen Recording 和 Accessibility 权限，也会在敏感或破坏性操作前停止。
 
@@ -194,6 +219,18 @@ DeepSeek thinking mode 的特殊点：
 - 这是 DeepSeek API 协议要求，不只是 UI 展示字段。
 
 OpenAI 兼容 provider 的流式解析（`lib/llm/providers/openai-compatible.ts`）会按行拆分单个 `data:` 块里的多条 JSON（`splitSseDataMessages`），兼容把多条 chunk 或 `[DONE]` 拼在同一块的供应商。
+
+## 工件输出、诊断与工具块完整性
+
+HTML-to-PPTX 的 manifest、样式组装、逐页写入和 deck 组装是 artifact 里程碑，用于提供当前状态和工具前置条件。它们不构成限制 Agent 行动顺序的 runtime 状态机。`currentMode` 只表达认知姿态；thinking 沿用用户与 provider 配置，工件里程碑不会强制关闭 thinking。
+
+安全观察工具在 skill 激活期间保持可用，包括文件列表、读取、内容搜索、task memory 读取和 slide inspect。写入、终端、外发与其他高风险操作继续经过 workspace、side effect 和权限防线。mutation 工具自行检查 manifest、样式和 accepted 页面等依赖，并返回结构化事实，Agent 可以据此选择读取、patch、完整重写或调整共享样式。
+
+CSS 使用 `styles/<style-id>.css` 分片原子写入。每个片段检查注释、字符串和规则块闭合，并拒绝 `.slide > *` 统一覆盖 `position` 的高风险层级规则。`assemble_deck_styles` 按声明顺序合并，在 Chromium 中验证 1280x720 slide 基础布局和画布起点后才原子替换 `styles.css`。页面顺序提前保存到 `slide-manifest.json`；首个 accepted 页面产生后清单不可变化。
+
+页面使用 draft / accepted 双层语义。`write_slide_fragment` 先保存 `slides/.draft/<slide-id>.html`，随后运行语义诊断；通过硬性检查后原子 promote 到 `slides/<slide-id>.html`。失败 draft、诊断 JSON 和预览保留供 Agent 检查与 patch，最近 accepted 版本保持可用。背景装饰被画布裁切记为 warning，正文、可编辑文本、表格或核心图片裁切记为 error；诊断返回责任 selector、边界、相关 CSS、文本属性、截图路径和 artifact hash。
+
+Anthropic-compatible 流式 provider 使用 `content_block_stop` 标记单个工具输入块完整。响应以 `max_tokens` 结束时，Agent 逐块判断 `inputComplete` 和 JSON 解析结果：已经闭合的工具调用可以继续执行，仍在接收参数的工具调用会被拦截。被截断的 CSS 或 slide fragment 返回 `ARTIFACT_CHUNK_TRUNCATED`，错误回执描述当前 artifact、失败事实和可读取草稿，不规定唯一恢复步骤。
 
 ## Trace Export
 

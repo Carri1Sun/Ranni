@@ -43,6 +43,7 @@ date: 2026-07-06
 主要职责：
 
 - session 创建、切换、保存、压缩。
+- 从后端加载完整 Session 消息，并把旧 localStorage 消息迁移到 Session workspace。
 - workspace picker 交互。
 - settings modal。
 - chat / report / trace 三个页面。
@@ -126,6 +127,9 @@ Express 应用定义。
 - `POST /api/workspaces/auto-create`
 - `POST /api/workspaces/pick`
 - `POST /api/session/title`
+- `GET /api/session-history`（Session 历史摘要）
+- `GET /api/session-history/:sessionId`（完整用户与 assistant 消息）
+- `PUT /api/session-history/:sessionId/messages`（增量持久化消息与元数据）
 - `POST /api/runs`（启动 run，达到上限返回 `AGENT_CONCURRENCY_LIMIT`）
 - `GET /api/events`（SSE，query `streamKey` + `lastSeq`）
 - `POST /api/runs/:runId/steer`（补充消息入队）
@@ -152,7 +156,7 @@ Agent 主循环。
 
 - 接收外部传入的 runId / sessionId / streamKey / EventBus / drainSteer。
 - 构造 system prompt。
-- 注入 task state 和 task memory summary。
+- 从 run 内 conversation、TraceEvent、TaskIntent、派生观察状态、当前 artifact 和 task memory 构造 Active Context Projection 首版。
 - 调用模型。
 - 解析 assistant text、thinking、tool use。
 - 执行工具。
@@ -160,7 +164,12 @@ Agent 主循环。
 - 触发 completion guard、final answer repair、unsafe tool-call guard。
 - 通过内部 emit 适配层把旧 StreamEvent 映射为 v2 三层事件（Layer2 TraceEvent durable + Layer1 delta live-only）发布到 EventBus，包含三段式 `text.started/delta/completed`、`thinking.started/delta/completed`。
 - 循环开头 `drainSteer(runId)` 抽取补充消息注入上下文（Steering）。
+- 保持安全观察工具与 `currentMode` 解耦，并把 mode 作为认知提示和 trace 字段。
 - 处理 abort/cancel。
+
+### `lib/session-history-store.ts`
+
+Session 消息历史存储层。负责读取和校验 `ranni.session-history.v1`、扫描默认 workspace 下的 Session 摘要、按消息 ID 增量合并，并通过串行写入队列与原子 rename 保存 `<session-workspace>/.ranni/session-history.json`。
 
 ### `lib/events/`
 
@@ -187,6 +196,7 @@ v2 事件驱动架构的核心模块。
 
 - 定义工具 schema。
 - 执行文件、搜索、终端、网页、research、task memory 工具。
+- 让文件列表、读取、内容搜索和 task memory 读取等安全观察能力保持可组合。
 - 注册 `operate_computer`，把 OpenAI computer tool loop 接入 agent 工具调用。
 - 限制 workspace 越界。
 - 限制危险命令。
@@ -208,7 +218,7 @@ OpenAI computer-use 运行层。
 
 结构化任务状态。
 
-它记录 agent 当前 goal、deliverable、constraints、success criteria、plan、facts、files touched、commands run、open questions、mode、next action、verification 等。
+它在逻辑上区分 TaskIntent 与 ObservedState。TaskIntent 记录 goal、deliverable、constraints、success criteria、plan、open questions、mode 和 next action；首版 ObservedState 从工具确认的文件、hash、draft / accepted 工件、命令结果、诊断和 verification receipt 派生，独立 registry 留到后续防线。
 
 ### `lib/task-memory.ts`
 
@@ -321,8 +331,9 @@ HTML-to-PPTX skill 专属工具。
 
 主要职责：
 
-- `init_slide_html_workspace`、`prepare_slide_html_for_pptx`、`export_html_to_pptx`、`validate_html_pptx_export` 提供 HTML-to-PPTX 路线的工具入口。
-- 保留 zod schema、workspace resolver、模板初始化和 `.mjs` 脚本调度。
+- `init_slide_html_workspace`、manifest、样式分片、逐页写入、组装、prepare、export 和 validate 提供 HTML-to-PPTX 路线的工具入口。
+- `write_slide_fragment` 管理 draft、语义诊断和 accepted 原子 promote；`inspect_slide_fragment` 与 `patch_slide_fragment` 提供可组合的失败观察和局部修复能力。
+- 保留 zod schema、workspace resolver、模板初始化、artifact receipt 和 `.mjs` 脚本调度。
 - 所有工具输入输出通过 workspace resolver 解析。
 
 ### `skills/html-to-pptx/scripts/html-pptx/`
@@ -331,7 +342,7 @@ HTML-to-PPTX 脚本实现目录。
 
 主要职责：
 
-- 用 Playwright 渲染、测量和截图回退。
+- 用 Playwright 渲染、测量、截图回退，并在 `preflight.mjs` 中区分正文越界和允许裁切的背景装饰。
 - 用 `dom-to-pptx` 导出有限可编辑 PPTX。
 - 用 LibreOffice、Poppler、JSZip、pixelmatch 和 pngjs 执行预览、结构检查和客观视觉 smoke check。
 
@@ -398,6 +409,10 @@ HTML-to-PPTX 设计规范目录。
 
 - 保存 HTML-to-PPTX agent 创作时必须遵守的审美、布局、排版和兼容性准则。
 - 为 `SKILL.md` 和 HTML-to-PPTX QA 检查提供规则来源。
+
+### `docs/tech/v1-architecture/agent-arch/architecture-defenses.md`
+
+定义 Agent harness 的权限、指令、状态真实性、产物原子性、协议、完成、恢复、审计和资源防线，以及 TaskIntent / ObservedState、Event Log / Active Context Projection 和 draft / accepted 语义。
 
 ## 模型 Provider
 
