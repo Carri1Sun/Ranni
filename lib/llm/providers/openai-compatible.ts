@@ -134,6 +134,11 @@ type OpenAIToolCallDelta = OpenAIToolCall & {
   index?: number;
 };
 
+function isCompleteToolCallFinishReason(finishReason: string | null | undefined) {
+  return Boolean(finishReason) &&
+    !/\b(length|max_tokens?|token_limit)\b/i.test(finishReason ?? "");
+}
+
 type RuntimeConfig = {
   apiKey: string;
   baseUrl: string;
@@ -250,10 +255,12 @@ function createRuntimeConfig(
       process.env.LLM_CONTEXT_WINDOW,
       options.defaultContextWindow,
     ),
-    enableThinking: readBoolean(
-      process.env.LLM_ENABLE_THINKING,
-      options.defaultEnableThinking ?? true,
-    ),
+    enableThinking:
+      modelConfig?.enableThinking ??
+      readBoolean(
+        process.env.LLM_ENABLE_THINKING,
+        options.defaultEnableThinking ?? true,
+      ),
     maxTokens: readPositiveInteger(
       process.env.LLM_MAX_TOKENS,
       options.defaultMaxTokens,
@@ -589,6 +596,7 @@ async function parseErrorResponse(response: Response) {
 
 function normalizeAssistantBlocks(
   message: NonNullable<OpenAIChatResponse["choices"]>[number]["message"],
+  inputComplete = true,
 ) {
   const blocks: AgentAssistantBlock[] = [];
   const thinking =
@@ -619,6 +627,7 @@ function normalizeAssistantBlocks(
       type: "tool_use",
       id: toolCall.id?.trim() || crypto.randomUUID(),
       input: parsedInput.ok ? parsedInput.value : {},
+      inputComplete,
       rawInput,
       ...(parsedInput.ok
         ? {}
@@ -936,7 +945,10 @@ async function readStreamingResponse({
 
   return {
     message: {
-      content: normalizeAssistantBlocks(responseMessage),
+      content: normalizeAssistantBlocks(
+        responseMessage,
+        isCompleteToolCallFinishReason(finishReason),
+      ),
       id: messageId,
       model: responseModel,
       role: "assistant",
@@ -1024,7 +1036,10 @@ export function createOpenAICompatibleProvider(
           role: "assistant",
           content: "",
         };
-        const content = normalizeAssistantBlocks(responseMessage);
+        const content = normalizeAssistantBlocks(
+          responseMessage,
+          isCompleteToolCallFinishReason(choice?.finish_reason),
+        );
 
         return {
           message: {

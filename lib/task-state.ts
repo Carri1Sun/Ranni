@@ -40,12 +40,15 @@ export type TaskMemoryStatus = {
 };
 
 export type TaskState = {
+  /** Agent-maintained task intent and working judgments. */
   assumptions: string[];
+  /** Observed fact derived by the agent loop from terminal tool receipts. */
   commandsRun: string[];
   constraints: string[];
   currentMode: ActionMode;
   deliverable: string;
   facts: string[];
+  /** Observed fact derived by the agent loop from successful file tool receipts. */
   filesTouched: string[];
   goal: string;
   memory?: TaskMemoryStatus;
@@ -53,6 +56,7 @@ export type TaskState = {
   openQuestions: string[];
   plan: string[];
   successCriteria: string[];
+  /** Kept agent-writable for completion-guard compatibility until verification receipts are separated. */
   verification: {
     evidence: string[];
     status: VerificationStatus;
@@ -61,11 +65,13 @@ export type TaskState = {
 
 export type TaskStatePatch = {
   assumptions?: string[];
+  /** Harness-only observation; do not expose through update_task_state. */
   commandsRun?: string[];
   constraints?: string[];
   currentMode?: ActionMode;
   deliverable?: string;
   facts?: string[];
+  /** Harness-only observation; do not expose through update_task_state. */
   filesTouched?: string[];
   goal?: string;
   memory?: TaskMemoryStatus;

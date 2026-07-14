@@ -7,7 +7,7 @@ export const minimaxTokenPlanProvider = createAnthropicCompatibleProvider({
   defaultBaseUrl: "https://api.minimax.io/anthropic",
   defaultContextWindow: 1_000_000,
   defaultEnableThinking: true,
-  defaultMaxTokens: 4096,
+  defaultMaxTokens: 32_768,
   defaultModel: "MiniMax-M3",
   fallbackBaseUrls: ["https://api.minimaxi.com/anthropic"],
   missingApiKeyMessage:

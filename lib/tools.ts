@@ -134,11 +134,9 @@ const loadSkillSchema = z.object({
 
 const updateTaskStateSchema = z.object({
   assumptions: z.array(z.string().min(1)).max(12).optional(),
-  commands_run: z.array(z.string().min(1)).max(12).optional(),
   constraints: z.array(z.string().min(1)).max(12).optional(),
   deliverable: z.string().min(1).optional(),
   facts: z.array(z.string().min(1)).max(12).optional(),
-  files_touched: z.array(z.string().min(1)).max(12).optional(),
   goal: z.string().min(1).optional(),
   mode: z.enum(ACTION_MODES).optional(),
   next_action: z.string().min(1).optional(),
@@ -400,12 +398,10 @@ async function updateTaskState(
 
   const nextTaskState = context.updateTaskState({
     assumptions: args.assumptions,
-    commandsRun: args.commands_run,
     constraints: args.constraints,
     currentMode: args.mode,
     deliverable: args.deliverable,
     facts: args.facts,
-    filesTouched: args.files_touched,
     goal: args.goal,
     nextAction: args.next_action,
     openQuestions: args.open_questions,
@@ -1249,7 +1245,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "update_task_state",
         description:
-          "Update the run's task contract and working state: mode, goal, deliverable, success criteria, plan, facts, touched files, commands, verification status, and next action. Use this early to clarify the task, after meaningful observations, before edits, and before final synthesis.",
+          "Update the run's task intent and working judgments: mode, goal, deliverable, success criteria, plan, facts, verification status, and next action. Touched files and executed commands are recorded automatically from tool receipts. Use this early to clarify the task, after meaningful observations, before edits, and before final synthesis.",
         input_schema: {
           type: "object",
           properties: {
@@ -1290,16 +1286,6 @@ const toolRegistry = new Map<string, ToolDefinition>([
               type: "array",
               items: { type: "string" },
               description: "Important facts discovered from tools or context.",
-            },
-            files_touched: {
-              type: "array",
-              items: { type: "string" },
-              description: "Files created, edited, moved, or deleted.",
-            },
-            commands_run: {
-              type: "array",
-              items: { type: "string" },
-              description: "Commands that were run or should be recorded.",
             },
             verification_status: {
               type: "string",

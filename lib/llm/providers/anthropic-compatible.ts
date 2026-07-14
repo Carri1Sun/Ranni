@@ -206,10 +206,12 @@ function createRuntimeConfig(
       readEnvValue(options.contextWindowEnvNames ?? []),
       options.defaultContextWindow,
     ),
-    enableThinking: readBoolean(
-      process.env.LLM_ENABLE_THINKING,
-      options.defaultEnableThinking ?? true,
-    ),
+    enableThinking:
+      modelConfig?.enableThinking ??
+      readBoolean(
+        process.env.LLM_ENABLE_THINKING,
+        options.defaultEnableThinking ?? true,
+      ),
     maxTokens: readPositiveInteger(
       readEnvValue(options.maxTokensEnvNames ?? ["LLM_MAX_TOKENS"]),
       options.defaultMaxTokens,
@@ -446,6 +448,7 @@ function normalizeAssistantBlocks(content: AnthropicContentBlock[] | undefined) 
         type: "tool_use",
         id: block.id?.trim() || crypto.randomUUID(),
         input: normalizeToolInput(block.input),
+        inputComplete: true,
         rawInput: JSON.stringify(normalizeToolInput(block.input)),
         name: block.name?.trim() || "unknown_tool",
       });
@@ -708,7 +711,7 @@ function toStreamingToolUse(block: Partial<AnthropicContentBlock>) {
   } satisfies StreamingToolUse;
 }
 
-function toToolUseBlock(toolUse: StreamingToolUse) {
+function toToolUseBlock(toolUse: StreamingToolUse, inputComplete: boolean) {
   const rawInput = toolUse.inputJson.trim() || "{}";
   const parsedInput = safeParseJson(rawInput);
 
@@ -716,6 +719,7 @@ function toToolUseBlock(toolUse: StreamingToolUse) {
     type: "tool_use",
     id: toolUse.id,
     input: parsedInput.ok ? normalizeToolInput(parsedInput.value) : {},
+    inputComplete,
     rawInput,
     ...(parsedInput.ok
       ? {}
@@ -869,7 +873,7 @@ async function readStreamingResponse({
           input: parsedInput.ok ? normalizeToolInput(parsedInput.value) : {},
           name: toolUse.name,
         };
-        assistantBlocks[chunk.index] = toToolUseBlock(toolUse);
+        assistantBlocks[chunk.index] = toToolUseBlock(toolUse, true);
         toolUses.delete(chunk.index);
       }
       return;
@@ -909,6 +913,18 @@ async function readStreamingResponse({
     for (const message of splitSseDataMessages(parseSseData(buffer))) {
       processData(message);
     }
+  }
+
+  for (const [index, toolUse] of toolUses) {
+    const partialBlock = toToolUseBlock(toolUse, false);
+
+    assistantBlocks[index] = partialBlock;
+    responseBlocks[index] = {
+      type: "tool_use",
+      id: toolUse.id,
+      input: partialBlock.input,
+      name: toolUse.name,
+    };
   }
 
   responseBlocks.forEach((block, index) => {

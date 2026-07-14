@@ -34,6 +34,38 @@ export type TraceContextMessage = {
 
 export type TraceContextSnapshot = {
   messages: TraceContextMessage[];
+  projection?: {
+    applied: boolean;
+    failureObservations: Array<{
+      count: number;
+      fingerprint: string;
+      noProgressObserved: boolean;
+      toolName: string;
+      toolUseId: string;
+    }>;
+    observationStates: Array<{
+      fingerprint: string;
+      noChangeObserved: boolean;
+      repeatedCount: number;
+      target: string;
+      toolName: string;
+      toolUseId: string;
+    }>;
+    omittedToolPairCount: number;
+    originalMessageCount: number;
+    preservedToolPairCount: number;
+    preservedUserTextBlockCount: number;
+    projectedMessageCount: number;
+    receipts: Array<{
+      artifactKey: string;
+      details: string[];
+      inputHash: string;
+      payloadChars: number;
+      resultHash: string;
+      resultSummary: string;
+      toolName: string;
+    }>;
+  };
   stats: {
     assistantMessageCount: number;
     contentBlockCount: number;

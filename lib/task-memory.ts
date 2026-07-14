@@ -58,8 +58,15 @@ export type TaskMemoryErrorInput = {
 
 const MEMORY_ROOT = ".ranni";
 const MAX_SUMMARY_CHARS = 9000;
-const MAX_FILE_SNIPPET_CHARS = 1800;
+const MAX_CURRENT_FILE_SNIPPET_CHARS = 1000;
+const MAX_APPEND_ONLY_FILE_SNIPPET_CHARS = 600;
 const MANUAL_APPEND_MARKER = "<!-- ranni-manual-updates -->";
+
+const CURRENT_MEMORY_FILES = new Set([
+  "state.md",
+  "todo.md",
+  "verification.md",
+]);
 
 function formatTimestamp(timestamp = Date.now()) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -85,6 +92,16 @@ function truncate(value: string, maxLength: number) {
   return value.length > maxLength
     ? `${value.slice(0, maxLength).trimEnd()}\n...[truncated]`
     : value;
+}
+
+function truncateFromEnd(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const marker = "...[earlier content truncated]\n";
+  const remainingLength = Math.max(0, maxLength - marker.length);
+  return `${marker}${value.slice(-remainingLength).trimStart()}`;
 }
 
 function safeRunSegment(runId: string) {
@@ -365,6 +382,7 @@ export function createTaskMemory({
         "verification.md",
         "errors.md",
         "decisions.md",
+        "assumptions.md",
         "evidence.md",
         "source-ledger.md",
         "claim-ledger.md",
@@ -373,9 +391,15 @@ export function createTaskMemory({
         "negative_results.md",
       ].map(async (name) => {
         const content = await readIfExists(filePath(name));
-        return content
-          ? `## ${name}\n${truncate(content, MAX_FILE_SNIPPET_CHARS)}`
-          : `## ${name}\n(missing)`;
+        if (!content) {
+          return `## ${name}\n(missing)`;
+        }
+
+        const snippet = CURRENT_MEMORY_FILES.has(name)
+          ? truncate(content, MAX_CURRENT_FILE_SNIPPET_CHARS)
+          : truncateFromEnd(content, MAX_APPEND_ONLY_FILE_SNIPPET_CHARS);
+
+        return `## ${name}\n${snippet}`;
       }),
     );
 

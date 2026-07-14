@@ -23,6 +23,7 @@ export type AgentThinkingBlock = {
 export type AgentToolUseBlock = {
   id: string;
   input: unknown;
+  inputComplete: boolean;
   inputParseError?: string;
   name: string;
   rawInput?: string;
@@ -79,6 +80,7 @@ export type ModelConnectionConfig = {
   apiKey?: string;
   baseUrl?: string;
   deepseekApiKey?: string;
+  enableThinking?: boolean;
   minimaxTokenPlanKey?: string;
   model?: string;
   provider?: string;

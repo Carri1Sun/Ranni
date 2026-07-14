@@ -8,6 +8,11 @@ import {
   type AgentToolUseBlock,
   type ModelConnectionConfig,
 } from "./llm";
+import {
+  buildActiveContextProjection,
+  type ActiveContextProjectionMetadata,
+  type SlideArtifactPhase,
+} from "./active-context";
 import { createResearchNotebook } from "./research";
 import { createTaskMemory, type TaskMemory } from "./task-memory";
 import {
@@ -48,15 +53,41 @@ import {
 import { getWorkspaceRoot } from "./workspace";
 
 const MAX_EMPTY_FINAL_REPAIR_ATTEMPTS = 2;
+const MAX_ARTIFACT_OUTPUT_RECOVERY_ATTEMPTS = 2;
 const MAX_CHUNKED_FINAL_PARTS = 8;
 const MAX_MODEL_FAILURE_RECOVERY_ATTEMPTS = 1;
 const MAX_RESEARCH_ANSWER_QUALITY_REPAIR_ATTEMPTS = 1;
 const MAX_RESEARCH_FINALIZATION_GUARD_ATTEMPTS = 1;
 const MAX_TOOL_STEPS = 500;
-const MAX_UNSAFE_TOOL_CALL_REPAIR_ATTEMPTS = 2;
 const STREAM_DELTA_TICK_MS = 22;
 const STREAM_DELTA_MIN_CHARS = 4;
 const STREAM_DELTA_MAX_CHARS = 80;
+
+const SLIDE_ARTIFACT_TOOL_NAMES = new Set([
+  "assemble_deck_styles",
+  "assemble_slide_deck",
+  "export_html_to_pptx",
+  "fetch_url",
+  "init_slide_html_workspace",
+  "inspect_slide_fragment",
+  "list_files",
+  "patch_slide_fragment",
+  "prepare_slide_html_for_pptx",
+  "read_file",
+  "read_task_memory",
+  "review_research_state",
+  "search_in_files",
+  "search_web",
+  "set_slide_manifest",
+  "update_task_state",
+  "validate_html_pptx_export",
+  "write_slide_fragment",
+  "write_style_fragment",
+]);
+const ARTIFACT_WRITE_TOOL_NAMES = new Set([
+  "write_slide_fragment",
+  "write_style_fragment",
+]);
 const RESEARCH_TOOL_NAMES = new Set([
   "plan_research",
   "record_research_finding",
@@ -241,6 +272,7 @@ class PacedTextEmitter {
 
 function createSystemPrompt({
   activeSkillNames,
+  slideArtifactPhase,
   researchMode,
   runtime,
   skillRuntimeInstructions,
@@ -251,6 +283,7 @@ function createSystemPrompt({
   workspaceRoot,
 }: {
   activeSkillNames: string[];
+  slideArtifactPhase: SlideArtifactPhase;
   researchMode: boolean;
   runtime: ReturnType<typeof getModelRuntimeInfo>;
   skillRuntimeInstructions: string[];
@@ -422,6 +455,16 @@ function createSystemPrompt({
     ...(skillRuntimeInstructions.length > 0
       ? [...skillRuntimeInstructions, ""]
       : []),
+    ...(slideArtifactPhase !== "off"
+      ? [
+          "Slide artifact workspace:",
+          `- Current artifact focus: ${slideArtifactPhase}. This label describes observed progress and does not prescribe a repair sequence.`,
+          "- Dedicated HTML-to-PPTX tools preserve manifest, validation, draft, and atomic-write invariants. Their results are the source of truth for artifact state.",
+          "- Safe file, memory, and web observation tools remain available for diagnosis. Choose inspection, patching, rewriting, or further research from the evidence you observe.",
+          "- Generic write, move, delete, and terminal tools are unavailable while the dedicated artifact guard is active, preventing writes that bypass its validation boundary.",
+          "",
+        ]
+      : []),
     "Runtime context:",
     `- Workspace root: ${getWorkspaceRoot(workspaceRoot)}`,
     "- Workspace rule: this is the session-dedicated execution directory. Store task-created intermediate files, generated artifacts, and command outputs here.",
@@ -466,37 +509,11 @@ function formatToolExecutionError(toolName: string, error: unknown) {
   const reason =
     error instanceof Error ? error.message : "工具执行失败，未获得可解析的错误信息。";
 
-  const strategyHints: Record<string, string[]> = {
-    fetch_url: [
-      "尝试同主题的其他公开 URL",
-      "先用 search_web 寻找备用网址、镜像页或官方文档页",
-      "如果页面需要登录、强 JavaScript 或有反爬，考虑换来源而不是重复抓取同一地址",
-    ],
-    search_web: [
-      "缩小或改写查询词",
-      "减少结果数量，或改成更明确的站点/文档关键词",
-      "如果已经有候选链接，可直接尝试 fetch_url",
-    ],
-    read_file: [
-      "先用 list_files 或 search_in_files 确认路径",
-      "检查目标是否为二进制文件、目录或超出工作区范围",
-    ],
-    run_terminal: [
-      "根据 stdout/stderr 调整命令参数或执行目录",
-      "避免原样重复同一命令",
-    ],
-  };
-
-  const hints = strategyHints[toolName] ?? [
-    "根据失败原因切换策略，而不是机械重试同一操作",
-  ];
-
   return [
     "Tool execution failed.",
     `Tool: ${toolName}`,
     `Reason: ${reason}`,
-    "Suggested next actions:",
-    ...hints.map((hint) => `- ${hint}`),
+    "Observed status: this call did not complete successfully, so no successful state change is recorded for it.",
   ].join("\n");
 }
 
@@ -527,8 +544,24 @@ function summarizeMessage(message: AgentMessage): TraceContextMessage {
   };
 }
 
-function toTraceToolDefinitions(activeSkillNames: string[] = []) {
-  return getToolDefinitions(activeSkillNames).map((tool) => ({
+export function getStepToolDefinitions(
+  activeSkillNames: string[] = [],
+  slideArtifactPhase: SlideArtifactPhase = "off",
+) {
+  const definitions = getToolDefinitions(activeSkillNames);
+
+  if (slideArtifactPhase !== "off") {
+    return definitions.filter((tool) => SLIDE_ARTIFACT_TOOL_NAMES.has(tool.name));
+  }
+
+  return definitions;
+}
+
+function toTraceToolDefinitions(
+  activeSkillNames: string[] = [],
+  slideArtifactPhase: SlideArtifactPhase = "off",
+) {
+  return getStepToolDefinitions(activeSkillNames, slideArtifactPhase).map((tool) => ({
     description: tool.description,
     inputSchema:
       "input_schema" in tool && tool.input_schema ? tool.input_schema : undefined,
@@ -536,14 +569,24 @@ function toTraceToolDefinitions(activeSkillNames: string[] = []) {
   })) satisfies TraceToolDefinition[];
 }
 
+export function isToolAllowedForExecution(
+  toolName: string,
+  requestedToolNames: ReadonlySet<string>,
+  currentPhaseToolNames: ReadonlySet<string>,
+) {
+  return requestedToolNames.has(toolName) && currentPhaseToolNames.has(toolName);
+}
+
 function createContextSnapshot({
   conversation,
   modelConfig,
+  projection,
   system,
   tools,
 }: {
   conversation: AgentMessage[];
   modelConfig?: ModelConnectionConfig;
+  projection?: ActiveContextProjectionMetadata;
   system: string;
   tools: TraceToolDefinition[];
 }): TraceContextSnapshot {
@@ -565,6 +608,7 @@ function createContextSnapshot({
 
   return {
     messages,
+    ...(projection ? { projection } : {}),
     stats: {
       assistantMessageCount,
       contentBlockCount,
@@ -643,6 +687,22 @@ function createFinalAnswerRepairMessage({
     "- For research answers, start with a short '核心判断' section before detailed coverage.",
     "- Preserve the user's explicit requested structure, source categories, comparison axes, and labels.",
     "- Qualify weak benchmark, numeric, vendor, preprint, future-dated, or unreleased-model claims.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function createArtifactOutputRecoveryMessage({
+  stopReason,
+}: {
+  stopReason: string | null | undefined;
+}) {
+  return [
+    "Internal model-output observation:",
+    "The previous response ended before it produced a complete executable tool call or a visible answer.",
+    stopReason ? `Observed stop reason: ${stopReason}.` : "",
+    "Observed state change: none; no tool from that response was executed.",
+    "Continue the unfinished artifact task from the current accepted artifacts and task state. Keep pre-action planning concise enough to leave room for complete tool arguments.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -787,15 +847,26 @@ function createBlockedToolResult({
   stopReason: string | null | undefined;
   toolCall: AgentToolUseBlock;
 }) {
-  if (isLengthStopReason(stopReason)) {
+  if (!toolCall.inputComplete && ARTIFACT_WRITE_TOOL_NAMES.has(toolCall.name)) {
+    return [
+      "Tool call was not executed.",
+      `Tool: ${toolCall.name}`,
+      "Reason: The provider stream ended before this tool input block was complete.",
+      `Observation: ${JSON.stringify({
+        code: "ARTIFACT_CHUNK_TRUNCATED",
+        inputComplete: false,
+        tool: toolCall.name,
+      })}`,
+      "Observed status: no artifact write was attempted from this incomplete input.",
+    ].join("\n");
+  }
+
+  if (!toolCall.inputComplete || isLengthStopReason(stopReason)) {
     return [
       "Tool call was not executed.",
       `Tool: ${toolCall.name}`,
       `Reason: The model response stopped with '${stopReason}', so the tool arguments may be truncated or incomplete.`,
-      "Required next action:",
-      "- Do not retry the same large tool call.",
-      "- If the user explicitly requested a file, retry with much smaller valid JSON arguments or a concise artifact.",
-      "- If the user asked for advice or a design answer, provide the final answer in chat instead of writing a file.",
+      "Observed status: the incomplete tool input was not executed.",
     ].join("\n");
   }
 
@@ -807,29 +878,22 @@ function createBlockedToolResult({
     toolCall.rawInput
       ? `Raw arguments excerpt:\n${toolCall.rawInput.slice(0, 1600)}`
       : "",
-    "Required next action:",
-    "- Retry with valid compact JSON arguments only if the tool is still necessary.",
-    "- Do not pass long final reports through tool arguments.",
-    "- For advisory tasks, answer directly in chat.",
+    "Observed status: invalid arguments were not executed.",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-function createToolCallRepairMessage({
-  blockedCount,
-}: {
-  blockedCount: number;
-}) {
-  const shouldForceFinal =
-    blockedCount >= MAX_UNSAFE_TOOL_CALL_REPAIR_ATTEMPTS;
+export function isUnsafeToolCall(toolCall: AgentToolUseBlock) {
+  return !toolCall.inputComplete || Boolean(toolCall.inputParseError);
+}
 
+function createToolCallRepairMessage(blockedCount: number) {
   return [
-    "Internal tool-call guard:",
-    "One or more tool calls were not executed because their arguments were unsafe, invalid, or likely truncated.",
-    shouldForceFinal
-      ? "You have hit this guard repeatedly. Stop calling tools and provide the best concise final answer in Chinese from the existing evidence."
-      : "Choose the next step carefully. If a tool is still necessary, use small valid JSON arguments. If the user did not explicitly request a file, answer in chat.",
+    "Internal tool-call observation:",
+    "One or more calls in the previous response were rejected before execution because their arguments were incomplete or invalid.",
+    `Rejected tool-call groups observed in this run: ${blockedCount}.`,
+    "The preceding tool results contain the complete observed reasons; no successful state change was recorded for the rejected calls.",
   ].join("\n");
 }
 
@@ -942,6 +1006,45 @@ function createToolTaskStatePatch({
       : null;
   }
 
+  if (toolName === "write_slide_fragment") {
+    const deckDir = readStringField(input, "deckDir");
+    const slideId = readStringField(input, "slideId");
+    const filePath =
+      deckDir && slideId
+        ? `${deckDir.replace(/[\\/]+$/, "")}/slides/${slideId}.html`
+        : "";
+
+    return filePath
+      ? {
+          currentMode: "edit",
+          filesTouched: [filePath],
+          nextAction: success
+            ? "继续写入下一页 slide fragment，完成后组装 deck.html。"
+            : "修复当前 slide fragment 后重试。",
+          verificationStatus: "pending",
+        }
+      : null;
+  }
+
+  if (toolName === "assemble_slide_deck") {
+    const deckDir = readStringField(input, "deckDir");
+    const outHtml = readStringField(input, "outHtml");
+    const filePath =
+      outHtml ||
+      (deckDir ? `${deckDir.replace(/[\\/]+$/, "")}/deck.html` : "");
+
+    return filePath
+      ? {
+          currentMode: "edit",
+          filesTouched: [filePath],
+          nextAction: success
+            ? "准备并导出已组装的 deck.html。"
+            : "补齐或修复 slide fragments 后重新组装。",
+          verificationStatus: "pending",
+        }
+      : null;
+  }
+
   if (toolName === "move_path") {
     const sourcePath = readStringField(input, "from");
     const targetPath = readStringField(input, "to");
@@ -1011,11 +1114,23 @@ function createToolTaskStatePatch({
   if (toolName === "list_files" || toolName === "read_file" || toolName === "search_in_files") {
     return {
       currentMode: "recon",
-      nextAction: "基于只读侦察结果选择下一步。",
     };
   }
 
   return null;
+}
+
+export function keepObservedFileTouches(
+  patch: TaskStatePatch | null,
+  success: boolean,
+) {
+  if (!patch || success || !patch.filesTouched) {
+    return patch;
+  }
+
+  const observedPatch = { ...patch };
+  delete observedPatch.filesTouched;
+  return observedPatch;
 }
 
 function shouldRunCompletionGuard(taskState: TaskState, guardCount: number) {
@@ -1630,17 +1745,20 @@ export async function runAgentTurn({
       },
     ],
   }));
+  const initialConversationMessageCount = conversation.length;
   const latestUserPrompt =
     [...messages].reverse().find((message) => message.role === "user")?.content ??
     "";
   let taskState = createInitialTaskState(latestUserPrompt);
   let completionGuardCount = 0;
+  let artifactOutputRecoveryCount = 0;
   let emptyFinalRepairCount = 0;
   let chunkedFinalState: ChunkedFinalState | null = null;
   let modelFailureRecoveryCount = 0;
   let researchAnswerQualityRepairCount = 0;
   let researchFinalizationGuardCount = 0;
   let unsafeToolCallRepairCount = 0;
+  let slideArtifactPhase: SlideArtifactPhase = "off";
   const researchMode = toolSettings?.researchMode ?? false;
   const researchSignals = createInitialResearchSignals();
   const researchNotebook = createResearchNotebook({
@@ -1790,12 +1908,24 @@ export async function runAgentTurn({
       emitTaskState();
 
       const activeSkillNames = getActiveSkillNames();
-      const toolDefinitions = getToolDefinitions(activeSkillNames);
-      const traceToolDefinitions = toTraceToolDefinitions(activeSkillNames);
+      const stepModelConfig: ModelConnectionConfig | undefined = modelConfig;
+      const stepRuntime = getModelRuntimeInfo(stepModelConfig);
+      const toolDefinitions = getStepToolDefinitions(
+        activeSkillNames,
+        slideArtifactPhase,
+      );
+      const traceToolDefinitions = toTraceToolDefinitions(
+        activeSkillNames,
+        slideArtifactPhase,
+      );
+      const requestedToolNames = new Set(
+        toolDefinitions.map((tool) => tool.name),
+      );
       const system = createSystemPrompt({
         activeSkillNames,
+        slideArtifactPhase,
         researchMode,
-        runtime,
+        runtime: stepRuntime,
         skillRuntimeInstructions: buildSkillRuntimeInstructions({
           activeSkillNames,
           toolSettings,
@@ -1806,10 +1936,17 @@ export async function runAgentTurn({
         toolNames: toolDefinitions.map((tool) => tool.name),
         workspaceRoot,
       });
+      const activeContext = buildActiveContextProjection({
+        conversation,
+        initialMessageCount: initialConversationMessageCount,
+        phase: slideArtifactPhase,
+      });
+      const activeMessages = activeContext.messages;
 
       const context = createContextSnapshot({
-        conversation,
-        modelConfig,
+        conversation: activeMessages,
+        modelConfig: stepModelConfig,
+        projection: activeContext.metadata,
         system,
         tools: traceToolDefinitions,
       });
@@ -1825,8 +1962,8 @@ export async function runAgentTurn({
       emit({
         request: buildMessageRequest({
           system,
-          messages: conversation,
-          modelConfig,
+          messages: activeMessages,
+          modelConfig: stepModelConfig,
           tools: toolDefinitions,
         }),
         runId,
@@ -1869,8 +2006,8 @@ export async function runAgentTurn({
       try {
         assistantResult = await createMessage({
           system,
-          messages: conversation,
-          modelConfig,
+          messages: activeMessages,
+          modelConfig: stepModelConfig,
           onThinkingDelta: ({ delta }) => {
             if (!delta) {
               return;
@@ -1881,7 +2018,7 @@ export async function runAgentTurn({
             thinkingEmitter.enqueue(delta);
           },
           onRetry: ({ attempt, reason }) => {
-            const message = `${runtime.model} 服务暂时不稳定，正在自动重试（${attempt}/1）。原因：${reason}`;
+            const message = `${stepRuntime.model} 服务暂时不稳定，正在自动重试（${attempt}/1）。原因：${reason}`;
 
             emit({
               message,
@@ -2018,16 +2155,72 @@ export async function runAgentTurn({
         type: "model_response",
       });
 
+      if (toolUseBlocks.length > 0) {
+        artifactOutputRecoveryCount = 0;
+      }
+
       if (toolUseBlocks.length === 0) {
         const responseWasTruncated = isLengthStopReason(
           assistantResult.response.stopReason,
         );
         const responseHasVisibleContent = Boolean(visibleContent.trim());
+        const artifactActionIncomplete =
+          slideArtifactPhase !== "off" &&
+          taskState.verification.status !== "passed" &&
+          taskState.verification.status !== "skipped";
 
         if (responseWasTruncated || !responseHasVisibleContent) {
           const reason = responseWasTruncated
             ? "model output reached the token limit before a complete visible answer was available"
             : "model returned no visible answer";
+
+          if (artifactActionIncomplete) {
+            if (
+              artifactOutputRecoveryCount >=
+              MAX_ARTIFACT_OUTPUT_RECOVERY_ATTEMPTS
+            ) {
+              throw new Error(
+                `模型在未完成的产物阶段连续 ${MAX_ARTIFACT_OUTPUT_RECOVERY_ATTEMPTS + 1} 次没有返回完整工具调用或可见回答：${reason}。`,
+              );
+            }
+
+            artifactOutputRecoveryCount += 1;
+            emit({
+              message:
+                "模型输出在产物阶段提前结束，未执行任何工具；正在从当前 accepted 产物继续。",
+              runId,
+              stepId,
+              stepIndex,
+              timestamp: Date.now(),
+              type: "status",
+            });
+            conversation.push({
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: createArtifactOutputRecoveryMessage({
+                    stopReason: assistantResult.response.stopReason,
+                  }),
+                },
+              ],
+            });
+
+            completedSteps = stepIndex;
+            emit({
+              durationMs: Date.now() - stepStartedAt,
+              endedAt: Date.now(),
+              runId,
+              status: "completed",
+              stepId,
+              stepIndex,
+              stopReason: "artifact_output_recovery",
+              type: "step_completed",
+            });
+            currentStepOpen = false;
+            continue;
+          }
+
           const shouldUseChunkedRepair =
             responseWasTruncated &&
             isNonTrivialResearchRequest(latestUserPrompt, taskState) &&
@@ -2419,9 +2612,6 @@ export async function runAgentTurn({
       }
 
       const toolResults: AgentToolResultBlock[] = [];
-      const responseHasUnsafeToolCalls = isLengthStopReason(
-        assistantResult.response.stopReason,
-      );
       let blockedToolCallCount = 0;
 
       for (const toolCall of toolUseBlocks) {
@@ -2445,7 +2635,61 @@ export async function runAgentTurn({
           type: "tool_call",
         });
 
-        if (responseHasUnsafeToolCalls || toolCall.inputParseError) {
+        const currentPhaseToolNames = new Set(
+          getStepToolDefinitions(activeSkillNames, slideArtifactPhase).map(
+            (tool) => tool.name,
+          ),
+        );
+
+        if (
+          !isToolAllowedForExecution(
+            toolCall.name,
+            requestedToolNames,
+            currentPhaseToolNames,
+          )
+        ) {
+          const result = [
+            "Tool call was not executed.",
+            `Tool: ${toolCall.name}`,
+            "Reason: This tool was not present in the current model request.",
+            `Current slide artifact phase: ${slideArtifactPhase}`,
+            `Tools advertised in this request: ${[...currentPhaseToolNames].join(", ")}`,
+            "Observed status: the unadvertised call was rejected before execution.",
+          ].join("\n");
+          const durationMs = Date.now() - toolStartedAt;
+
+          blockedToolCallCount += 1;
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolCall.id,
+            content: result,
+            is_error: true,
+          });
+          emit({
+            durationMs,
+            name: toolCall.name,
+            result,
+            runId,
+            startedAt: toolStartedAt,
+            stepId,
+            stepIndex,
+            success: false,
+            toolUseId: toolCall.id,
+            type: "tool_result",
+          });
+          await recordToolMemoryOutcome({
+            input: toolCall.input,
+            result,
+            success: false,
+            taskMemory,
+            toolName: toolCall.name,
+          });
+          await syncTaskMemory();
+          emitTaskState();
+          continue;
+        }
+
+        if (isUnsafeToolCall(toolCall)) {
           const result = createBlockedToolResult({
             stopReason: assistantResult.response.stopReason,
             toolCall,
@@ -2549,6 +2793,55 @@ export async function runAgentTurn({
           await syncTaskMemory();
           emitTaskState();
 
+          if (activeSkillNames.includes("html-to-pptx")) {
+            if (
+              slideArtifactPhase === "off" &&
+              toolCall.name === "init_slide_html_workspace"
+            ) {
+              slideArtifactPhase = "styles";
+              emit({
+                message:
+                  "HTML-to-PPTX 工件防线已启用；thinking 保持用户配置，安全观察与专用工件工具继续可用。",
+                runId,
+                stepId,
+                stepIndex,
+                timestamp: Date.now(),
+                type: "status",
+              });
+            }
+
+            if (
+              slideArtifactPhase === "styles" &&
+              toolCall.name === "assemble_deck_styles"
+            ) {
+              slideArtifactPhase = "slides";
+              emit({
+                message:
+                  "全局样式已通过工具校验并组装，当前工件关注点更新为页面与导出。",
+                runId,
+                stepId,
+                stepIndex,
+                timestamp: Date.now(),
+                type: "status",
+              });
+            }
+
+            if (
+              slideArtifactPhase === "slides" &&
+              toolCall.name === "assemble_slide_deck"
+            ) {
+              emit({
+                message:
+                  "逐页工件已经组装完成；专用工件防线保持启用，后续可继续检查、导出或验证。",
+                runId,
+                stepId,
+                stepIndex,
+                timestamp: Date.now(),
+                type: "status",
+              });
+            }
+          }
+
           if (
             RESEARCH_TOOL_NAMES.has(toolCall.name) &&
             researchNotebook.hasContent()
@@ -2598,12 +2891,15 @@ export async function runAgentTurn({
             type: "tool_result",
           });
 
-          const patch = createToolTaskStatePatch({
-            input: toolCall.input,
-            result,
-            success: false,
-            toolName: toolCall.name,
-          });
+          const patch = keepObservedFileTouches(
+            createToolTaskStatePatch({
+              input: toolCall.input,
+              result,
+              success: false,
+              toolName: toolCall.name,
+            }),
+            false,
+          );
 
           if (patch) {
             applyTaskPatch(patch);
@@ -2628,14 +2924,13 @@ export async function runAgentTurn({
 
       if (blockedToolCallCount > 0) {
         unsafeToolCallRepairCount += 1;
+
         conversation.push({
           role: "user",
           content: [
             {
               type: "text",
-              text: createToolCallRepairMessage({
-                blockedCount: unsafeToolCallRepairCount,
-              }),
+              text: createToolCallRepairMessage(unsafeToolCallRepairCount),
             },
           ],
         });
