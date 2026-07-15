@@ -10,6 +10,7 @@ import { runAgentTurn } from "../../lib/agent";
 import { EventBus } from "../../lib/events/event-bus";
 import { EventMapper } from "../../lib/runs/event-mapper";
 import { RunRegistry } from "../../lib/runs/run-registry";
+import { RunTraceStore } from "../../lib/runs/run-trace-store";
 import {
   listSessionHistories,
   readSessionHistory,
@@ -32,6 +33,7 @@ import {
 } from "../../lib/html-design/catalog";
 import { listSkillIndices } from "../../lib/skills/registry";
 import { getWorkspaceRoot } from "../../lib/workspace";
+import { registerRunTraceRoutes } from "./run-trace-routes";
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_PICKER_TIMEOUT_MS = 120_000;
@@ -618,6 +620,8 @@ export function createServerApp() {
   const app = express();
   const eventBus = new EventBus();
   const registry = new RunRegistry();
+  const traceStore = new RunTraceStore(eventBus, registry);
+  traceStore.start();
   const eventMapper = new EventMapper(eventBus, registry);
   eventMapper.start();
 
@@ -1003,8 +1007,23 @@ export function createServerApp() {
     const { runId, streamKey } = registry.start({
       sessionId: payload.sessionId,
       modelConfig: payload.modelSettings,
+      workspaceRoot: workspacePath,
     });
     const handle = registry.get(runId);
+
+    try {
+      await traceStore.initializeRun(runId);
+    } catch (error) {
+      registry.finish(runId, "failed");
+      response.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "无法初始化运行 Trace。",
+        ok: false,
+      });
+      return;
+    }
 
     response.status(200).json({
       ok: true,
@@ -1015,7 +1034,7 @@ export function createServerApp() {
 
     void (async () => {
       try {
-        await runAgentTurn({
+        const result = await runAgentTurn({
           runId,
           sessionId: payload.sessionId,
           streamKey,
@@ -1027,10 +1046,8 @@ export function createServerApp() {
           toolSettings: payload.toolSettings,
           workspaceRoot: workspacePath,
         });
-        registry.finish(
-          runId,
-          handle?.abortController.signal.aborted ? "cancelled" : "completed",
-        );
+        await traceStore.flush(runId);
+        registry.finish(runId, result.status);
       } catch (error) {
         registry.finish(
           runId,
@@ -1064,6 +1081,8 @@ export function createServerApp() {
 
     response.json({ ok: true, result: { runs } });
   });
+
+  registerRunTraceRoutes(app, registry, traceStore);
 
   // Event 通道：SSE 单向下行广播。基于 lastSeq 回放 durable 事件 + 实时推送，支持断线续传。
   app.get("/api/events", (request, response) => {

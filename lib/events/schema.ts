@@ -22,6 +22,10 @@ import type {
   TraceToolDefinition,
 } from "../trace";
 import type { TaskState } from "../task-state";
+import type { AcceptanceDelta, AcceptanceSnapshot } from "../acceptance";
+import type { AttemptDelta } from "../plan-attempt";
+import type { StepProgressReceipt } from "../progress";
+import type { ObservedState, ToolReceipt } from "../receipts/types";
 
 // ---- 共享展示类型（前后端共用，展示逻辑后移后的契约）-------------------------
 
@@ -116,6 +120,7 @@ export type StepCompletedEvent = StepLocator & {
   status: "completed" | "failed" | "cancelled";
   endedAt: number;
   durationMs: number;
+  error?: string;
   stopReason?: string | null;
 };
 
@@ -136,6 +141,17 @@ export type ToolCompletedEvent = StepLocator & {
   startedAt: number;
   endedAt: number;
   durationMs: number;
+};
+
+export type ToolBatchStartedEvent = StepLocator & {
+  type: "tool.batch.started";
+  count: number;
+  toolUseIds: string[];
+};
+
+export type ToolReceiptEvent = StepLocator & {
+  type: "tool.receipt";
+  receipt: ToolReceipt;
 };
 
 export type TextStartedEvent = StepLocator & {
@@ -198,6 +214,49 @@ export type RunStatusEvent = {
   message: string;
 };
 
+export type ObservedStateUpdatedEvent = StepLocator & {
+  type: "state.observed.updated";
+  observedState: ObservedState;
+};
+
+export type AttemptUpdatedEvent = StepLocator & {
+  type: "attempt.updated";
+  attemptDelta: AttemptDelta;
+};
+
+export type AssumptionInvalidatedEvent = StepLocator & {
+  type: "assumption.invalidated";
+  assumptionIds: string[];
+  evidenceRefs: string[];
+  reason: string;
+};
+
+export type AcceptanceUpdatedEvent = StepLocator & {
+  type: "acceptance.updated";
+  acceptanceDelta: AcceptanceDelta;
+  acceptanceState: AcceptanceSnapshot;
+};
+
+export type ProgressReceiptEvent = StepLocator & {
+  type: "progress.receipt";
+  progressReceipt: StepProgressReceipt;
+};
+
+export type RecoveryStartedEvent = StepLocator & {
+  type: "recovery.started";
+  acceptanceGap: string[];
+  contextSnapshotHash: string;
+  error: string;
+};
+
+export type CompletionCheckedEvent = StepLocator & {
+  type: "completion.checked";
+  acceptanceGap: string[];
+  evidenceRefs: string[];
+  ready: boolean;
+  reason: string;
+};
+
 export type TraceEvent =
   | RunStartedEvent
   | RunCompletedEvent
@@ -205,6 +264,8 @@ export type TraceEvent =
   | StepCompletedEvent
   | ToolStartedEvent
   | ToolCompletedEvent
+  | ToolBatchStartedEvent
+  | ToolReceiptEvent
   | TextStartedEvent
   | TextCompletedEvent
   | ThinkingStartedEvent
@@ -214,7 +275,14 @@ export type TraceEvent =
   | ContextSnapshotEvent
   | TaskStateEvent
   | ResearchStateEvent
-  | RunStatusEvent;
+  | RunStatusEvent
+  | ObservedStateUpdatedEvent
+  | AttemptUpdatedEvent
+  | AssumptionInvalidatedEvent
+  | AcceptanceUpdatedEvent
+  | ProgressReceiptEvent
+  | RecoveryStartedEvent
+  | CompletionCheckedEvent;
 
 // ---- Layer 3: ClientNotification（durable，前端 UI 主消费）------------------
 
@@ -308,6 +376,8 @@ export const DURABLE_EVENT_TYPES: ReadonlySet<string> = new Set<StreamEventV2["t
   "step.completed",
   "tool.started",
   "tool.completed",
+  "tool.batch.started",
+  "tool.receipt",
   "text.started",
   "text.completed",
   "thinking.started",
@@ -318,6 +388,13 @@ export const DURABLE_EVENT_TYPES: ReadonlySet<string> = new Set<StreamEventV2["t
   "task.state",
   "research.state",
   "run.status",
+  "state.observed.updated",
+  "attempt.updated",
+  "assumption.invalidated",
+  "acceptance.updated",
+  "progress.receipt",
+  "recovery.started",
+  "completion.checked",
   "activity.appended",
   "activity.display_updated",
   "assistant.message",

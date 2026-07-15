@@ -31,6 +31,8 @@ import {
 } from "./display-fallback";
 
 const RUN_COMPLETION_DISPLAY_TIMEOUT_MS = 8000;
+const ACTIVITY_REWRITE_ENABLED =
+  process.env.RANNI_ACTIVITY_REWRITE_ENABLED?.trim().toLowerCase() === "true";
 
 type ToolStartedEvent = Extract<TraceEvent, { type: "tool.started" }>;
 
@@ -270,7 +272,9 @@ export class EventMapper {
     });
 
     // 后端异步调用 LLM 生成 model display，完成后下发 display_updated（展示逻辑后移）。
-    const modelConfig = this.registry.get(runId)?.modelConfig;
+    const modelConfig = ACTIVITY_REWRITE_ENABLED
+      ? this.registry.get(runId)?.modelConfig
+      : undefined;
     if (modelConfig) {
       const promise = this.rewriteToolCallDisplay(event, activityId, modelConfig);
       this.addPending(runId, promise);

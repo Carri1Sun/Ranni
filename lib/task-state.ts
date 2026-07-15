@@ -83,6 +83,18 @@ export type TaskStatePatch = {
   verificationStatus?: VerificationStatus;
 };
 
+export const AGENT_NOTE_FIELDS = [
+  "currentMode",
+  "nextAction",
+  "assumptions",
+  "openQuestions",
+  "plan",
+] as const;
+
+export type AgentNoteField = (typeof AGENT_NOTE_FIELDS)[number];
+
+export type AgentNotePatch = Pick<TaskStatePatch, AgentNoteField>;
+
 function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -111,6 +123,46 @@ function mergeList(current: string[], next?: string[], limit?: number) {
 
 function cleanScalar(value: string | undefined) {
   return typeof value === "string" ? value.trim() : undefined;
+}
+
+function stableHash(value: string) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function getChangedAgentNoteFields(
+  current: TaskState,
+  next: TaskState,
+): AgentNoteField[] {
+  return AGENT_NOTE_FIELDS.filter(
+    (field) => JSON.stringify(current[field]) !== JSON.stringify(next[field]),
+  );
+}
+
+export function getTaskStateHash(taskState: TaskState) {
+  return stableHash(
+    JSON.stringify({
+      assumptions: taskState.assumptions,
+      commandsRun: taskState.commandsRun,
+      constraints: taskState.constraints,
+      currentMode: taskState.currentMode,
+      deliverable: taskState.deliverable,
+      facts: taskState.facts,
+      filesTouched: taskState.filesTouched,
+      goal: taskState.goal,
+      nextAction: taskState.nextAction,
+      openQuestions: taskState.openQuestions,
+      plan: taskState.plan,
+      successCriteria: taskState.successCriteria,
+      verification: taskState.verification,
+    }),
+  );
 }
 
 export function createInitialTaskState(latestUserPrompt: string): TaskState {

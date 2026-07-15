@@ -1,12 +1,16 @@
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 import type { ToolDefinition } from "../tools";
 
 export type SkillIndex = {
+  bodyHash: string;
   description: string;
   name: string;
+  resourcePaths: string[];
+  version: string;
 };
 
 export type SkillManifest = SkillIndex & {
@@ -74,6 +78,7 @@ function parseFrontmatter(content: string, filePath: string) {
 
   const name = fields.get("name")?.trim() ?? "";
   const description = fields.get("description")?.trim() ?? "";
+  const version = fields.get("version")?.trim() || "v1";
 
   if (!name || !description) {
     throw new Error(`${filePath} 必须声明 name 和 description。`);
@@ -87,7 +92,29 @@ function parseFrontmatter(content: string, filePath: string) {
     body: body.trim(),
     description,
     name,
+    version,
   };
+}
+
+function hashBody(body: string) {
+  return createHash("sha256").update(body).digest("hex");
+}
+
+function listSkillResources(skillDir: string) {
+  const resources: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === ".DS_Store" || entry.name === "node_modules") continue;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+      } else if (entry.name !== "SKILL.md" && !/^tools\.[cm]?[jt]s$/.test(entry.name)) {
+        resources.push(path.relative(skillDir, absolutePath));
+      }
+    }
+  };
+  visit(skillDir);
+  return resources.sort();
 }
 
 function hasToolShape(value: unknown): value is ToolDefinition {
@@ -188,7 +215,9 @@ function scanSkills() {
       seenNames.add(parsed.name);
       manifests.push({
         ...parsed,
+        bodyHash: hashBody(parsed.body),
         dir: skillDir,
+        resourcePaths: listSkillResources(skillDir),
         tools: readSkillTools(skillDir, parsed.name),
       });
     } catch (error) {
@@ -213,9 +242,12 @@ function getSkillManifest(name: string) {
 }
 
 export function listSkillIndices(): SkillIndex[] {
-  return getManifests().map(({ description, name }) => ({
+  return getManifests().map(({ bodyHash, description, name, resourcePaths, version }) => ({
+    bodyHash,
     description,
     name,
+    resourcePaths,
+    version,
   }));
 }
 

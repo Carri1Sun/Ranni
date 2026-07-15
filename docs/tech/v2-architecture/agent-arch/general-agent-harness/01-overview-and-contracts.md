@@ -6,7 +6,7 @@ date: 2026-07-14
 
 # Ranni 通用 Agent Harness：总览与共享契约
 
-> 状态：开发方案草案
+> 状态：核心架构、持久化 Trace、首批产品投影与真实运行验收已完成
 >
 > 文档角色：三文档套件的总入口、统一术语和共享契约
 >
@@ -17,6 +17,23 @@ date: 2026-07-14
 - 总览与共享契约（当前）
 - [Runtime 与质量闭环](./02-runtime-and-quality.md)
 - [可观测性与交付](./03-observability-and-delivery.md)
+
+## 当前实施快照（2026-07-15）
+
+本套文档继续作为共享契约与演进基线。当前代码已经完成以下核心迁移：
+
+| 契约 | 当前落点 | 状态 |
+| --- | --- | --- |
+| 公共入口 | `lib/agent.ts` 仅保留稳定 facade；Server 与 research eval 继续调用 `runAgentTurn` | 已落地 |
+| 运行边界 | `lib/agent/` 拆分 Run Controller、Step Runner、Tool Batch Executor、Finalization、Recovery、Event Sink 和 Run State | 已落地 |
+| Context | `lib/context/composer.ts` 保留最近四个完整因果轮次，在 75% 安全输入预算阈值后压缩较老历史，并记录稳定前缀失效与可复用消息 | 已落地 |
+| 状态与回执 | Receipt Registry、Observed State、Task Contract、Agent Note、Acceptance、Progress 和 Plan / Attempt 分责 | 已落地 |
+| Skill / Policy | Skill Index 记录 version、body hash 和资源；动态 Skill 会升级交付契约；PPTX、静态 HTML 与通用 workspace 工件通过 Policy 进入验收 | 已落地 |
+| 完成与恢复 | PPTX 需要 validated 回执和精确页数；Provider 故障保留现场，缺口存在时返回 checkpoint | 已落地 |
+| Event Log / Step I/O | workspace 中持久化 `trace.jsonl`、Run / Step 索引和输入输出文件，提供三个查询 API | 已落地 |
+| 产品投影 | 运行概览、验收清单、交付缺口、完成依据、上下文健康和 Step 输入输出查看器消费持久化 API | 已落地 |
+
+指定的 GLM-5.2 调研与八页新粗野风格 PPTX 任务已通过本地 Codex Provider 完整运行，最终 PPTX、八页渲染结果和验证回执均已检查。以下能力作为后续增强继续演进：独立 Raw / Diff / 区间导出 API、checkpoint 自动 resume、完整分支树和并行路线比较。历史 Session 可以通过已选择的 workspaceRoot 重新发现磁盘 Run 与 Step I/O；长回答 chunked-final 已通过独立控制器接入新运行链路，完整聚合后才进入 Acceptance 验收。
 
 ## 0. 文档目的与阅读顺序
 
@@ -464,7 +481,7 @@ Acceptance Ledger
 Plan / Attempt Ledger + 重规划
 → 防止完整历史把模型长期锁在已经失败的路线中
 
-运行概览 + Steering + checkpoint 恢复
+运行概览 + Steering + checkpoint 现场
 → 让用户理解过程、改变方向并审查完成依据
 ```
 
@@ -477,5 +494,4 @@ Context 连续性是可靠执行的基础，验证闭环和重规划机制进一
 - Archive 按容量预算压缩较老历史，同时保存被替代路线的结论和引用。
 - 语义失效标记随新证据即时更新，不等待 Token 压缩触发。
 
-首批实现优先提供单路线内的失效标记、强制重规划和 checkpoint 恢复。完整分支树、并行路线探索和结果比较根据真实运行数据再决定是否扩展。
-
+首批实现已经提供单路线内的失效标记、事实性重规划提示和 checkpoint 现场保存。checkpoint 自动 resume、完整分支树、并行路线探索和结果比较根据真实运行数据继续演进。

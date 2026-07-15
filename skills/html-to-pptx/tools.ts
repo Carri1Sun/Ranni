@@ -6,7 +6,10 @@ import path from "node:path";
 import { load } from "cheerio";
 import { z } from "zod";
 
-import { findHtmlDesignStyle } from "../../lib/html-design/catalog";
+import {
+  findHtmlDesignStyle,
+  listHtmlDesignStyles,
+} from "../../lib/html-design/catalog";
 import type { ToolDefinition, ToolExecutionContext } from "../../lib/tools";
 import {
   findHtmlToPptxSampleDeck,
@@ -45,7 +48,11 @@ const initSlideHtmlWorkspaceSchema = z.object({
   dir: z.string().min(1).optional(),
   overwrite: z.boolean().default(false),
   prompt: z.string().min(1).optional(),
-  styleId: z.string().min(1).optional(),
+  styleId: z.preprocess(
+    (value) =>
+      typeof value === "string" && !value.trim() ? undefined : value,
+    z.string().trim().min(1).optional(),
+  ),
   exampleDeck: z.enum(["spike-sample"]).optional(),
   title: z.string().min(1).default("HTML to PPTX spike"),
 });
@@ -1064,7 +1071,14 @@ async function initSlideHtmlWorkspace(
   }
 
   if (selectedDesignStyleId && !selectedDesignStyle) {
-    throw new Error(`未找到 HTML 设计风格：${selectedDesignStyleId}`);
+    const availableStyleIds = listHtmlDesignStyles().map((style) => style.id);
+    throw new Error(
+      [
+        `未找到 HTML 设计风格：${selectedDesignStyleId}`,
+        `可用风格 ID：${availableStyleIds.join(", ") || "无"}`,
+        "也可以省略 styleId，并通过受限样式片段创建自定义风格。",
+      ].join("\n"),
+    );
   }
 
   const subDirectories = [

@@ -6,7 +6,7 @@ date: 2026-07-14
 
 # Ranni 通用 Agent Harness：Runtime 与质量闭环开发方案
 
-> 状态：开发方案草案
+> 状态：核心 Runtime、兼容回归与真实运行验收已完成
 >
 > 文档角色：Agent Runtime、Context、状态、质量闭环、Skill Policy 与代码拆分
 >
@@ -21,6 +21,21 @@ date: 2026-07-14
 ## 开发边界
 
 本文件负责可执行 Runtime 的内部设计。Task Contract、Observed State、Working Set、Tool Receipt、Progress Receipt、Deliverable Contract、Plan / Attempt Ledger 和 Acceptance Ledger 的语义引用《总览与共享契约》。Event Log 持久化、查询 API、运行概览和 Step 查看器由《可观测性与交付》负责。
+
+## 当前实现摘要（2026-07-15）
+
+- `lib/agent.ts` 已从 3011 行主循环收敛为稳定 facade。
+- `lib/agent/` 已建立 Controller、Runner、State、Executor、Finalization、Recovery、Policy、Event Sink 和 Streaming 边界。
+- Context Composer V2 已成为主请求路径；旧 `active-context.ts` 只保留不裁剪 conversation 的兼容 facade。
+- Receipt Registry 是文件、命令、证据、工件、验证和错误进入 Observed State 的统一入口。
+- Acceptance、Progress、Attempt、同策略真实失败检查、`noObjectiveProgressStreak` 3 / 6 轮提醒、`noMeaningfulProgressStreak` 6 轮路线重置与 10 轮 checkpoint 已接入每个工具 Step。
+- HTML-to-PPTX Policy 已迁出通用 Controller，并通过 Deliverable Contract、专属 Receipt projector 和 Completion Guard 约束工件。
+- 动态 `load_skill` 会在下一 Step 重新派生 Deliverable Contract；静态 HTML 与通用 workspace 文件任务也由客观文件、命令和验证回执约束完成。
+- ChatGPT Subscription Provider 已实现原子 SSE 提交与最多两次额外瞬时故障重试。
+
+后续结构增强包括继续缩小 Step Runner、接入 checkpoint 自动恢复入口，以及在现有 workspace、命令黑名单与工具级防线之上抽象通用 SideEffectGate。这些增强不影响本次核心 Runtime 完成状态。长回答 chunked-final 已迁入独立纯控制器，并在聚合完成后进入 Acceptance 验收。
+
+当前 Composition Manifest 已记录 stable prefix hash、真实失效原因、cache-eligible message count、Skill version / body hash、压缩原因、因果配对和 snapshot hash。Research Handoff 提供 thesis、findings、claimIds、sourceIds、artifactPlan、openGaps 和 weakEvidence。模型 assumptions 会进入 Attempt Ledger；具有相同策略签名的真实失败连续发生，或 `noMeaningfulProgressStreak` 达到路线重置阈值时，Harness 才会把相关假设标记为 rejected 并发布 `assumption.invalidated`。`noObjectiveProgressStreak` 的 3 / 6 轮阈值只提供交付节奏提醒。
 
 ## 1. Context Composer V2
 
@@ -314,7 +329,7 @@ type AcceptanceCriterion = {
 
 同义或无效更新返回 `noChange: true`。工具说明中移除“编辑前使用”等仪式化引导。Task Contract 和 Observed State 的权威字段不允许被该工具覆盖。
 
-该工具可以更新 Agent Note、提出新 attempt 或申请结束当前 attempt。它不能直接把 Acceptance Criterion 标记为 passed，也不能声明产生了 objective progress。
+该工具可以更新 Agent Note 和 plan；非空且发生变化的 plan 会被 Step Runner 提交为新 attempt。当前工具没有单独的“结束 attempt”字段。它不能直接把 Acceptance Criterion 标记为 passed，也不能声明产生了 objective progress。
 
 ### 2.3 Progress Receipt
 
@@ -339,6 +354,7 @@ type StepProgressReceipt = {
   deliverableGapBefore: string[];
   deliverableGapAfter: string[];
   strategySignature: string;
+  noMeaningfulProgressStreak: number;
   noObjectiveProgressStreak: number;
   sameStrategyFailureStreak: number;
   stateHash: string;
@@ -375,17 +391,17 @@ type StepProgressReceipt = {
 - 重复报告同一个错误。
 - 只改变 next action 文本，没有外部事实变化。
 
-Information gain 可以为模型提供一次有界的诊断机会，但不能持续重置 `noObjectiveProgressStreak`。`strategySignature` 至少包含 active attempt、主要工具、关键路径、查询和目标 artifact，用于识别同一路线的重复失败。
+Information gain 不重置 `noObjectiveProgressStreak`，因此 3 / 6 轮提醒仍能推动模型判断证据是否已经足够。这两个阈值只提醒交付节奏，不单独把 Attempt 标记为 failed，也不触发 assumption invalidation。成功的新证据、真实观察或工件 / 文件 / 命令 / 验证回执会重置 `noMeaningfulProgressStreak`；状态更新、失败回执和重复结果不会重置它。Tool Receipt 的 `strategySignature` 由工具名与关键 path、query、URL、command 或目标 artifact 派生，连续 Step 的 Progress Receipt 用它识别同一动作路线的真实重复失败；Attempt Delta 记录触发时所属路线及替代关系。
 
 ### 2.4 No-progress Watchdog
 
-Watchdog 根据交付缺口、策略签名和回退事实介入。Information gain 与 objective progress 分开累计。
+Watchdog 根据交付缺口、策略签名和回退事实介入。Information gain 与 objective progress 分开累计；必需交付缺口为空后停止发布停滞提醒。
 
 #### 同一策略连续失败 2 轮
 
 - 保留完整证伪过程。
 - 要求模型重新检查当前 hypothesis 和 exit criteria。
-- 当前路线缺少继续依据时，将 attempt 标记为 failed 或 superseded，并创建新 attempt。
+- 只有相同 `strategySignature` 连续产生真实失败回执时，才将当前 attempt 标记为 failed 或 superseded，并使相关 assumption 失效。
 
 #### 连续 3 轮
 
@@ -399,16 +415,21 @@ Watchdog 根据交付缺口、策略签名和回退事实介入。Information ga
 请重新评估策略，选择能够改变外部状态的动作，或说明明确阻塞。
 ```
 
+该提醒只反映交付缺口连续三轮未缩小，不改变 Attempt 或 Assumption 状态。
+
 #### 连续 6 轮
 
 - 保留完整 Recent Causal Tail。
-- 强制结束或替代持续失败的 active attempt。
-- 发起一次包含失效假设、失败证据和未完成验收项的策略重置请求。
+- 发起一次包含当前假设、已有失败证据和未完成验收项的强交付节奏提醒。
 - 对已经连续返回 `noChange` 的维护性工具暂时降权或隐藏一轮。
 - 继续开放安全观察、工件、研究和验证工具。
+- `noObjectiveProgressStreak` 达到 6 本身不结束 active attempt，也不使 assumption 失效。
+
+当 `noMeaningfulProgressStreak` 达到路线重置阈值，或相同策略连续产生真实失败回执时，Plan / Attempt Ledger 才会记录 failed、superseded 和 assumption invalidation。该判断绑定 Tool Receipt 与状态 hash。
 
 #### 连续 10 轮
 
+- 仅在 `noMeaningfulProgressStreak` 达到 10 时触发；持续获得新证据或真实工件准备不会被硬停。
 - 保存 checkpoint。
 - 终止当前无进展循环。
 - 返回已完成内容、阻塞条件、最近失败、Acceptance Gap 和恢复入口。
@@ -591,9 +612,9 @@ tool + path + query + glob + options + workspaceVersion
 
 ## 5. `agent.ts` 职责审计与代码改造地图
 
-### 5.1 审计结论
+### 5.1 迁移前审计基线
 
-当前 `lib/agent.ts` 已经承担过多职责，需要在 Context Composer V2 和新状态模型落地前完成拆分骨架。
+以下数据记录 2026-07-14 迁移前的基线，用于解释本轮拆分原因。当前公共文件已经收敛为 facade。
 
 行数是可见症状，核心风险来自职责和状态耦合：通用 Run 编排器直接感知 Research 质量启发式、HTML-to-PPTX phase、工具白名单、Prompt 大段文本、事件兼容层、Task Memory 写入、分段最终回答和多类 Recovery。任何一项策略变化都可能修改同一个主循环。
 
@@ -612,7 +633,7 @@ tool + path + query + glob + options + workspaceVersion
 
 这些数字不单独作为代码质量判定，但它们与当前职责混合相互印证。
 
-### 5.2 当前不合理的职责边界
+### 5.2 迁移前的职责耦合
 
 | 当前内容 | 主要问题 | 目标归属 |
 | --- | --- | --- |
@@ -622,7 +643,7 @@ tool + path + query + glob + options + workspaceVersion
 | Legacy StreamEvent → v2 EventBus | 事件兼容细节侵入业务控制流 | `lib/agent/event-sink.ts` |
 | 工具合法性、安全检查、执行、结果、Memory、TaskState | 成功和失败分支重复副作用，Receipt 没有形成唯一事实入口 | `lib/agent/tool-batch-executor.ts` 与 Receipt Registry |
 | `createToolTaskStatePatch` | 通用 Agent 按工具名硬编码事实派生 | Tool Receipt projector 与兼容 TaskState adapter |
-| Research signals、引用数量和可读性正则 | 领域质量策略进入通用 Harness | `lib/research/runtime-policy.ts` |
+| Research Notebook、signals 与持久化服务创建 | 领域服务创建不应进入 Controller 业务分支 | `lib/agent/runtime-services.ts` 作为创建适配边界，具体能力由 `lib/research.ts` 提供 |
 | `SlideArtifactPhase`、静态工具白名单和 phase 推进 | 重型 Skill 的生命周期进入通用 Harness | `lib/html-to-pptx/artifact-policy.ts` |
 | 截断修复、分段最终回答、Completion Guard | 多个 final 分支以固定顺序内嵌在主循环 | `lib/agent/finalization-controller.ts` |
 | Provider failure recovery | 直接重写 conversation，可能绕过 Deliverable 和 Acceptance 检查 | `lib/agent/recovery-controller.ts` |
@@ -634,7 +655,7 @@ tool + path + query + glob + options + workspaceVersion
 2. **状态转换缺少单一入口。** conversation、TaskState、Task Memory、Research Signals、Skill 集合、artifact phase 和多个 guard counter 分别原地修改，无法通过一个 reducer 重放 Step。
 3. **最终回答分支形成隐式优先级。** 截断修复、chunk protocol、Research Guard、Completion Guard 和 final delivery 依靠代码位置与 `continue` 决定顺序，新增 Guard 容易改变既有行为。
 
-### 5.3 目标调用关系
+### 5.3 当前调用关系
 
 ```text
 lib/agent.ts public facade
@@ -651,7 +672,7 @@ lib/agent.ts public facade
     └── Recovery Controller
 
 Skill Runtime
-├── Research Runtime Policy
+├── Runtime Services Adapter → Research Notebook / Task Memory
 └── HTML-to-PPTX Artifact Policy
 ```
 
@@ -714,7 +735,9 @@ type RunPolicy = {
 边界约束：
 
 - Policy 返回指令、能力约束、状态 delta 或 GuardDecision，不直接修改 conversation。
-- Run Controller 不导入 Research、PPTX 或其他 Skill 的具体类型。
+- Run Controller 与 Step Runner 的业务控制流不包含按 Research、PPTX 或其他领域名称分支。
+- `lib/agent/runtime-services.ts` 是 Research Notebook 与 Task Memory 的领域服务创建适配边界；它向 Controller 暴露窄运行依赖。
+- `lib/agent.ts` 对 HTML-to-PPTX 工具定义的 re-export 是现有公共调用方的兼容桥，不承载领域运行策略。
 - Context Composer 只读取状态快照，不执行工具、不写 Task Memory。
 - Tool Batch Executor 只执行本轮请求并生成 Receipt，不直接把任务标记为完成。
 - Receipt Registry 是 Observed State、Progress、Acceptance 和 TaskState 兼容投影的唯一事实入口。
@@ -752,14 +775,14 @@ type RunPolicy = {
 | `lib/context/system-prompt.ts` | 稳定 Harness prompt shell 与 Run Policy 指令片段组装 |
 | `lib/receipts/registry.ts` | 统一 Tool Receipt、Observed State、内容引用和状态 hash |
 | `lib/task-state.ts` | Task Contract、Agent Note、Observed State 的兼容与迁移 |
-| `lib/plan-attempt.ts` | Plan / Attempt、Assumption、策略签名、失效和替代关系 |
+| `lib/plan-attempt.ts` | Plan / Attempt、Assumption、失败阈值消费、失效和替代关系 |
 | `lib/acceptance.ts` | Acceptance Ledger、交付缺口、证据绑定和用户豁免 |
-| `lib/task-memory.ts` | Working Set、Research Handoff、checkpoint 和 Archive 引用 |
+| `lib/task-memory.ts` | checkpoint、错误、证据和 durable memory；Working Set 由 Run State 构建 |
 | `lib/tools.ts` | 保留工具公共 registry facade；定义和执行逐步迁入 `lib/tools/` 子模块 |
-| `lib/research/runtime-policy.ts` | Research signals、完成质量、引用和可读性策略 |
-| `lib/html-to-pptx/artifact-policy.ts` | Artifact Guard、工具能力、工件状态和 Research Handoff |
-| `lib/providers/` | Provider continuation、原生 compact、物理序列化和稳定前缀策略 |
+| `lib/agent/runtime-services.ts` | 隔离通用 Controller 与 Research Notebook / Task Memory 的具体创建 |
+| `lib/html-to-pptx/artifact-policy.ts` | PPTX Deliverable Contract、工具能力和工件 Receipt projector；Research Handoff 由通用 Working Set 构建 |
+| `lib/llm/providers/` | Provider continuation、原子重试、物理序列化和协议适配 |
 | `lib/skills/registry.ts` | Skill 索引、版本、body hash、工具和资源元数据 |
 | `lib/skills/runtime-instructions.ts` | Skill 正文进入 Context 的结构化表示 |
-| `lib/runs/run-registry.ts` | Run budget、checkpoint、request kind 和取消 |
+| `lib/runs/run-registry.ts` | Run workspace 映射、Steering、状态、并发计数和取消 |
 | `docs/tech/` | 更新 Harness、Skill、Context 和组件地图文档 |

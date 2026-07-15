@@ -117,6 +117,9 @@ export function mapLegacyTraceEvent(
         durationMs: event.durationMs,
         totalSteps: event.totalSteps,
         ...(event.error ? { error: event.error } : {}),
+        ...(event.finalAssistantMessage
+          ? { finalAssistantMessage: event.finalAssistantMessage }
+          : {}),
       };
 
     case "step_started":
@@ -139,6 +142,7 @@ export function mapLegacyTraceEvent(
         status: event.status,
         endedAt: event.endedAt,
         durationMs: event.durationMs,
+        ...(event.error ? { error: event.error } : {}),
         ...(event.stopReason !== undefined
           ? { stopReason: event.stopReason }
           : {}),

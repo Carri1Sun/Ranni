@@ -142,6 +142,12 @@
 | `context_snapshot` | 写入 run / step trace。 | 消息流不新增内容。 |
 | `model_request` | 写入 run / step trace。 | 消息流不新增内容。 |
 | `model_response` | 写入 run / step trace。 | 消息流不新增内容。 |
+| `tool.batch.started` / `tool.receipt` | 写入 Step 输出和工具配对。 | 消息流不新增内容；Step 输入输出查看器按 `toolUseId` 展示调用、结果和回执。 |
+| `state.observed.updated` | 更新客观现场。 | 消息流不新增内容；运行概览和 Step 输出使用该事件展示工件、验证和错误事实。 |
+| `attempt.updated` / `assumption.invalidated` | 更新当前路线和失效假设。 | 消息流不新增内容；运行概览展示路线替代原因，Step 输出保留完整变更。 |
+| `acceptance.updated` | 更新验收清单和交付缺口。 | 消息流不新增内容；运行概览展示验收状态和客观依据。 |
+| `progress.receipt` | 更新三轴进展回执。 | 消息流不新增内容；运行概览、Step 列表和运行状态栏展示交付推进摘要。 |
+| `completion.checked` / `recovery.started` | 记录完成判定或恢复现场。 | 消息流不新增内容；运行概览展示完成依据和阻塞，Step 输出展示判定详情。 |
 | `step_completed`，状态为 `completed` | 写入 step trace。 | 成功 step 完成当前不新增内容。 |
 | 活动文案改写结果 | 更新已有过程项。 | 不新增消息流条目，只改写标题、说明、图标或 meta。 |
 
@@ -188,15 +194,12 @@
 | 验收清单 | Acceptance Checklist | 按用户要求列出已通过、待处理、失败、未知和已豁免的验收项。 |
 | 交付缺口 | Deliverable Gap | 当前仍未满足的必需工件、验证和用户要求。 |
 | 完成依据 | Completion Evidence | 支撑验收项通过和 Run 完成判定的文件、工件、命令或验证回执。 |
-| 运行控制区 | Run Controls | 发送补充要求、暂停、从检查点恢复和进入 Step 详情的控制区。 |
-| 恢复检查点按钮 | Resume From Checkpoint Button | 从已保存现场创建新的策略尝试并继续执行。 |
 | Step 输入输出查看器 | Step I/O Viewer | 结构化查看每个 Step 的实际输入、输出、工具配对、状态和进展回执。 |
 | 输入构成列表 | Input Composition List | 按语义区块展示 Step 输入。 |
 | 输入构成项 | Input Composition Item | 输入构成列表中的单个语义区块。 |
 | 输出构成列表 | Output Composition List | 按语义区块展示 Step 输出。 |
 | 输出构成项 | Output Composition Item | 输出构成列表中的单个语义区块。 |
 | 上下文健康检查 | Context Health | 展示因果链、交付推进、失效假设和稳定前缀等事实指标。 |
-| Step 对比 | Step Diff | 对比相邻 Step 的 Context、状态、路线、验收和进展变化。 |
 | 原始数据 | Raw Data | 查看脱敏后的模型请求、响应、Trace 事件和 Provider Metadata。 |
 | 进展回执 | Progress Receipt | 展示交付推进、信息增量、结果回退和连续停滞计数。 |
 | 因果链完整性 | Causal Integrity | 展示上一轮 reasoning、tool call、tool result 和回执是否完整保留。 |

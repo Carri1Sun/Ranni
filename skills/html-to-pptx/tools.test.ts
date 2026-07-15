@@ -62,7 +62,7 @@ test("validates a registered design style before creating workspace files", asyn
         },
         workspaceRoot,
       ),
-      /未找到 HTML 设计风格/,
+      /未找到 HTML 设计风格：[\s\S]*neo-brutalism[\s\S]*省略 styleId/,
     );
     await assert.rejects(
       readFile(
@@ -70,6 +70,32 @@ test("validates a registered design style before creating workspace files", asyn
         "utf8",
       ),
       /ENOENT/,
+    );
+  } finally {
+    await rm(workspaceRoot, { force: true, recursive: true });
+  }
+});
+
+test("treats an empty optional style id as a custom-style workspace", async () => {
+  const workspaceRoot = await mkdtemp(
+    path.join(os.tmpdir(), "ranni-slide-init-empty-style-"),
+  );
+
+  try {
+    await runTool(
+      "init_slide_html_workspace",
+      {
+        deckSlug: "custom-style-deck",
+        styleId: "",
+      },
+      workspaceRoot,
+    );
+    assert.match(
+      await readFile(
+        path.join(workspaceRoot, "custom-style-deck", "deck.html"),
+        "utf8",
+      ),
+      /HTML to PPTX spike/,
     );
   } finally {
     await rm(workspaceRoot, { force: true, recursive: true });

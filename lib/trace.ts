@@ -1,4 +1,13 @@
 import type { TaskState } from "./task-state";
+import type {
+  ContextCompositionManifest,
+  TaskContractView,
+  WorkingSetView,
+} from "./context/types";
+import type { AcceptanceDelta, AcceptanceSnapshot } from "./acceptance";
+import type { AttemptDelta } from "./plan-attempt";
+import type { StepProgressReceipt } from "./progress";
+import type { ObservedState, ToolReceipt } from "./receipts/types";
 
 export type TraceRuntimeInfo = {
   baseUrl: string;
@@ -33,6 +42,8 @@ export type TraceContextMessage = {
 };
 
 export type TraceContextSnapshot = {
+  archiveSummary?: string;
+  composition?: ContextCompositionManifest;
   messages: TraceContextMessage[];
   projection?: {
     applied: boolean;
@@ -78,7 +89,9 @@ export type TraceContextSnapshot = {
     userMessageCount: number;
   };
   systemPrompt: string;
+  taskContract?: TaskContractView;
   tools: TraceToolDefinition[];
+  workingSet?: WorkingSetView;
 };
 
 export type TraceModelRequest = {
@@ -126,7 +139,10 @@ export type TraceToolResult = {
 };
 
 export type TraceStep = {
+  acceptanceDelta?: AcceptanceDelta;
+  acceptanceState?: AcceptanceSnapshot;
   assistantText: string;
+  attemptDelta?: AttemptDelta;
   context?: TraceContextSnapshot;
   durationMs?: number;
   endedAt?: number;
@@ -135,6 +151,8 @@ export type TraceStep = {
   request?: TraceModelRequest;
   researchState?: string;
   response?: TraceModelResponse;
+  observedState?: ObservedState;
+  progressReceipt?: StepProgressReceipt;
   startedAt: number;
   status: "running" | "completed" | "failed" | "cancelled";
   statusMessages: TraceStatusMessage[];
@@ -144,6 +162,7 @@ export type TraceStep = {
   thinking: string;
   toolCalls: TraceToolCall[];
   toolResults: TraceToolResult[];
+  toolReceipts?: ToolReceipt[];
 };
 
 export type TraceRun = {
@@ -277,6 +296,7 @@ export type StreamEvent =
   | {
       durationMs: number;
       endedAt: number;
+      error?: string;
       runId: string;
       status: "completed" | "failed" | "cancelled";
       stepId: string;
@@ -288,6 +308,7 @@ export type StreamEvent =
       durationMs: number;
       endedAt: number;
       error?: string;
+      finalAssistantMessage?: string;
       runId: string;
       status: "completed" | "failed" | "cancelled";
       totalSteps: number;

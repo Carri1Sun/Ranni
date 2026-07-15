@@ -1510,8 +1510,38 @@
 
 .traceActionBar {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   justify-content: flex-end;
+}
+
+.traceViewToggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: auto;
+  padding: 3px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-inset-surface);
+}
+
+.traceViewToggle button,
+.stepIOTabs button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.traceViewToggle .traceViewToggleActive,
+.stepIOTabs .stepIOTabActive {
+  border-color: rgba(143, 167, 255, 0.3);
+  background: var(--ranni-accent-soft);
+  color: var(--ranni-text-0);
 }
 
 .summaryCard,
@@ -1624,6 +1654,395 @@
   border: 1px solid var(--ranni-line-1);
   border-radius: var(--radius-sm);
   background: var(--ranni-subtle-surface);
+}
+
+.semanticPanelStack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.semanticPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(135deg, rgba(143, 167, 255, 0.08), transparent 58%),
+    var(--ranni-soft-surface);
+}
+
+.semanticPanelHeader > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.semanticPanelHeader p {
+  color: var(--ranni-accent-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.semanticPanelHeader h2 {
+  color: var(--ranni-text-0);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.traceAvailability {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-pill);
+  background: var(--ranni-inset-surface);
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.traceAvailabilityWarning {
+  border-color: rgba(230, 195, 106, 0.32);
+  background: var(--ranni-warning-soft);
+  color: var(--ranni-warning);
+}
+
+.semanticMetricGrid,
+.semanticOverviewGrid,
+.progressAxes,
+.contextHealthGrid,
+.outputCompositionGrid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.semanticMetricGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.semanticMetricGrid article {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: var(--space-3);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-soft-surface);
+}
+
+.semanticMetricGrid span,
+.progressAxes span,
+.contextHealthGrid span,
+.semanticNextAction span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.semanticMetricGrid strong,
+.progressAxes strong,
+.contextHealthGrid strong {
+  overflow-wrap: anywhere;
+  color: var(--ranni-text-0);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.semanticOverviewGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.semanticCard {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-soft-surface);
+  box-shadow: var(--shadow-inset);
+}
+
+.semanticCard > pre,
+.compositionItem pre,
+.toolPairItem pre {
+  max-height: 420px;
+  overflow: auto;
+  padding: 13px 14px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-code-bg);
+  color: var(--ranni-code-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.semanticCardHeader,
+.compositionItem summary,
+.toolPairItem summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.semanticCardHeader h3,
+.compositionItem summary strong,
+.toolPairItem summary strong {
+  color: var(--ranni-text-0);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.semanticCardHeader span,
+.compositionItem summary span,
+.toolPairItem summary span,
+.semanticMeta {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.semanticLead {
+  color: var(--ranni-text-0);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.semanticNotice,
+.semanticSuccessNotice {
+  padding: 10px 11px;
+  border-left: 2px solid var(--ranni-warning);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--ranni-warning-soft);
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.semanticSuccessNotice {
+  border-left-color: var(--ranni-success);
+  background: var(--ranni-success-soft);
+}
+
+.semanticNextAction {
+  display: grid;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.semanticNextAction strong {
+  color: var(--ranni-text-0);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.acceptanceList,
+.semanticList,
+.compositionList,
+.toolPairList,
+.outputCompositionGrid {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.acceptanceItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.acceptanceItem > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.acceptanceItem strong {
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.acceptanceItem small {
+  overflow-wrap: anywhere;
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.acceptanceStatus {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-pill);
+  color: var(--ranni-text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.acceptance_passed {
+  border-color: rgba(104, 214, 163, 0.3);
+  background: var(--ranni-success-soft);
+  color: var(--ranni-success);
+}
+
+.acceptance_failed {
+  border-color: rgba(255, 107, 122, 0.34);
+  background: var(--ranni-danger-soft);
+  color: var(--ranni-danger);
+}
+
+.acceptance_pending,
+.acceptance_unknown {
+  border-color: rgba(230, 195, 106, 0.3);
+  background: var(--ranni-warning-soft);
+  color: var(--ranni-warning);
+}
+
+.acceptance_waived {
+  color: var(--ranni-text-3);
+}
+
+.semanticList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ranni-text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.semanticEmpty {
+  color: var(--ranni-text-3);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.semanticSubheading {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--ranni-line-1);
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.progressAxes,
+.contextHealthGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.progressAxes div,
+.contextHealthGrid div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.semanticSuccessText {
+  color: var(--ranni-success) !important;
+}
+
+.semanticWarningText {
+  color: var(--ranni-warning) !important;
+}
+
+.stepIOTabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-inset-surface);
+}
+
+.compositionItem,
+.toolPairItem {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.compositionItem summary,
+.toolPairItem summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.compositionItem summary::-webkit-details-marker,
+.toolPairItem summary::-webkit-details-marker {
+  display: none;
+}
+
+.compositionItem pre,
+.toolPairItem pre {
+  margin-top: var(--space-3);
+}
+
+.toolPairGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.toolPairGrid > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.toolPairGrid > div > span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.legacyTraceDetails {
+  padding: var(--space-3);
+  border: 1px dashed var(--ranni-line-2);
+  border-radius: var(--radius-md);
+  background: var(--ranni-subtle-surface);
+}
+
+.legacyTraceDetails > summary {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.legacyTraceStack {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .composer {
@@ -3188,8 +3607,15 @@
   }
 
   .traceSummaryGrid,
-  .kvGrid {
+  .kvGrid,
+  .semanticMetricGrid,
+  .progressAxes,
+  .contextHealthGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolPairGrid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3228,9 +3654,22 @@
 
   .traceSummaryGrid,
   .kvGrid,
+  .semanticMetricGrid,
+  .semanticOverviewGrid,
+  .progressAxes,
+  .contextHealthGrid,
   .processDebugSummary,
   .inspectorMetrics {
     grid-template-columns: 1fr;
+  }
+
+  .semanticPanelHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .traceAvailability {
+    width: fit-content;
   }
 
   .textarea,

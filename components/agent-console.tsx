@@ -31,6 +31,10 @@ import type {
   TraceToolResult,
   TraceUsage,
 } from "../lib/trace";
+import type {
+  StepTraceIO,
+  StepTraceSummary,
+} from "../lib/runs/run-trace-store";
 import {
   ACTION_MODES,
   VERIFICATION_STATUSES,
@@ -38,6 +42,13 @@ import {
 } from "../lib/task-state";
 
 import { MarkdownContent } from "./markdown-content";
+import { RunOverviewPanel, StepIOViewer } from "./run-observability";
+import {
+  buildRunOverviewView,
+  getPersistedStepProgress,
+  selectStepIOForView,
+  type TraceLoadStatus,
+} from "./run-observability-model";
 import styles from "./agent-console.module.css";
 
 type MessageRole = "user" | "assistant";
@@ -51,6 +62,7 @@ type ActivityType =
   | "research"
   | "thinking";
 type ViewMode = "chat" | "report" | "trace";
+type TraceDetailMode = "overview" | "step-io";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId =
   | "chatgpt-subscription"
@@ -244,6 +256,15 @@ type ActiveAgentRunState = Record<
     startedAt: number;
   }
 >;
+
+type PersistedStepTraceState = {
+  error?: string;
+  io?: StepTraceIO;
+  runId: string;
+  selectedStepId: string;
+  status: TraceLoadStatus;
+  steps: StepTraceSummary[];
+};
 
 type ActivityDebugTarget = {
   activityId: string;
@@ -3442,6 +3463,15 @@ export function AgentConsole({
   const [activeView, setActiveView] = useState<ViewMode>("chat");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
   const [selectedStepId, setSelectedStepId] = useState<string>("");
+  const [traceDetailMode, setTraceDetailMode] =
+    useState<TraceDetailMode>("overview");
+  const [persistedStepTrace, setPersistedStepTrace] =
+    useState<PersistedStepTraceState>({
+      runId: "",
+      selectedStepId: "",
+      status: "idle",
+      steps: [],
+    });
   const [input, setInput] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
   const [isSessionHistoryIndexLoaded, setIsSessionHistoryIndexLoaded] =
@@ -4389,6 +4419,9 @@ export function AgentConsole({
 
   const activeSession =
     sessions.find((session) => session.id === activeSessionId) ?? sessions[0];
+  const traceRunForLoading =
+    activeSession?.runs.find((run) => run.id === selectedRunId) ??
+    activeSession?.runs[0];
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -4533,6 +4566,203 @@ export function AgentConsole({
       setSelectedStepId(nextStep.id);
     }
   }, [activeSession, selectedRunId, selectedStepId]);
+
+  useEffect(() => {
+    const runId = traceRunForLoading?.id;
+    if (!runId || isDraftSessionActive) {
+      setPersistedStepTrace({
+        runId: "",
+        selectedStepId: "",
+        status: "idle",
+        steps: [],
+      });
+      return;
+    }
+
+    let disposed = false;
+    let requestInFlight = false;
+    const controller = new AbortController();
+    const workspaceQuery = activeSession?.workspaceRoot
+      ? `?workspaceRoot=${encodeURIComponent(activeSession.workspaceRoot)}`
+      : "";
+
+    const refresh = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      const localStepId =
+        selectedStepId ||
+        traceRunForLoading.steps[traceRunForLoading.steps.length - 1]?.id ||
+        "";
+
+      setPersistedStepTrace((current) => {
+        if (
+          current.runId === runId &&
+          current.selectedStepId === localStepId &&
+          current.status === "success"
+        ) {
+          return current;
+        }
+        return {
+          runId,
+          selectedStepId: localStepId,
+          status: "loading",
+          steps: current.runId === runId ? current.steps : [],
+        };
+      });
+
+      try {
+        const stepsResponse = await fetch(
+          `${apiBaseUrl}/api/runs/${encodeURIComponent(runId)}/steps${workspaceQuery}`,
+          { signal: controller.signal },
+        );
+        if (!stepsResponse.ok) {
+          throw new Error(
+            stepsResponse.status === 404
+              ? "持久化 Run Trace 尚未建立"
+              : `读取 Step 索引失败（${stepsResponse.status}）`,
+          );
+        }
+        const stepsPayload = (await stepsResponse.json()) as {
+          error?: string;
+          ok: boolean;
+          result?: { steps?: StepTraceSummary[] };
+        };
+        if (!stepsPayload.ok) {
+          throw new Error(stepsPayload.error || "读取 Step 索引失败");
+        }
+        const steps = Array.isArray(stepsPayload.result?.steps)
+          ? stepsPayload.result.steps
+          : [];
+        if (!disposed && steps.length > 0) {
+          setSessions((current) =>
+            current.map((session) => {
+              if (session.id !== activeSession?.id) return session;
+              return {
+                ...session,
+                runs: session.runs.map((run) => {
+                  if (run.id !== runId) return run;
+                  const existingById = new Map(
+                    run.steps.map((step) => [step.id, step]),
+                  );
+                  const restoredSteps = steps
+                    .slice()
+                    .sort((left, right) => left.stepIndex - right.stepIndex)
+                    .map((summary) => {
+                      const existing = existingById.get(summary.stepId);
+                      return {
+                        ...(existing ??
+                          createEmptyStep(summary.stepId, summary.stepIndex)),
+                        durationMs: summary.durationMs,
+                        endedAt: summary.endedAt,
+                        startedAt: summary.startedAt,
+                        status: summary.status,
+                        stepIndex: summary.stepIndex,
+                        stopReason: summary.stopReason,
+                      } satisfies TraceStep;
+                    });
+                  const persistedStepIds = new Set(
+                    restoredSteps.map((step) => step.id),
+                  );
+                  const mergedSteps = [
+                    ...restoredSteps,
+                    ...run.steps.filter(
+                      (step) => !persistedStepIds.has(step.id),
+                    ),
+                  ].sort((left, right) => left.stepIndex - right.stepIndex);
+                  return {
+                    ...run,
+                    steps: mergedSteps,
+                    totalSteps: Math.max(run.totalSteps, mergedSteps.length),
+                  };
+                }),
+              };
+            }),
+          );
+        }
+        const requestedStepId =
+          selectedStepId || localStepId || steps[steps.length - 1]?.stepId || "";
+        let io: StepTraceIO | undefined;
+        let ioMessage = "";
+
+        if (requestedStepId) {
+          const ioResponse = await fetch(
+            `${apiBaseUrl}/api/runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(requestedStepId)}/io${workspaceQuery}`,
+            { signal: controller.signal },
+          );
+          if (ioResponse.ok) {
+            const ioPayload = (await ioResponse.json()) as {
+              error?: string;
+              ok: boolean;
+              result?: { io?: StepTraceIO };
+            };
+            if (ioPayload.ok) {
+              io = ioPayload.result?.io;
+            } else {
+              ioMessage = ioPayload.error || "Step I/O 尚未写入";
+            }
+          } else {
+            ioMessage =
+              ioResponse.status === 404
+                ? "Step I/O 正在写入"
+                : `读取 Step I/O 失败（${ioResponse.status}）`;
+          }
+        }
+
+        if (!disposed) {
+          setPersistedStepTrace({
+            ...(ioMessage ? { error: ioMessage } : {}),
+            io,
+            runId,
+            selectedStepId: requestedStepId,
+            status:
+              io || !requestedStepId
+                ? "success"
+                : traceRunForLoading.status === "running"
+                  ? "loading"
+                  : "error",
+            steps,
+          });
+        }
+      } catch (error) {
+        if (disposed || controller.signal.aborted) return;
+        setPersistedStepTrace({
+          error:
+            error instanceof Error
+              ? error.message
+              : "持久化 Step Trace 暂不可用",
+          runId,
+          selectedStepId: localStepId,
+          status: "error",
+          steps: [],
+        });
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void refresh();
+    const timer =
+      traceRunForLoading.status === "running"
+        ? window.setInterval(() => void refresh(), 1500)
+        : undefined;
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+      }
+    };
+  }, [
+    activeSession?.id,
+    activeSession?.workspaceRoot,
+    apiBaseUrl,
+    isDraftSessionActive,
+    selectedStepId,
+    traceRunForLoading?.id,
+    traceRunForLoading?.status,
+    traceRunForLoading?.steps.length,
+  ]);
 
   const orderedSessions = [...sessions].sort(
     (left, right) => right.updatedAt - left.updatedAt,
@@ -5107,23 +5337,67 @@ export function AgentConsole({
   // 同时清理 activeAgentRuns / activeAgentRequestsRef —— 它们只作 UI 缓存，不能当长期事实来源。
   const reconcileSessionRuns = useCallback(
     async (sessionId: string) => {
-      let backend = new Map<string, string>();
-      try {
-        const response = await fetch(
+      const sessionRecord = sessionsRef.current.find(
+        (session) => session.id === sessionId,
+      );
+      const workspaceQuery = sessionRecord?.workspaceRoot
+        ? `?workspaceRoot=${encodeURIComponent(sessionRecord.workspaceRoot)}`
+        : "";
+      const backend = new Map<string, string>();
+      let persistedRuns: Array<{
+        durationMs?: number;
+        endedAt?: number;
+        error?: string;
+        finalAssistantMessage?: string;
+        prompt?: string;
+        runId: string;
+        runtime?: unknown;
+        startedAt: number;
+        status: string;
+        taskState?: unknown;
+        totalSteps?: number;
+      }> = [];
+      let statusLoaded = false;
+      let traceLoaded = false;
+
+      await Promise.all([
+        fetch(
           `${apiBaseUrl}/api/runs/status?sessionId=${encodeURIComponent(sessionId)}`,
-        );
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          ok: boolean;
-          result?: { runs: { runId: string; status: string }[] };
-        };
-        backend = new Map(
-          (payload.result?.runs ?? []).map((run) => [run.runId, run.status]),
-        );
-      } catch (error) {
-        console.warn("Failed to reconcile runs.", error);
+        )
+          .then(async (response) => {
+            if (!response.ok) return;
+            const payload = (await response.json()) as {
+              ok: boolean;
+              result?: { runs: { runId: string; status: string }[] };
+            };
+            statusLoaded = payload.ok;
+            for (const run of payload.result?.runs ?? []) {
+              backend.set(run.runId, run.status);
+            }
+          })
+          .catch((error) => {
+            console.warn("Failed to reconcile live runs.", error);
+          }),
+        fetch(
+          `${apiBaseUrl}/api/sessions/${encodeURIComponent(sessionId)}/runs${workspaceQuery}`,
+        )
+          .then(async (response) => {
+            if (!response.ok) return;
+            const payload = (await response.json()) as {
+              ok: boolean;
+              result?: { runs?: typeof persistedRuns };
+            };
+            traceLoaded = payload.ok;
+            persistedRuns = Array.isArray(payload.result?.runs)
+              ? payload.result.runs
+              : [];
+          })
+          .catch((error) => {
+            console.warn("Failed to reconcile persisted runs.", error);
+          }),
+      ]);
+
+      if (!statusLoaded && !traceLoaded) {
         return;
       }
 
@@ -5132,25 +5406,86 @@ export function AgentConsole({
           if (session.id !== sessionId) {
             return session;
           }
+          const persistedById = new Map(
+            persistedRuns.map((run) => [run.runId, run]),
+          );
+          const localRunIds = new Set(session.runs.map((run) => run.id));
+          const reconciledRuns = session.runs.map((run) => {
+            const persisted = persistedById.get(run.id);
+            const persistedTerminalStatus =
+              persisted?.status === "completed" ||
+              persisted?.status === "failed" ||
+              persisted?.status === "cancelled"
+                ? persisted.status
+                : undefined;
+            const backendStatus = backend.get(run.id) ?? persistedTerminalStatus;
+            const nextStatus =
+              backendStatus === "running" ||
+              backendStatus === "completed" ||
+              backendStatus === "failed" ||
+              backendStatus === "cancelled"
+                ? backendStatus
+                : run.status === "running" || run.status === "interrupted"
+                  ? "interrupted"
+                  : run.status;
+
+            return {
+              ...run,
+              ...(persisted?.durationMs !== undefined
+                ? { durationMs: persisted.durationMs }
+                : {}),
+              ...(persisted?.endedAt !== undefined
+                ? { endedAt: persisted.endedAt }
+                : {}),
+              ...(persisted?.error ? { error: persisted.error } : {}),
+              ...(persisted?.finalAssistantMessage
+                ? { finalAssistantMessage: persisted.finalAssistantMessage }
+                : {}),
+              ...(persisted?.taskState
+                ? { taskState: sanitizeTaskState(persisted.taskState) }
+                : {}),
+              status: nextStatus,
+              totalSteps: persisted?.totalSteps ?? run.totalSteps,
+            } satisfies TraceRun;
+          });
+          const restoredRuns: TraceRun[] = persistedRuns
+            .filter((run) => !localRunIds.has(run.runId))
+            .map((run) => ({
+              durationMs: run.durationMs,
+              endedAt: run.endedAt,
+              error: run.error,
+              finalAssistantMessage: run.finalAssistantMessage,
+              id: run.runId,
+              prompt: run.prompt ?? "未知输入",
+              runtime: sanitizeRuntimeInfo(run.runtime),
+              startedAt: run.startedAt,
+              status: (() => {
+                const liveStatus = backend.get(run.runId);
+                if (
+                  liveStatus === "running" ||
+                  liveStatus === "completed" ||
+                  liveStatus === "failed" ||
+                  liveStatus === "cancelled"
+                ) {
+                  return liveStatus;
+                }
+                if (
+                  run.status === "completed" ||
+                  run.status === "failed" ||
+                  run.status === "cancelled"
+                ) {
+                  return run.status;
+                }
+                return "interrupted";
+              })(),
+              steps: [],
+              taskState: sanitizeTaskState(run.taskState),
+              totalSteps: run.totalSteps ?? 0,
+            }));
+
           return {
             ...session,
-            runs: session.runs.map((run) => {
-              if (run.status !== "running" && run.status !== "interrupted") {
-                return run;
-              }
-              const backendStatus = backend.get(run.id);
-              if (backendStatus === "running") {
-                return run;
-              }
-              if (
-                backendStatus === "completed" ||
-                backendStatus === "failed" ||
-                backendStatus === "cancelled"
-              ) {
-                return { ...run, status: backendStatus };
-              }
-              return { ...run, status: "interrupted" };
-            }),
+            runs: [...restoredRuns, ...reconciledRuns],
           };
         }),
       );
@@ -6546,6 +6881,23 @@ export function AgentConsole({
   const selectedStep =
     selectedRun?.steps.find((step) => step.id === selectedStepId) ??
     selectedRun?.steps[selectedRun.steps.length - 1];
+  const selectedPersistedIO = selectStepIOForView({
+    expectedRunId: selectedRun?.id,
+    expectedStepId: selectedStep?.id,
+    io:
+      persistedStepTrace.runId === selectedRun?.id &&
+      persistedStepTrace.selectedStepId === selectedStep?.id
+        ? persistedStepTrace.io
+        : undefined,
+  });
+  const selectedProgressReceipt = getPersistedStepProgress(
+    selectedPersistedIO,
+    selectedStep,
+  );
+  const selectedRunOverview = buildRunOverviewView({
+    fallbackStep: selectedStep,
+    io: selectedPersistedIO,
+  });
   const currentTaskState = selectedStep?.taskState ?? selectedRun?.taskState;
   const reportCandidate = isDraftSessionActive
     ? undefined
@@ -7109,7 +7461,11 @@ export function AgentConsole({
                   className={styles.pageNavSelect}
                   value={activeView}
                   onChange={(event) => {
-                    setActiveView(event.target.value as ViewMode);
+                    const nextView = event.target.value as ViewMode;
+                    setActiveView(nextView);
+                    if (nextView === "trace") {
+                      setTraceDetailMode("overview");
+                    }
                   }}
                   aria-label="切换页面"
                 >
@@ -7486,6 +7842,7 @@ export function AgentConsole({
                               setSelectedStepId(
                                 run.steps[run.steps.length - 1]?.id ?? "",
                               );
+                              setTraceDetailMode("overview");
                             }}
                           >
                             <div className={styles.runCardTop}>
@@ -7510,13 +7867,22 @@ export function AgentConsole({
                                       : ""
                                   }`}
                                   type="button"
-                                  onClick={() => setSelectedStepId(step.id)}
+                                  onClick={() => {
+                                    setSelectedStepId(step.id);
+                                    setTraceDetailMode("step-io");
+                                  }}
                                 >
                                   <div>
                                     <strong>Step {step.stepIndex}</strong>
                                     <span>{step.status}</span>
                                   </div>
-                                  <span>{formatDuration(step.durationMs)}</span>
+                                  <span>
+                                    {step.id === selectedStep?.id &&
+                                    selectedProgressReceipt
+                                      ? `${selectedProgressReceipt.primaryCategory} · `
+                                      : ""}
+                                    {formatDuration(step.durationMs)}
+                                  </span>
                                 </button>
                               ))}
                             </div>
@@ -7532,6 +7898,36 @@ export function AgentConsole({
                 {selectedRun ? (
                   <>
                     <div className={styles.traceActionBar}>
+                      <div
+                        className={styles.traceViewToggle}
+                        aria-label="运行详情视图"
+                      >
+                        <button
+                          aria-pressed={traceDetailMode === "overview"}
+                          className={
+                            traceDetailMode === "overview"
+                              ? styles.traceViewToggleActive
+                              : ""
+                          }
+                          type="button"
+                          onClick={() => setTraceDetailMode("overview")}
+                        >
+                          运行概览
+                        </button>
+                        <button
+                          aria-pressed={traceDetailMode === "step-io"}
+                          className={
+                            traceDetailMode === "step-io"
+                              ? styles.traceViewToggleActive
+                              : ""
+                          }
+                          disabled={!selectedStep}
+                          type="button"
+                          onClick={() => setTraceDetailMode("step-io")}
+                        >
+                          Step 输入输出
+                        </button>
+                      </div>
                       <button
                         className={styles.headerTraceButton}
                         type="button"
@@ -7551,6 +7947,27 @@ export function AgentConsole({
                           : "导出事件顺序"}
                       </button>
                     </div>
+
+                    {traceDetailMode === "overview" ? (
+                      <RunOverviewPanel
+                        fallbackStep={selectedStep}
+                        io={selectedPersistedIO}
+                        loadMessage={persistedStepTrace.error}
+                        loadStatus={persistedStepTrace.status}
+                        run={selectedRun}
+                      />
+                    ) : (
+                      <StepIOViewer
+                        fallbackStep={selectedStep}
+                        io={selectedPersistedIO}
+                        loadMessage={persistedStepTrace.error}
+                        loadStatus={persistedStepTrace.status}
+                      />
+                    )}
+
+                    <details className={styles.legacyTraceDetails}>
+                      <summary>兼容 Trace 区块</summary>
+                      <div className={styles.legacyTraceStack}>
                     <div className={styles.traceSummaryGrid}>
                       <article className={styles.summaryCard}>
                         <span>模型</span>
@@ -7792,6 +8209,8 @@ export function AgentConsole({
                         当前 run 还没有 step。模型开始调用后，这里会出现每一步的上下文快照、请求体和响应体。
                       </div>
                     )}
+                      </div>
+                    </details>
                   </>
                 ) : (
                   <div className={styles.traceEmpty}>
@@ -8048,12 +8467,36 @@ export function AgentConsole({
                     {currentTaskState?.verification.status ?? "pending"}
                   </strong>
                 </div>
+                <div>
+                  <span>Progress</span>
+                  <strong>
+                    {selectedProgressReceipt?.primaryCategory ?? "waiting"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Acceptance Gap</span>
+                  <strong>{selectedRunOverview.deliverableGap.length}</strong>
+                </div>
               </div>
             ) : (
               <p className={styles.inspectorEmpty}>
                 发送任务后，这里会显示本轮执行状态。
               </p>
             )}
+            {selectedRun && selectedStep ? (
+              <button
+                className={`${styles.headerTraceButton} ${styles.inspectorTraceButton}`}
+                type="button"
+                onClick={() => {
+                  setActiveView("trace");
+                  setSelectedRunId(selectedRun.id);
+                  setSelectedStepId(selectedStep.id);
+                  setTraceDetailMode("step-io");
+                }}
+              >
+                查看 Step 输入输出
+              </button>
+            ) : null}
           </section>
 
           <section className={styles.inspectorSection}>
@@ -8139,6 +8582,7 @@ export function AgentConsole({
                       setActiveView("trace");
                       setSelectedRunId(selectedRun.id);
                       setSelectedStepId(step.id);
+                      setTraceDetailMode("step-io");
                     }}
                   >
                     <span>Step {step.stepIndex}</span>

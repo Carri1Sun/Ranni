@@ -8,7 +8,7 @@ date: 2026-05-03
 
 ## 一句话定义
 
-Harness 是包在模型或被测系统外面的运行与控制层。它不是模型本身，而是负责把模型、上下文、工具、环境和结果处理组织成一个可持续工作的系统。
+Harness 是包在模型或被测系统外面的运行与控制层，负责把模型、上下文、工具、环境和结果处理组织成一个可持续工作的系统。
 
 在 AI agent 场景里，可以近似理解为：
 
@@ -50,16 +50,21 @@ Test harness 通常包含：
 
 ## 在当前项目里的对应关系
 
-在 Ranni / numas-agent 中，harness 主要对应以下部分：
+在 Ranni 中，harness 主要对应以下部分：
 
-- `lib/agent.ts`：agent 主循环，负责多步执行、工具调用、上下文快照和 trace 事件。
+- `lib/agent.ts`：稳定公共 facade，保留 `runAgentTurn` 调用方式。
+- `lib/agent/`：Run Controller、Step Runner、工具批次、状态、完成和恢复控制器。
+- `lib/context/`：Task Contract、Working Set、最近因果尾部和容量压缩。
+- `lib/receipts/`、`lib/acceptance.ts`、`lib/progress.ts`、`lib/plan-attempt.ts`：客观状态、验收、进展与失败路线。
+- `lib/policies/`：通用 Policy 组装；领域工件约束通过窄接口接入。
 - `lib/llm/`：模型 provider 层，负责本机 ChatGPT 订阅、DeepSeek、OpenAI、Qwen、MiniMax Token Plan、自定义 OpenAI-compatible API 的请求和响应适配。
 - `lib/tools.ts`：工具定义和执行入口。
 - `lib/trace.ts`：运行状态、模型请求、工具调用、thinking、响应等结构化记录。
+- `lib/runs/run-trace-store.ts`：在 Session workspace 中持久化 Event Log 与逐 Step I/O。
 - `src/server/app.ts`：把前端会话请求接入 agent 运行流程。
 - `components/agent-console.tsx`：展示会话、运行状态、trace 和设置。
 
-这个项目里的 harness 不是单个文件，而是一组协作机制：前端提交用户消息，服务端启动 agent loop，provider 请求模型，模型返回 tool call，harness 执行工具，再把 tool result 回传给模型，直到得到最终回答。
+这个项目里的 harness 由一组协作机制组成：前端提交用户消息，服务端启动 Run，Context Composer 组织真实现场，Provider 请求模型，Tool Batch Executor 执行调用，Receipt Registry 更新客观事实，Completion Guard 在验收条件满足后交付最终回答。
 
 ## 一个具体例子：DeepSeek thinking mode
 
@@ -71,9 +76,9 @@ DeepSeek 在 thinking mode 下会返回 `reasoning_content`。如果模型在 th
 The reasoning_content in the thinking mode must be passed back to the API.
 ```
 
-这不是模型不会回答，而是 harness 没有遵守该 provider 的上下文协议。修复点也不在 prompt，而在 provider 适配层：需要把内部 thinking block 重新序列化为 DeepSeek 需要的 `reasoning_content`。
+这个错误来自 harness 未遵守 provider 的上下文协议。修复点位于 provider 适配层：需要把内部 thinking block 重新序列化为 DeepSeek 需要的 `reasoning_content`。
 
-本机 ChatGPT 订阅 Provider 也需要维护 provider 协议字段。它使用 `store=false` 的 Responses function calling，每次请求显式获取加密 reasoning item；模型返回工具调用后，Ranni 将这些 opaque item 与 function call、function call output 一起放入下一次请求，thinking summary 只用于可见过程展示。
+本机 ChatGPT 订阅 Provider 也需要维护 provider 协议字段。它使用 `store=false` 的 Responses function calling，每次请求显式获取加密 reasoning item；模型返回工具调用后，Ranni 将这些 opaque item 与 function call、function call output 一起放入下一次请求，thinking summary 只用于可见过程展示。Provider 只有收到 SSE `done` 才提交一次响应；瞬时故障重试复用相同请求，失败尝试的半截内容不会进入 conversation。
 
 ## 和相近概念的区别
 
@@ -93,5 +98,8 @@ The reasoning_content in the thinking mode must be passed back to the API.
 - 保留 provider 必需的协议字段
 - 对错误和重试有明确策略
 - 能记录足够的信息来复盘失败
-- 尽量把业务能力沉淀到工具和 skill 中，而不是塞进单次 prompt
+- 优先把业务能力沉淀到工具和 skill 中，减少单次 prompt 的领域负担
 - 让同一个任务在不同运行中尽量可复现
+- 让客观 Tool Receipt 决定文件、命令、工件和验证事实
+- 让完成判定绑定 Acceptance 与当前有效证据
+- 让 Provider 故障保留因果尾部、workspace 和可恢复现场

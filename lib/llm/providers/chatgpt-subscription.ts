@@ -23,7 +23,19 @@ const DEFAULT_MODEL = "gpt-5.6-terra";
 const DEFAULT_EFFORT: ReasoningEffort = "high";
 const DEFAULT_CONTEXT_WINDOW = 1_050_000;
 const DEFAULT_MAX_TOKENS = 128_000;
+const MAX_REQUEST_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = [100, 250] as const;
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+const RETRYABLE_ERROR_PATTERNS = [
+  /\bterminated\b/i,
+  /\btimeout\b/i,
+  /\btemporarily unavailable\b/i,
+  /\bfetch failed\b/i,
+  /\bconnection\b/i,
+  /\bECONNRESET\b/i,
+  /\bUND_ERR\b/i,
+  /\bsocket\b/i,
+];
 const REASONING_EFFORTS = new Set<ReasoningEffort>([
   "none",
   "low",
@@ -79,6 +91,84 @@ type BffDonePayload = {
     total_tokens?: number | null;
   };
 };
+
+class HttpStatusError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(`HTTP ${status} | ${message}`);
+    this.name = "HttpStatusError";
+    this.status = status;
+  }
+}
+
+class RetryableStreamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RetryableStreamError";
+  }
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createAbortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) {
+    return signal.reason;
+  }
+
+  const error = new Error("本地 ChatGPT 订阅请求已取消。");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError(signal);
+  }
+}
+
+function isRetryableError(error: unknown) {
+  if (error instanceof RetryableStreamError || error instanceof TypeError) {
+    return true;
+  }
+
+  if (error instanceof HttpStatusError) {
+    return RETRYABLE_STATUS_CODES.has(error.status);
+  }
+
+  const message = getErrorMessage(error);
+  return RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function waitForRetry(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError(signal));
+      return;
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(createAbortError(signal));
+    };
+
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
 
 function readPositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -301,22 +391,25 @@ async function readAgentStream({
   onThinkingDelta,
   request,
   response,
+  signal,
 }: {
   modelConfig?: ModelConnectionConfig;
   onThinkingDelta?: (payload: { delta: string }) => void;
   request: TraceModelRequest;
   response: Response;
+  signal?: AbortSignal;
 }): Promise<CreateAgentMessageResult> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("本地 ChatGPT 订阅响应没有可读取的流。");
 
   const decoder = new TextDecoder();
-  const toolCalls: NormalizedToolCall[] = [];
+  const thinkingDeltas: string[] = [];
+  const toolCallsById = new Map<string, NormalizedToolCall>();
   let buffer = "";
   let content = "";
   let thinking = "";
   let metadata: BffDonePayload = {};
-  let streamError = "";
+  let sawDone = false;
 
   const processBlock = (block: string) => {
     const event = parseSseBlock(block);
@@ -324,7 +417,7 @@ async function readAgentStream({
     const payload = JSON.parse(event.data) as Record<string, unknown>;
     if (event.event === "thinking" && typeof payload.delta === "string") {
       thinking += payload.delta;
-      onThinkingDelta?.({ delta: payload.delta });
+      thinkingDeltas.push(payload.delta);
     } else if (event.event === "content" && typeof payload.delta === "string") {
       content += payload.delta;
     } else if (
@@ -333,31 +426,80 @@ async function readAgentStream({
       typeof payload.name === "string" &&
       typeof payload.arguments === "string"
     ) {
-      toolCalls.push({
+      const toolCall = {
         id: payload.id,
         name: payload.name,
         arguments: payload.arguments,
-      });
+      } satisfies NormalizedToolCall;
+      const existing = toolCallsById.get(toolCall.id);
+
+      if (existing) {
+        if (
+          existing.name === toolCall.name &&
+          existing.arguments === toolCall.arguments
+        ) {
+          return;
+        }
+        throw new Error(`本地 ChatGPT 订阅流返回了内容冲突的重复 tool_call id：${toolCall.id}`);
+      }
+
+      toolCallsById.set(toolCall.id, toolCall);
     } else if (event.event === "done") {
       metadata = payload as BffDonePayload;
+      sawDone = true;
     } else if (event.event === "error") {
-      streamError =
+      const streamError =
         typeof payload.message === "string"
           ? payload.message
           : "本地 ChatGPT 订阅流返回错误。";
+      throw new RetryableStreamError(streamError);
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const parsed = readSseBlocks(buffer);
-    buffer = parsed.rest;
-    for (const block of parsed.blocks) processBlock(block);
-    if (done) break;
+  try {
+    while (true) {
+      throwIfAborted(signal);
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const parsed = readSseBlocks(buffer);
+      buffer = parsed.rest;
+      for (const block of parsed.blocks) {
+        processBlock(block);
+        if (sawDone) break;
+      }
+      if (sawDone) {
+        await reader.cancel().catch(() => undefined);
+        break;
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) processBlock(buffer);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    if (!sawDone && error instanceof SyntaxError) {
+      throw new RetryableStreamError(
+        `本地 ChatGPT 订阅流提前结束，未收到完整 SSE 数据：${error.message}`,
+      );
+    }
+    throw error;
   }
-  if (buffer.trim()) processBlock(buffer);
-  if (streamError) throw new Error(streamError);
+
+  if (!sawDone) {
+    throw new RetryableStreamError(
+      "本地 ChatGPT 订阅流提前结束，未收到 done 事件。",
+    );
+  }
+
+  if (
+    metadata.status &&
+    RETRYABLE_ERROR_PATTERNS.some((pattern) => pattern.test(metadata.status ?? ""))
+  ) {
+    throw new RetryableStreamError(
+      `本地 ChatGPT 订阅流以瞬时故障状态结束：${metadata.status}`,
+    );
+  }
+
+  const toolCalls = [...toolCallsById.values()];
 
   const blocks: AgentAssistantBlock[] = [];
   if (thinking.trim()) blocks.push({ type: "thinking", thinking });
@@ -387,6 +529,12 @@ async function readAgentStream({
     ...(content ? [{ type: "output_text", text: content }] : []),
     ...toolCalls.map((toolCall) => ({ type: "function_call", ...toolCall })),
   ];
+
+  throwIfAborted(signal);
+  for (const delta of thinkingDeltas) {
+    throwIfAborted(signal);
+    onThinkingDelta?.({ delta });
+  }
 
   return {
     message: {
@@ -464,38 +612,48 @@ async function createMessage({
     reasoningEffort: runtime.reasoningEffort,
     stream: true,
   };
+  const serializedBody = JSON.stringify(body);
+  let lastError: unknown;
+  let retryCount = 0;
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    throwIfAborted(signal);
+
     try {
       const response = await fetch(`${runtime.baseUrl}/api/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify(body),
+        body: serializedBody,
         signal,
       });
       if (!response.ok) {
         const message = await parseErrorResponse(response);
-        if (attempt === 1 && RETRYABLE_STATUS_CODES.has(response.status)) {
-          onRetry?.({ attempt, reason: `HTTP ${response.status} | ${message}` });
-          continue;
-        }
-        throw new Error(`HTTP ${response.status} | ${message}`);
+        throw new HttpStatusError(response.status, message);
       }
-      return await readAgentStream({ modelConfig, onThinkingDelta, request, response });
+      return await readAgentStream({
+        modelConfig,
+        onThinkingDelta,
+        request,
+        response,
+        signal,
+      });
     } catch (error) {
       if (signal?.aborted) throw error;
-      const isNetworkError = error instanceof TypeError;
-      if (attempt === 1 && isNetworkError) {
-        onRetry?.({ attempt, reason: error.message });
-        continue;
+      lastError = error;
+
+      if (attempt >= MAX_REQUEST_ATTEMPTS || !isRetryableError(error)) {
+        break;
       }
-      throw new Error(
-        `本地 ChatGPT 订阅请求失败：${error instanceof Error ? error.message : String(error)}`,
-      );
+
+      retryCount += 1;
+      onRetry?.({ attempt, reason: getErrorMessage(error) });
+      await waitForRetry(RETRY_BACKOFF_MS[attempt - 1] ?? RETRY_BACKOFF_MS.at(-1)!, signal);
     }
   }
 
-  throw new Error("本地 ChatGPT 订阅请求重试后仍未获得响应。");
+  throw new Error(
+    `本地 ChatGPT 订阅请求失败：${getErrorMessage(lastError)}（已自动重试 ${retryCount} 次）。`,
+  );
 }
 
 async function testConnection(

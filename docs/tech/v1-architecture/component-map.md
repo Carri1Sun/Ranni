@@ -49,6 +49,8 @@ date: 2026-07-06
 - chat / report / trace 三个页面。
 - session 级 SSE 订阅（`GET /api/events`），只读消费三层事件：Layer3 notification 驱动主 UI 状态、Layer2 重建 trace/debug 视图、Layer1 live delta 流式打字。
 - run、step、tool、task state、thinking trace 的前端合并。
+- 从持久化 Trace API 加载 Session Run、Step index 和单 Step I/O；服务重启后通过当前 Session workspace 重新发现历史 Run。
+- 在运行详情中装配运行概览和 Step 输入输出查看器，并在运行状态栏提供入口。
 - thinking delta 的前端内存态展示、最终 thinking 持久化切换和 assistant delta 消息更新。
 - 前端流事件顺序日志、消息流 UI 顺序和导出。
 - 最多 3 个并行 agent run 的前端状态、按 session 终止和上限弹窗。
@@ -84,6 +86,19 @@ date: 2026-07-06
 - 设置弹窗。
 - workspace picker。
 - provider list。
+- 运行概览、语义卡片、验收状态、Step I/O tabs、输入构成、上下文健康和窄屏布局。
+
+### `components/run-observability.tsx`
+
+运行详情的语义展示组件：
+
+- 运行概览展示当前路线、下一步、验收清单、交付缺口、当前阻塞、完成依据和进展回执。
+- Step 输入输出查看器展示 Input / Output / 原始数据 tabs、上下文健康检查、输入构成列表和 tool call/result 配对。
+- 持久化 I/O 加载失败或旧 Run 缺少语义字段时回退到实时 Legacy Trace。
+
+### `components/run-observability-model.ts`
+
+把持久化 Step I/O 和实时 `TraceStep` 确定性投影为 UI view model。负责 Acceptance / Progress / Attempt 汇总、因果链健康检查、Context section 展开数据和按 toolUseId 配对，避免 React 组件承担 Trace 语义推导。对应测试为 `components/run-observability-model.test.ts`。
 
 ### `components/markdown-content.tsx`
 
@@ -111,6 +126,7 @@ Express 应用定义。
 - workspace 推荐、校验、系统目录选择。
 - session title 生成。
 - 接线全局 EventBus / RunRegistry / EventMapper。
+- 初始化 RunTraceStore，并注册持久化 Run / Step 查询路由。
 - Command 通道：启动 run、补充消息（steer）、中断（abort），最多 3 个 active run 并发上限。
 - Event 通道：`GET /api/events` SSE 单向下行广播（Last-Event-ID 续传 + 心跳）。
 - model provider 测试。
@@ -131,6 +147,10 @@ Express 应用定义。
 - `GET /api/session-history/:sessionId`（完整用户与 assistant 消息）
 - `PUT /api/session-history/:sessionId/messages`（增量持久化消息与元数据）
 - `POST /api/runs`（启动 run，达到上限返回 `AGENT_CONCURRENCY_LIMIT`）
+- `GET /api/runs/status`（按 session 查询当前进程内 Run 状态）
+- `GET /api/sessions/:sessionId/runs?workspaceRoot=...`（合并当前进程与 workspace 持久化 Run Trace）
+- `GET /api/runs/:runId/steps?workspaceRoot=...`（读取或重新发现 Run，并返回 Step 索引）
+- `GET /api/runs/:runId/steps/:stepId/io?workspaceRoot=...`（读取冻结的 Step 输入输出）
 - `GET /api/events`（SSE，query `streamKey` + `lastSeq`）
 - `POST /api/runs/:runId/steer`（补充消息入队）
 - `POST /api/runs/:runId/abort`（中断）
@@ -150,42 +170,46 @@ Express 应用定义。
 
 ### `lib/agent.ts`
 
-Agent 主循环。
+稳定公共 facade。保留 `runAgentTurn` 公开调用方式、公开类型和少量兼容纯函数，具体运行策略由 `lib/agent/` 承担。Server 和 research eval 继续从这个路径导入。HTML-to-PPTX 工具定义的 re-export 是现有公共调用方的兼容桥，不承载领域运行策略。
 
-主要职责：
+### `lib/agent/`
 
-- 接收外部传入的 runId / sessionId / streamKey / EventBus / drainSteer。
-- 构造 system prompt。
-- 从 run 内 conversation、TraceEvent、TaskIntent、派生观察状态、当前 artifact 和 task memory 构造 Active Context Projection 首版。
-- 调用模型。
-- 解析 assistant text、thinking、tool use。
-- 执行工具。
-- 同步 task state、task memory、research state。
-- 触发 completion guard、final answer repair、unsafe tool-call guard。
-- 通过内部 emit 适配层把旧 StreamEvent 映射为 v2 三层事件（Layer2 TraceEvent durable + Layer1 delta live-only）发布到 EventBus，包含三段式 `text.started/delta/completed`、`thinking.started/delta/completed`。
-- 循环开头 `drainSteer(runId)` 抽取补充消息注入上下文（Steering）。
-- 保持安全观察工具与 `currentMode` 解耦，并把 mode 作为认知提示和 trace 字段。
-- 处理 abort/cancel。
+通用 Agent Harness 的运行边界：
 
-#### V2 目标拆分（规划中）
-
-当前 `lib/agent.ts` 仍以上述职责运行。后续按照 [通用 Agent Harness Runtime 与质量闭环开发方案](../v2-architecture/agent-arch/general-agent-harness/02-runtime-and-quality.md) 拆分，目标所有权如下：
-
-| 路径 | 目标职责 |
+| 路径 | 当前职责 |
 | --- | --- |
-| `lib/agent.ts` | 稳定公共 facade，只导出 `runAgentTurn` 和公开类型 |
 | `lib/agent/run-controller.ts` | Run 初始化、Steering、Step 循环、终止和预算 |
-| `lib/agent/step-runner.ts` | 单 Step 的 Context、模型请求、响应解析和委托 |
-| `lib/agent/run-state.ts` | `AgentRunState`、reducer、guard counter、chunk state 和 checkpoint |
-| `lib/agent/event-sink.ts` | v2 运行事件发布与 legacy 兼容隔离 |
-| `lib/agent/tool-batch-executor.ts` | 工具请求校验、安全检查、执行和回执批次 |
-| `lib/agent/finalization-controller.ts` | 最终回答修复、Guard 链和完成决策 |
-| `lib/agent/recovery-controller.ts` | Provider、协议和无进展恢复决策 |
-| `lib/receipts/registry.ts` | Tool Receipt、Observed State 和内容引用 |
-| `lib/research/runtime-policy.ts` | Research signals 与完成质量策略 |
-| `lib/html-to-pptx/artifact-policy.ts` | HTML-to-PPTX 工件状态、能力约束和 Artifact Guard |
+| `lib/agent/step-runner.ts` | 冻结 Context / exact request、调用 Provider、追加完整工具批次、发布语义事件并委托完成判断 |
+| `lib/agent/run-state.ts` | `AgentRunState`、Task Contract、Working Set 和 TaskState 兼容投影 |
+| `lib/agent/runtime-services.ts` | Research Notebook 与 Task Memory 的领域服务创建适配边界，向通用 Controller 暴露窄运行依赖 |
+| `lib/agent/event-sink.ts` | v2 运行事件发布与 legacy StreamEvent 兼容 |
+| `lib/agent/tool-batch-executor.ts` | 工具请求校验、安全检查、顺序执行、幂等复用和完整 Tool Receipt 批次 |
+| `lib/agent/finalization-controller.ts` | Acceptance / Deliverable / 当前证据驱动的完成决策 |
+| `lib/agent/recovery-controller.ts` | Abort、Provider 故障和未完成工件的恢复决策与 checkpoint |
+| `lib/agent/chunked-final-controller.ts` | 长回答分段解析、continue / repair、最多 8 段聚合和完成候选生成 |
+| `lib/agent/policy.ts` | `RunPolicySet` 通用窄接口 |
+| `lib/agent/streaming.ts` | abort-aware 文本节奏与流式聚合 |
+| `lib/agent/types.ts` | 稳定公开入参、结果与 `StepOutcome` 类型 |
 
-拆分完成前，本节上方的现有职责列表仍代表当前代码事实。
+### `lib/context/`
+
+- `composer.ts`：Context Composer V2。验证最近 tool call/result 配对，保留最近四个完整因果轮次；仅在安全输入预算达到 75% 后压缩较老历史。
+- `types.ts`：Task Contract、Working Set、Context Envelope 和 Composition Manifest。
+- `system-prompt.ts`：稳定 Harness contract、Skill 正文、Research Handoff 和当前工作集。
+- `trace-snapshot.ts`：把 Context Envelope 与真实工具定义转换为 Trace snapshot。
+
+`lib/active-context.ts` 只保留迁移兼容 facade，不再按 HTML-to-PPTX phase 投影或删除 conversation。
+
+### `lib/receipts/`、`lib/acceptance.ts`、`lib/progress.ts`、`lib/plan-attempt.ts`
+
+- `receipts/registry.ts`：工具事实进入 Observed State 的统一入口；记录 input/result hash、文件、命令、证据、工件、验证和未解决错误，并按 `(toolUseId, inputHash)` 复用已完成执行。
+- `acceptance.ts`：从 Deliverable Contract 派生 criterion，并且只根据当前有效回执或用户明确豁免更新状态。
+- `progress.ts`：区分 objective progress、information gain 和 regression；`noObjectiveProgressStreak` 的 3 / 6 轮阈值只提醒交付节奏，相同策略真实失败或 `noMeaningfulProgressStreak` 达到阈值时更新 Attempt，10 轮无 meaningful progress 时保存 checkpoint。
+- `plan-attempt.ts`：维护当前路线、失败、替代和证据引用。
+
+### `lib/policies/registry.ts`、`lib/html-to-pptx/artifact-policy.ts` 与 `lib/html/artifact-policy.ts`
+
+Policy registry 负责把任务与已激活 Skill 组装成通用 `RunPolicySet`，并在动态 Skill 加载后重新派生契约。HTML-to-PPTX Policy 派生 PPTX Deliverable Contract、Receipt projector 和安全工具能力；静态 HTML Policy 要求桌面与移动视口 QA 零告警；其余明确要求写入 workspace 的任务至少需要真实文件回执，并在用户要求验证时需要成功验证命令。工件关注点变化只移除绕过专用工件防线的通用 mutation 工具，研究、读取、Task Memory、工件检查和验证能力持续可用。
 
 ### `lib/session-history-store.ts`
 
@@ -196,17 +220,23 @@ Session 消息历史存储层。负责读取和校验 `ranni.session-history.v1`
 v2 事件驱动架构的核心模块。
 
 - `schema.ts`：三层事件类型（ProviderEvent / TraceEvent / ClientNotification）+ 三段式（textId / thinkingId）+ 共享展示类型（ActivityDisplay / ProcessIconId / ActivityType）+ `DURABLE_EVENT_TYPES`。
+- `schema.ts` 的语义 Trace 事件还包括 `tool.batch.started`、`tool.receipt`、`state.observed.updated`、`attempt.updated`、`assumption.invalidated`、`acceptance.updated`、`progress.receipt`、`recovery.started` 和 `completion.checked`。
 - `event-bus.ts`：进程内单例 EventBus。per-streamKey(=sessionId) ring buffer + 单调 seq + 同步回放订阅 + `subscribeAll`。durable 入 buffer 可回放，live-only 仅广播。
-- `legacy-map.ts`：旧 `StreamEvent` → v2 事件映射纯函数，供 agent.ts emit 适配层使用。
+- `legacy-map.ts`：旧 `StreamEvent` → v2 事件映射纯函数，供 `lib/agent/event-sink.ts` 的兼容发布层使用。
 
 ### `lib/runs/`
 
 运行实例管理与展示投影。
 
 - `run-registry.ts`：运行注册表。runId 在此生成（上移自 agent），维护 steerQueue（steer/drainSteer）、abort（触发 AbortController + 清空队列）、并发计数（activeCount）。
-- `event-mapper.ts`：EventMapper。订阅所有 Layer2 TraceEvent 投影为 Layer3 ClientNotification；`tool.started` 异步调 LLM 生成 model display → `activity.display_updated`；`run.completed` 前 await 改写（8s 超时）；`task.state` 签名去重；`research.state` → `research.context.updated`，`thinking.completed` → `thinking.message`。
+- `event-mapper.ts`：EventMapper。订阅 Layer2 TraceEvent 并确定性投影为 Layer3 ClientNotification；默认不发辅助模型请求。仅在 `RANNI_ACTIVITY_REWRITE_ENABLED=true` 时为工具活动异步生成 model display；`task.state` 继续按签名去重。
 - `display-fallback.ts`：展示文案 fallback 纯函数（前后端共享，从 components/agent-console.tsx 抽取）。
 - `activity-rewrite.ts`：LLM 改写逻辑（prompt / 脱敏 / 解析 / `rewriteActivityDisplay`），供 mapper 使用。
+- `run-trace-store.ts`：把脱敏后的 Layer2 事实增量写入 Session workspace 下的 `.ranni/runs/<runId>/`，维护 run summary、Step index 和逐 Step I/O；支持按 workspace 发现进程重启前的 Run。
+
+### `src/server/run-trace-routes.ts`
+
+提供持久化 Trace 查询：Session Run 列表、Run Step 索引和单 Step I/O。运行中的 Run 使用 RunRegistry workspace 映射；UI 为历史 Session 附带已选择的 workspaceRoot，路由据此扫描 `.ranni/runs/` 并恢复只读查询映射。
 
 ### `lib/tools.ts`
 
@@ -238,7 +268,7 @@ OpenAI computer-use 运行层。
 
 结构化任务状态。
 
-它在逻辑上区分 TaskIntent 与 ObservedState。TaskIntent 记录 goal、deliverable、constraints、success criteria、plan、open questions、mode 和 next action；首版 ObservedState 从工具确认的文件、hash、draft / accepted 工件、命令结果、诊断和 verification receipt 派生，独立 registry 留到后续防线。
+`update_task_state` 只允许模型维护 mode、next action、assumptions、open questions 和 plan。用户目标、交付条件、客观 facts、文件、命令和 verification 由 Task Contract 与 Receipt Registry 维护；同义更新返回 `noChange: true`，不会产生客观进展。
 
 ### `lib/task-memory.ts`
 
@@ -305,7 +335,7 @@ Research notebook 运行期记录。
 
 Trace 类型定义。
 
-定义 run、step、model request、model response、tool call、tool result、context snapshot、task state、stream event 等结构。
+定义 run、step、model request、model response、tool call、tool result、Context Composition Manifest、Task Contract、Working Set、Observed State、Progress Receipt 和 stream event 等结构。
 
 ### `lib/workspace.ts`
 
@@ -318,6 +348,7 @@ Workspace 边界工具。
 主要职责：
 
 - 扫描 `skills/*/SKILL.md` 并解析 `name` / `description` / 正文。
+- 为 Skill Index 提供版本、正文 SHA-256 hash 和资源路径元数据。
 - 提供 system prompt 的轻量 skill 索引和已激活 skill 正文。
 - 加载已激活 skill 的 `tools.ts` 专属工具。
 - 规范化 `activeSkills`，过滤不存在的 skill。
@@ -333,7 +364,7 @@ Skill runtime instruction 统一入口。
 - 按 `activeSkillNames` 选择需要注入的 runtime instruction builder。
 - 读取 `toolSettings` 中对应 skill 的选择项，并委托领域模块生成 prompt 片段。
 - 从 `skills/html-design/reference-materials/base-html-design-guide.md` 注入 HTML design 基础 guide。
-- 让 `lib/agent.ts` 只调用统一 builder，避免在 agent 主循环内拼接具体 skill 的业务字段。
+- 让 Step Runner 通过统一 builder 获取领域指令，避免在通用运行循环内拼接具体 Skill 的业务字段。
 
 ### `skills/html/tools.ts`
 
@@ -432,7 +463,7 @@ HTML-to-PPTX 设计规范目录。
 
 ### `docs/tech/v1-architecture/agent-arch/architecture-defenses.md`
 
-定义 Agent harness 的权限、指令、状态真实性、产物原子性、协议、完成、恢复、审计和资源防线，以及 TaskIntent / ObservedState、Event Log / Active Context Projection 和 draft / accepted 语义。
+定义 Agent harness 的权限、指令、状态真实性、产物原子性、协议、完成、恢复、审计和资源防线，以及 Task Contract / Agent Note / Observed State、Event Log / Context Composer V2 和 draft / accepted 语义。
 
 ## 模型 Provider
 
@@ -484,6 +515,7 @@ OpenAI 官方 API 配置：
 - 通过 `/api/agent` 调用 Responses API 语义的 SSE、function calling 和 reasoning summary。
 - 将 thinking、正文和 function call 规范化为 Ranni 的 assistant blocks。
 - 在 `store=false` 模式下保留加密 reasoning item，并随工具结果回传给后续模型请求。
+- 只有收到完整 `done` 才提交响应；瞬时网络、提前 EOF、408 / 429 / 5xx 最多额外重试两次，并复用相同请求。失败尝试中的半截 thinking 和工具调用不会进入正式 conversation。
 - 无需在 Ranni 浏览器设置中保存 API Key。
 
 ### `lib/llm/providers/qwen-openai.ts`

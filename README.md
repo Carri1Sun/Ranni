@@ -10,7 +10,7 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - 点击新建 session 会先进入空白草稿页，发送首条消息时才创建 session。
 - 发送首条消息时，Ranni 会在 `~/Documents/Ranni-Workspace/ranni-session-YYYY-MM-DD_HH-mm-ss` 下自动创建一个 session 专属目录作为执行边界；中间文件、运行产物和终端命令默认都在该目录内，同一秒内重复创建会追加数字后缀。
 - 左侧导航栏包含新建 session、历史 session 和底部设置入口。
-- 中间会话栏包含页面顶部栏、会话 / 报告 / 运行详情、输入区和草稿页状态，支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`，输入框支持 `Enter` 发送、`Shift + Enter` 换行。
+- 中间会话栏包含页面顶部栏、会话 / 报告 / 运行详情、输入区和草稿页状态。运行详情提供运行概览、验收清单、交付缺口、完成依据和 Step 输入输出查看器；同时支持 Markdown 回复、复制、导出 `.md`、导出 session 级完整 `trace.txt`。
 - 右侧运行状态栏展示 runtime、tool calls、task state、verification、memory、trace、并行任务数量，并支持收起。
 - 最多支持 3 个 agent run 并行；达到上限时会提示同时进行的任务数量已达上限。
 - Agent 运行中可按 session 手动终止；取消信号会传递到模型请求、工具调用和终端子进程。
@@ -20,18 +20,23 @@ Ranni 是一个本地优先的 AI Agent 网页工作台。它用 `React + Vite` 
 - DeepSeek thinking mode 支持 `reasoning_content` 回传，能维持多步工具调用协议；agent 会等待 thinking delta 发完后再继续后续过程事件，前端会流式展示 thinking 正文和最终 assistant 回复。
 - 首条用户消息会异步生成十五字以内 session 名称，不阻塞主对话流程。
 - Agent 有文件读写/移动/删除、工作区搜索、终端命令、macOS 桌面 computer-use、Tavily 搜索、URL 抓取、research notebook、task memory、动态 skill 等工具。当前内置 `html` 和 `html-to-pptx` skill，分别用于静态网页创作，以及通过受限 slide HTML、Playwright、`dom-to-pptx` 和局部截图回退生成有限可编辑 `.pptx`。
-- Agent harness 遵循 “Guard invariants, expose reality, preserve agency”：工具回执提供派生观察状态，run 内 Event Log 来源保留过程事实，Active Context Projection 提供当前工作视图；安全观察工具不受 `currentMode` 限制。
+- Agent harness 遵循 “Guard invariants, expose reality, preserve agency”：`Context Composer V2` 保留最近完整因果尾部，`Receipt Registry` 从真实工具结果派生 Observed State，Acceptance / Progress / Attempt 账本负责验收和路线纠偏；安全观察工具不受 `currentMode` 或工件关注点限制。
 - HTML-to-PPTX 页面采用 draft / accepted 语义，失败草稿和诊断可继续检查与修补，通过硬性检查后再原子提升为正式页面。
-- 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆，用于保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints。
+- 每次 run 会写入 `.ranni/runs/<runId>/` 任务记忆与持久化 Trace。任务记忆保存 state、todo、verification、evidence、source/claim/coverage/synthesis ledger、errors、sources、checkpoints；Trace 保存 `run.json`、`step-index.json`、`trace.jsonl` 和逐 Step 输入输出快照。
 - `npm run research:eval` 可脚本化运行 deep research case，输出 trace、最终回答、metrics、score、trajectory analysis、rubric judge、claim audit、style judge 和 pairwise judge，用于优化 research agent 行为与用户可见质量。
-- 长 research final 支持分段协议：模型可分多段输出，harness 聚合为完整最终回答后再做 quality guard、metrics 和 judge。
+- 长 research final 支持 `RANNI_FINAL_PART` 分段协议：Harness 最多聚合 8 段，协议修复期间隐藏工具，并在完整聚合后统一执行完成验收。
 
 ## 技术结构
 
 ```text
 components/        React UI 组件，核心是 agent-console
 docs/              产品、架构和核心概念文档
-lib/agent.ts       Agent 主循环、活动上下文投影、guard、chunked final、trace 事件
+lib/agent.ts       Agent 稳定公共 facade
+lib/agent/         Run Controller、Step Runner、工具批次、完成与恢复边界
+lib/context/       Context Composer V2、system prompt 与 Trace snapshot
+lib/receipts/      Tool Receipt 和 Observed State registry
+lib/policies/      通用 Run Policy 组装入口
+lib/html/          静态 HTML 交付契约与验证回执投影
 lib/llm/           模型 provider 适配层
 lib/tools.ts       本地工具、网页工具、computer-use 工具、task memory 工具
 lib/computer-use/  OpenAI computer tool loop 和 macOS 桌面适配器
@@ -181,7 +186,7 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 生产模式下，`npm run build` 会生成前端 `dist/client` 和后端构建产物，`npm run start` 由 Express 托管网页并提供 API。
 
-`research:eval` 读取 `.env` / `.env.local` 中的模型和 Tavily 配置，运行产物写入已忽略的 `research/research-eval/`。每次 run 会增量写入 `trace.ndjson` 和 `partial-status.md`，`--timeout-ms` 可控制单次墙钟预算，`--reanalyze` 可在 analyzer 或 scoring 变更后重算历史 run。长 final synthesis 可通过分段协议聚合成完整 `final.md`，避免长程 research 把所有内容挤进一次模型输出。`--judge-run` 会调用模型对最终产物做 rubric、claim audit 和 style 质量评审；`--judge-pair` 会做 blind pairwise 偏好评审；这两类 judge 不需要 Tavily。缺少模型 key 或 research run 所需的 `TAVILY_API_KEY` 时会直接失败，不生成伪结果。
+`research:eval` 读取 `.env` / `.env.local` 中的模型和 Tavily 配置，运行产物写入已忽略的 `research/research-eval/`。每次 run 会增量写入 `trace.ndjson` 和 `partial-status.md`，`--timeout-ms` 可控制单次墙钟预算，`--reanalyze` 可在 analyzer 或 scoring 变更后重算历史 run。长 final 可以通过分段协议聚合成完整 `final.md`，analyzer 会记录 continue 和 protocol repair。`--judge-run` 会调用模型对最终产物做 rubric、claim audit 和 style 质量评审；`--judge-pair` 会做 blind pairwise 偏好评审；这两类 judge 不需要 Tavily。缺少模型 key 或 research run 所需的 `TAVILY_API_KEY` 时会直接失败，不生成伪结果。
 
 质量评审分三层：
 
@@ -203,6 +208,10 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 - `GET /api/session-history/:sessionId`：从对应 Session workspace 读取完整用户与 assistant 消息。
 - `PUT /api/session-history/:sessionId/messages`：按消息 ID 增量持久化完整消息和 Session 元数据。
 - `POST /api/runs`：Command 通道，启动一轮 agent run（后台异步执行），必须携带自动创建的 session 专属 `workspaceRoot`；服务端要求该目录位于默认 session 根目录下且名称为 `ranni-session-*`，立即返回 `runId`；并行 run 达到上限时返回 `429` 和 `AGENT_CONCURRENCY_LIMIT`。
+- `GET /api/runs/status?sessionId=<sessionId>`：返回当前后端进程中该 Session 已登记 Run 的权威状态。
+- `GET /api/sessions/:sessionId/runs?workspaceRoot=<workspace>`：合并当前进程 Run 与 Session workspace 中已经持久化的 Run Trace 摘要。
+- `GET /api/runs/:runId/steps?workspaceRoot=<workspace>`：返回 Run 摘要和 Step 索引；服务重启后可通过 workspaceRoot 重新发现 Run。
+- `GET /api/runs/:runId/steps/:stepId/io?workspaceRoot=<workspace>`：按需读取冻结的模型输入、实际请求、模型输出、工具回执、Observed State、Attempt、Assumption、Acceptance、Progress 与 Recovery 语义快照。
 - `GET /api/events`：Event 通道，SSE 单向下行广播三层事件（`streamKey`=session、`lastSeq` 续传）。
 - `POST /api/runs/:runId/steer`：向运行中的 run 投递补充消息（Steering）。
 - `POST /api/runs/:runId/abort`：中断运行中的 run。
@@ -215,22 +224,23 @@ npm run research:eval -- --judge-pair v3-generalization-context v4-citation-guar
 
 - `research/`：旧 research notebook 和本地研究输出目录，已忽略。
 - `research/research-eval/`：deep research 实验输出，包含 trace、final、metrics、score、trajectory analysis、judge rubric、claim audit、style judge、pairwise judge 和 comparison，已忽略。
-- `.ranni/`：每个 session 专属目录下的完整消息历史、agent durable task memory 和本地运行产物，例如 slides deck 产物目录，已忽略。
+- `.ranni/`：每个 session 专属目录下的完整消息历史、agent durable task memory、Run Trace 和本地运行产物，例如 slides deck 产物目录，已忽略。
 - `dist/`：构建产物，已忽略。
 
 需要长期保存的资料应整理到 `docs/` 或其他受版本控制的目录。
 
 ## 文档入口
 
-- [项目功能总览](docs/project-overview.md)
-- [核心组件与目录地图](docs/component-map.md)
-- [运行时架构](docs/runtime-architecture.md)
-- [Agent 编排理念](docs/agent-orchestration.md)
-- [Harness 核心概念](docs/core-concept/harness.md)
-- [Agent 架构文档](docs/agent-arch/agent-arch-optimize.md)
+- [项目功能总览](docs/manuel/project-overview.md)
+- [核心组件与目录地图](docs/tech/v1-architecture/component-map.md)
+- [运行时架构](docs/tech/v1-architecture/runtime-architecture.md)
+- [Agent 编排理念](docs/tech/v1-architecture/agent-orchestration.md)
+- [Harness 核心概念](docs/tech/v1-architecture/core-concept/harness.md)
+- [通用 Agent Harness 总览](docs/tech/v2-architecture/agent-arch/general-agent-harness/01-overview-and-contracts.md)
+- [Agent 架构文档](docs/tech/v1-architecture/agent-arch/agent-arch-optimize.md)
 - [Agent 架构防线](docs/tech/v1-architecture/agent-arch/architecture-defenses.md)
-- [Ranni UI Design System](docs/v1-ranni-design.md)
-- [Ranni UI Requirements](docs/v1-ranni-ui-requirements.md)
+- [Ranni UI Design System](docs/product/v1-ranni-design.md)
+- [Ranni UI Requirements](docs/product/v1-ranni-ui-requirements.md)
 
 ## Logo 资产
 

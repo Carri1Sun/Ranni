@@ -23,6 +23,8 @@ export type RunStatus = "running" | "completed" | "failed" | "cancelled";
 export type RunHandle = {
   runId: string;
   sessionId: string;
+  /** 该 run 的文件边界。仅由后台在启动 run 时登记，查询 API 不接受客户端路径。 */
+  workspaceRoot?: string;
   /** SSE 流的订阅键，等于 sessionId（一个 session 的事件流涵盖其下所有 run）。 */
   streamKey: string;
   status: RunStatus;
@@ -37,13 +39,14 @@ export type RunHandle = {
 export type StartRunOptions = {
   sessionId: string;
   modelConfig?: ModelConnectionConfig;
+  workspaceRoot?: string;
 };
 
 export class RunRegistry {
   private readonly runs = new Map<string, RunHandle>();
 
   /** 注册一个新 run，返回 runId 与 streamKey。runId 在此生成（上移自 agent.ts:1499）。 */
-  start({ sessionId, modelConfig }: StartRunOptions): {
+  start({ sessionId, modelConfig, workspaceRoot }: StartRunOptions): {
     runId: string;
     streamKey: string;
   } {
@@ -57,6 +60,7 @@ export class RunRegistry {
       steerQueue: [],
       startedAt: Date.now(),
       ...(modelConfig ? { modelConfig } : {}),
+      ...(workspaceRoot ? { workspaceRoot } : {}),
     };
     this.runs.set(runId, handle);
     return { runId, streamKey: handle.streamKey };

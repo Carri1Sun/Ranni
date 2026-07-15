@@ -40,6 +40,35 @@ async function startServer(
   return `http://127.0.0.1:${address.port}`;
 }
 
+function createSimpleMessageOptions(baseUrl: string) {
+  return {
+    messages: [
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "继续任务" }],
+      },
+    ],
+    modelConfig: {
+      baseUrl,
+      model: "gpt-5.6-terra",
+      provider: "chatgpt-subscription",
+      reasoningEffort: "high" as const,
+    },
+    system: "Use tools when needed.",
+    tools: [
+      {
+        name: "read_file",
+        description: "Read a file",
+        input_schema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    ],
+  };
+}
+
 test("loads the live subscription model catalog", async () => {
   const baseUrl = await startServer((request, response) => {
     assert.equal(request.url, "/api/models");
@@ -170,6 +199,163 @@ test("streams thinking, content, tools, and replays encrypted reasoning items", 
   }
   assert.equal(result.response.stopReason, "tool_use");
   assert.equal(result.response.usage.inputTokens, 30);
+});
+
+test("retries an early EOF atomically and commits each tool call once", async () => {
+  const requestBodies: string[] = [];
+  let requestCount = 0;
+  const baseUrl = await startServer(async (request, response) => {
+    requestCount += 1;
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    requestBodies.push(Buffer.concat(chunks).toString("utf8"));
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+
+    if (requestCount === 1) {
+      response.write('event: thinking\ndata: {"delta":"失败 attempt thinking"}\n\n');
+      response.write(
+        'event: tool_call\ndata: {"id":"call_stale","name":"read_file","arguments":"{\\"path\\":\\"stale.md\\"}"}\n\n',
+      );
+      response.end();
+      return;
+    }
+
+    response.write('event: thinking\ndata: {"delta":"成功 attempt thinking"}\n\n');
+    const toolEvent =
+      'event: tool_call\ndata: {"id":"call_final","name":"read_file","arguments":"{\\"path\\":\\"README.md\\"}"}\n\n';
+    response.write(toolEvent);
+    response.write(toolEvent);
+    response.end(
+      'event: done\ndata: {"id":"resp_final","model":"gpt-5.6-terra","status":"completed"}\n\n',
+    );
+  });
+  const thinkingDeltas: string[] = [];
+  const retries: Array<{ attempt: number; reason: string }> = [];
+
+  const result = await chatGPTSubscriptionProvider.createMessage({
+    ...createSimpleMessageOptions(baseUrl),
+    onRetry: (payload) => retries.push(payload),
+    onThinkingDelta: ({ delta }) => thinkingDeltas.push(delta),
+  });
+  const toolCalls = result.message.content.filter(
+    (block) => block.type === "tool_use",
+  );
+
+  assert.equal(requestCount, 2);
+  assert.equal(requestBodies[0], requestBodies[1]);
+  assert.deepEqual(retries.map((retry) => retry.attempt), [1]);
+  assert.match(retries[0]?.reason ?? "", /未收到 done/);
+  assert.deepEqual(thinkingDeltas, ["成功 attempt thinking"]);
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0]?.id, "call_final");
+  assert.deepEqual(toolCalls[0]?.input, { path: "README.md" });
+  assert.equal(
+    result.message.content.some(
+      (block) => block.type === "tool_use" && block.id === "call_stale",
+    ),
+    false,
+  );
+});
+
+test("retries SSE errors and commits only the successful attempt", async () => {
+  let requestCount = 0;
+  const baseUrl = await startServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+
+    if (requestCount === 1) {
+      response.end(
+        'event: error\ndata: {"message":"connection terminated while streaming"}\n\n',
+      );
+      return;
+    }
+
+    response.end(
+      [
+        'event: content\ndata: {"delta":"恢复成功"}',
+        'event: done\ndata: {"id":"resp_recovered","status":"completed"}',
+        "",
+      ].join("\n\n"),
+    );
+  });
+  const retries: Array<{ attempt: number; reason: string }> = [];
+
+  const result = await chatGPTSubscriptionProvider.createMessage({
+    ...createSimpleMessageOptions(baseUrl),
+    onRetry: (payload) => retries.push(payload),
+  });
+
+  assert.equal(requestCount, 2);
+  assert.deepEqual(retries.map((retry) => retry.attempt), [1]);
+  assert.match(retries[0]?.reason ?? "", /connection terminated/);
+  assert.equal(result.message.content[0]?.type, "text");
+  assert.equal(
+    result.message.content[0]?.type === "text"
+      ? result.message.content[0].text
+      : "",
+    "恢复成功",
+  );
+});
+
+test("fails after exhausting bounded retries without committing partial output", async () => {
+  let requestCount = 0;
+  const requestBodies: string[] = [];
+  const baseUrl = await startServer(async (request, response) => {
+    requestCount += 1;
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    requestBodies.push(Buffer.concat(chunks).toString("utf8"));
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write(
+      `event: thinking\ndata: {"delta":"partial-${requestCount}"}\n\n`,
+    );
+    response.write(
+      `event: tool_call\ndata: {"id":"call_partial_${requestCount}","name":"read_file","arguments":"{\\"path\\":\\"partial-${requestCount}.md\\"}"}\n\n`,
+    );
+    response.end();
+  });
+  const thinkingDeltas: string[] = [];
+  const retries: Array<{ attempt: number; reason: string }> = [];
+
+  await assert.rejects(
+    chatGPTSubscriptionProvider.createMessage({
+      ...createSimpleMessageOptions(baseUrl),
+      onRetry: (payload) => retries.push(payload),
+      onThinkingDelta: ({ delta }) => thinkingDeltas.push(delta),
+    }),
+    /未收到 done 事件.*已自动重试 2 次/,
+  );
+
+  assert.equal(requestCount, 3);
+  assert.equal(new Set(requestBodies).size, 1);
+  assert.deepEqual(retries.map((retry) => retry.attempt), [1, 2]);
+  assert.deepEqual(thinkingDeltas, []);
+});
+
+test("aborts during retry backoff without issuing another request", async () => {
+  let requestCount = 0;
+  const baseUrl = await startServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end('event: thinking\ndata: {"delta":"partial"}\n\n');
+  });
+  const abortController = new AbortController();
+  const retries: number[] = [];
+
+  await assert.rejects(
+    chatGPTSubscriptionProvider.createMessage({
+      ...createSimpleMessageOptions(baseUrl),
+      onRetry: ({ attempt }) => {
+        retries.push(attempt);
+        abortController.abort();
+      },
+      signal: abortController.signal,
+    }),
+    (error) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(requestCount, 1);
+  assert.deepEqual(retries, [1]);
 });
 
 test("tests the selected model and effort with a real BFF chat request", async () => {

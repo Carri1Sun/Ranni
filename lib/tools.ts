@@ -20,8 +20,9 @@ import type { ResearchNotebook } from "./research";
 import type { TaskMemory } from "./task-memory";
 import {
   ACTION_MODES,
-  VERIFICATION_STATUSES,
-  summarizeTaskState,
+  getChangedAgentNoteFields,
+  getTaskStateHash,
+  type AgentNotePatch,
   type TaskState,
   type TaskStatePatch,
 } from "./task-state";
@@ -134,17 +135,10 @@ const loadSkillSchema = z.object({
 
 const updateTaskStateSchema = z.object({
   assumptions: z.array(z.string().min(1)).max(12).optional(),
-  constraints: z.array(z.string().min(1)).max(12).optional(),
-  deliverable: z.string().min(1).optional(),
-  facts: z.array(z.string().min(1)).max(12).optional(),
-  goal: z.string().min(1).optional(),
   mode: z.enum(ACTION_MODES).optional(),
   next_action: z.string().min(1).optional(),
   open_questions: z.array(z.string().min(1)).max(12).optional(),
   plan: z.array(z.string().min(1)).max(12).optional(),
-  success_criteria: z.array(z.string().min(1)).max(12).optional(),
-  verification_evidence: z.array(z.string().min(1)).max(12).optional(),
-  verification_status: z.enum(VERIFICATION_STATUSES).optional(),
 });
 
 const TASK_MEMORY_APPEND_SECTIONS = [
@@ -396,33 +390,33 @@ async function updateTaskState(
     throw new Error("当前运行未初始化 task state。");
   }
 
-  const nextTaskState = context.updateTaskState({
+  const currentTaskState = requireTaskState(context);
+  const patch: AgentNotePatch = {
     assumptions: args.assumptions,
-    constraints: args.constraints,
     currentMode: args.mode,
-    deliverable: args.deliverable,
-    facts: args.facts,
-    goal: args.goal,
     nextAction: args.next_action,
     openQuestions: args.open_questions,
     plan: args.plan,
-    successCriteria: args.success_criteria,
-    verificationEvidence: args.verification_evidence,
-    verificationStatus: args.verification_status,
-  });
+  };
+  const nextTaskState = context.updateTaskState(patch);
+  const changedFields = getChangedAgentNoteFields(
+    currentTaskState,
+    nextTaskState,
+  );
+  const noChange = changedFields.length === 0;
 
-  if (context.taskMemory) {
+  if (context.taskMemory && !noChange) {
     await context.taskMemory.syncTaskState(nextTaskState);
     context.updateTaskState({
       memory: context.taskMemory.getStatus(),
     });
   }
 
-  return [
-    "Task state updated.",
-    "",
-    summarizeTaskState(nextTaskState),
-  ].join("\n");
+  return JSON.stringify({
+    changedFields,
+    noChange,
+    stateHash: getTaskStateHash(nextTaskState),
+  });
 }
 
 async function initTaskMemory(
@@ -735,19 +729,27 @@ async function searchFiles(
   const workspaceRoot = context.workspaceRoot;
   const directoryPath = resolveWorkspacePath(args.path, workspaceRoot);
   const stats = await fs.stat(directoryPath);
-
-  if (!stats.isDirectory()) {
-    throw new Error("search_in_files 的 path 必须是目录。");
-  }
-
   const results: string[] = [];
-  await walkAndSearch(
-    directoryPath,
-    args.query,
-    results,
-    args.limit,
-    workspaceRoot,
-  );
+
+  if (stats.isDirectory()) {
+    await walkAndSearch(
+      directoryPath,
+      args.query,
+      results,
+      args.limit,
+      workspaceRoot,
+    );
+  } else if (stats.isFile()) {
+    await searchInFile(
+      directoryPath,
+      args.query,
+      results,
+      args.limit,
+      workspaceRoot,
+    );
+  } else {
+    throw new Error("search_in_files 的 path 必须是普通文件或目录。");
+  }
 
   return results.length > 0
     ? results.join("\n")
@@ -1245,7 +1247,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "update_task_state",
         description:
-          "Update the run's task intent and working judgments: mode, goal, deliverable, success criteria, plan, facts, verification status, and next action. Touched files and executed commands are recorded automatically from tool receipts. Use this early to clarify the task, after meaningful observations, before edits, and before final synthesis.",
+          "Patch the agent's current working note: mode, next action, assumptions, open questions, and an optional short plan. Use it when new evidence materially changes the current strategy or working judgment. This note does not prove external progress, artifact completion, or verification.",
         input_schema: {
           type: "object",
           properties: {
@@ -1253,24 +1255,6 @@ const toolRegistry = new Map<string, ToolDefinition>([
               type: "string",
               enum: [...ACTION_MODES],
               description: "Current action mode for the next meaningful step.",
-            },
-            goal: {
-              type: "string",
-              description: "What the user ultimately wants.",
-            },
-            deliverable: {
-              type: "string",
-              description: "The concrete output that should be delivered.",
-            },
-            constraints: {
-              type: "array",
-              items: { type: "string" },
-              description: "Constraints, limits, or requirements to preserve.",
-            },
-            success_criteria: {
-              type: "array",
-              items: { type: "string" },
-              description: "Observable checks that determine completion.",
             },
             assumptions: {
               type: "array",
@@ -1281,21 +1265,6 @@ const toolRegistry = new Map<string, ToolDefinition>([
               type: "array",
               items: { type: "string" },
               description: "Short executable plan. This replaces the prior plan.",
-            },
-            facts: {
-              type: "array",
-              items: { type: "string" },
-              description: "Important facts discovered from tools or context.",
-            },
-            verification_status: {
-              type: "string",
-              enum: [...VERIFICATION_STATUSES],
-              description: "Current verification state.",
-            },
-            verification_evidence: {
-              type: "array",
-              items: { type: "string" },
-              description: "Evidence from tests, builds, checks, or explicit rationale.",
             },
             open_questions: {
               type: "array",
@@ -1633,7 +1602,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
             path: {
               type: "string",
               description:
-                "Workspace-relative directory path where the search should start.",
+                "Workspace-relative file or directory path where the search should start.",
               default: ".",
             },
             limit: {

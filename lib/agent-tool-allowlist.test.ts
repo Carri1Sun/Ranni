@@ -41,10 +41,18 @@ test("keeps safe observations and all dedicated slide mutations available", () =
     ),
   );
   const alwaysAvailable = [
+    "load_skill",
+    "init_task_memory",
     "list_files",
     "read_file",
     "search_in_files",
     "read_task_memory",
+    "update_task_memory",
+    "record_task_evidence",
+    "save_task_checkpoint",
+    "plan_research",
+    "record_research_finding",
+    "save_research_checkpoint",
     "search_web",
     "fetch_url",
     "write_style_fragment",
