@@ -83,8 +83,7 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 | Run 生命周期行 | `FeedActivity`、`type: "step"` 的 Run 开始或结束投影 | 一行弱提示，显示 Run 开始、完成、失败或终止。 |
 | 运行提示项 | `FeedActivity`、`type: "status"` | 浅背景行内提示，展示 Provider 重试、无进展观察器提醒、Policy 提示等 Harness 运行消息。 |
 | Thinking 正文 | `FeedActivity`、`type: "thinking"` | `thinking.delta` 实时追加，`thinking.message` 用完整文本校准；受 Thinking 展示开关控制。 |
-| 工具调用过程项 | `FeedActivity`、`type: "tool_call"` | 工具开始时新增，显示工具名、输入摘要和图标。 |
-| 工具结果过程项 | `FeedActivity`、`type: "tool_result"` | 工具完成时新增，显示成功或失败、耗时和结果摘要。 |
+| 工具调用卡片 | 两条 `FeedActivity` 按 `runId + toolUseId` 形成的渲染投影 | 工具开始时出现，工具完成时在同一卡片更新摘要。默认收起；点击卡片展开或收起调用输入与执行结果。 |
 | 任务状态过程项 | `FeedActivity`、`type: "state"` | 任务状态兼容投影的关键签名变化时新增；重复签名不新增。 |
 | 研究状态过程项 | `FeedActivity`、`type: "research"` | 研究笔记更新时新增，并同步 Session 研究上下文。 |
 | 错误过程项 | `FeedActivity`、`type: "error"` | 展示 Step 失败、接口错误或运行错误。 |
@@ -96,8 +95,8 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 | `ActivityType` | 规范 UI 名称 | 内容来源 |
 | --- | --- | --- |
 | `status` | 运行提示项 | `run.status → activity.appended` |
-| `tool_call` | 工具调用过程项 | `tool.started → activity.appended` |
-| `tool_result` | 工具结果过程项 | `tool.completed → activity.appended` |
+| `tool_call` | 工具调用卡片的发起记录 | `tool.started → activity.appended` |
+| `tool_result` | 工具调用卡片的结束记录 | `tool.completed → activity.appended` |
 | `error` | 错误过程项 | 失败的 `step.completed` 或 `error` 通知 |
 | `step` | Run 生命周期行 | `run.started`、`run.completed` 的投影 |
 | `state` | 任务状态过程项 | `task.state → activity.appended` |
@@ -106,7 +105,20 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 
 任务状态过程项的去重签名由 `currentMode`、`nextAction` 和 `verification.status` 组成。三项都未变化时，新的 `task.state` 不会增加消息流条目。
 
-`load_skill` 产生的 Activity 归入“工具调用过程项”和“工具结果过程项”，显示文案可以使用“激活技能”。
+`load_skill` 产生的两条 Activity 归入同一张“工具调用卡片”，显示文案可以使用“激活技能”。
+
+### 工具调用卡片
+
+工具调用卡片是消息流的渲染元素，底层仍保存两条独立 `FeedActivity`：
+
+| 卡片区域 | 数据来源 | 展示语义 |
+| --- | --- | --- |
+| 工具调用摘要 | 已有结束记录时优先使用 `tool_result.display`，否则使用 `tool_call.display` | 展示当前状态、工具动作摘要、耗时或结果摘要。 |
+| 调用输入 | `tool_call.detail` | 展开后展示工具调用输入摘要。 |
+| 执行结果 | `tool_result.detail` | 展开后展示工具执行结果摘要；运行中显示等待说明。 |
+| 完整过程信息入口 | 同一 `toolUseId` 对应的 Trace Step | “显示完整过程信息”开启时进入现有过程信息弹窗。 |
+
+配对键为 `runId + toolUseId`，防止不同 Run 复用相同调用 ID 时发生误合并。只有一侧到达、通知乱序或 SSE 重放出现重复通知时，消息流仍只渲染一张稳定卡片。原始 Activity 顺序、TraceEvent 和 ClientNotification 不做合并。
 
 ## 6. 运行提示项的内容名称
 
@@ -152,15 +164,15 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 | `run.status` | `activity.appended`，`activityType: "status"` | 新增运行提示项。 |
 | `task.state` | `activity.appended`，`activityType: "state"` | 关键签名变化时新增任务状态过程项。 |
 | `research.state` | `activity.appended` + `research.context.updated` | 新增研究状态过程项并更新 Session 研究上下文。 |
-| `tool.started` | `activity.appended`，`activityType: "tool_call"` | 新增工具调用过程项。 |
-| `tool.completed` | `activity.appended`，`activityType: "tool_result"` | 新增工具结果过程项。 |
+| `tool.started` | `activity.appended`，`activityType: "tool_call"` | 新增工具发起记录；消息流创建或补全工具调用卡片。 |
+| `tool.completed` | `activity.appended`，`activityType: "tool_result"` | 新增工具结束记录；消息流更新或补全同一工具调用卡片。 |
 | `text.completed` | `assistant.message` | 用完整文本校准 Assistant 消息。 |
 | `thinking.completed` | `thinking.message` | 用完整文本校准 Thinking 正文。 |
 | `context.snapshot`、`task.state`、`state.observed.updated`、`plan.updated`、`attempt.updated`、`acceptance.updated`、`progress.receipt`、`completion.checked`、`recovery.started` | `run.overview.updated` | 更新当前 Run 的完整运行概览投影；通知携带完整快照和 `latestSeq`，不新增消息流过程项。 |
 | 失败或取消的 `step.completed` | `activity.appended`，`activityType: "error"` | 新增错误或终止提示。 |
 | 成功的 `step.completed` | 无消息流通知 | 只更新 Trace 和 Step 视图。 |
 
-`activity.display_updated` 会更新已有过程项的标题、说明、图标和 meta。当前只有显式设置 `RANNI_ACTIVITY_REWRITE_ENABLED=true` 时才会请求模型生成改写文案，默认使用确定性 fallback 文案。
+`activity.display_updated` 通过服务端 `activityId` 更新已有 Activity 的标题、说明、图标和 meta。工具发起记录更新后，对应工具调用卡片随前端渲染投影同步刷新。当前只有显式设置 `RANNI_ACTIVITY_REWRITE_ENABLED=true` 时才会请求模型生成改写文案，默认使用确定性 fallback 文案。
 
 ### 语义事实与运行概览投影
 

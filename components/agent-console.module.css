@@ -1115,6 +1115,91 @@
   background: transparent;
 }
 
+.toolActivityCard {
+  display: block;
+  padding: 0;
+}
+
+.toolActivitySummary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 56px;
+  padding: 11px 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.toolActivitySummary::-webkit-details-marker {
+  display: none;
+}
+
+.toolActivityHint {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.toolActivityOpenHint {
+  display: none;
+}
+
+.toolActivityCard[open] .toolActivityClosedHint {
+  display: none;
+}
+
+.toolActivityCard[open] .toolActivityOpenHint {
+  display: inline;
+  color: var(--ranni-accent-2);
+}
+
+.toolActivityDetails {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--ranni-line-1);
+}
+
+.toolActivityDetails section {
+  display: grid;
+  gap: 6px;
+}
+
+.toolActivityDetails section > span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.toolActivityDetails pre,
+.toolActivityDetails p {
+  margin: 0;
+  color: var(--ranni-text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.toolActivityDebugButton {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-secondary-bg);
+  color: var(--ranni-text-2);
+  font-size: 11px;
+}
+
 .step {
   border-color: rgba(134, 199, 255, 0.22);
   background: transparent;

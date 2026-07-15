@@ -146,13 +146,15 @@
 | 工具调用 | Tool Call / `tool.started` | 模型请求执行工具的协议对象，拥有 `toolUseId` 和输入。 |
 | 工具结果 | Tool Result / `tool.completed` | 返回给模型的文本结果，保持 Provider 工具协议配对。 |
 | 工具回执 | Tool Receipt / `tool.receipt` | Harness 对一次工具执行生成的结构化事实，包含 hash、成功状态、策略签名、结果摘要和事实投影。 |
+| 工具 Activity 对 | Tool Activity Pair | Event Mapper 为一次工具调用生成的两条前端通知记录：发起 Activity 与结束 Activity；二者通过 `toolUseId` 关联。 |
+| 工具调用卡片投影 | Tool Call Card Projection | 前端按 `runId + toolUseId` 把 Tool Activity Pair 投影为一个可展开的消息流元素。该投影只改变渲染，不改变事件、Feed 数据和 Trace 事实。 |
 | 回执投影 | Receipt Projection | Tool Receipt 中可合并到文件、命令、证据、工件和验证事实的结构化增量。 |
 | 回执注册表 | Receipt Registry | 注册 Tool Receipt、去重并生成 Observed State 的权威容器。 |
 | 复用回执 | Reused Receipt | 相同工具调用已经有成功回执时返回的复用标记；已成功副作用不会再次执行。 |
 | 未变化回执 | Unchanged Receipt | 工具执行没有改变相关客观状态的回执。 |
 | 策略签名 | Strategy Signature | 用于识别相同调用方法和重复失败路线的稳定签名。 |
 
-工具结果服务于模型协议，工具回执服务于 Harness 事实协调。两者通过同一 `toolUseId` 关联。
+工具结果服务于模型协议，工具回执服务于 Harness 事实协调。两者通过同一 `toolUseId` 关联。工具 Activity 对服务于前端通知回放，工具调用卡片投影服务于消息流展示；四者共享调用标识并保持各自的数据边界。
 
 ## 7. 工作计划、路线尝试与假设
 

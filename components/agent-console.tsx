@@ -43,6 +43,7 @@ import {
 } from "../lib/task-state";
 
 import { MarkdownContent } from "./markdown-content";
+import { projectFeedToolActivities } from "./feed-tool-projection";
 import { RunPlanProgress } from "./run-plan-progress";
 import { RunOverviewPanel, StepIOViewer } from "./run-observability";
 import {
@@ -5248,6 +5249,7 @@ export function AgentConsole({
     options?: {
       display?: ActivityDisplay;
       eventType?: FeedActivity["eventType"];
+      id?: string;
       runId?: string;
       stepId?: string;
       stepIndex?: number;
@@ -5259,7 +5261,7 @@ export function AgentConsole({
       display:
         options?.display ??
         createFallbackActivityDisplay(type, label, detail, options?.toolName),
-      id: createId(),
+      id: options?.id ?? createId(),
       kind: "activity",
       type,
       label,
@@ -6162,6 +6164,7 @@ export function AgentConsole({
         {
           display: e.display as ActivityDisplay,
           eventType: "manual",
+          id: String(e.activityId ?? "") || undefined,
           ...(e.runId ? { runId: String(e.runId) } : {}),
           ...(e.stepId ? { stepId: String(e.stepId) } : {}),
           stepIndex: e.stepIndex as number | undefined,
@@ -7788,8 +7791,98 @@ export function AgentConsole({
                 {!activeSession.historyHydrated ? (
                   <div className={styles.traceEmpty}>正在加载完整历史消息…</div>
                 ) : null}
-                {activeSession.feed.map((item) =>
-                  item.kind === "message" ? (
+                {projectFeedToolActivities(activeSession.feed).map((entry) => {
+                  if (entry.kind === "tool_activity_group") {
+                    const call =
+                      entry.call?.kind === "activity" ? entry.call : undefined;
+                    const result =
+                      entry.result?.kind === "activity"
+                        ? entry.result
+                        : undefined;
+                    const first =
+                      entry.first.kind === "activity" ? entry.first : undefined;
+                    const item = result ?? call ?? first;
+                    if (!item) {
+                      return null;
+                    }
+                    const callDisplay = call?.display;
+                    const resultDisplay = result?.display;
+                    const display =
+                      resultDisplay ??
+                      callDisplay ??
+                      createFallbackActivityDisplay(
+                        item.type,
+                        item.label,
+                        item.detail,
+                        item.toolName,
+                      );
+                    const ActivityIcon = getProcessIconComponent(display.icon);
+                    const isPending = !result;
+                    const isLatestActive =
+                      currentSessionIsRunning &&
+                      isPending &&
+                      latestProcessActivityId === call?.id;
+
+                    return (
+                      <details
+                        key={entry.key}
+                        className={`${styles.activity} ${styles.toolActivityCard} ${
+                          isLatestActive ? styles.activityActive : ""
+                        }`}
+                      >
+                        <summary className={styles.toolActivitySummary}>
+                          <div className={styles.activityIcon} aria-hidden="true">
+                            <ActivityIcon size={16} strokeWidth={2} />
+                          </div>
+                          <div className={styles.activityContent}>
+                            <div className={styles.activityTopLine}>
+                              <strong>{display.title}</strong>
+                              {display.meta ? <span>{display.meta}</span> : null}
+                            </div>
+                            <p>{display.detail}</p>
+                          </div>
+                          <span className={styles.toolActivityHint}>
+                            <span className={styles.toolActivityClosedHint}>
+                              {isPending ? "执行中 · 展开" : "展开"}
+                            </span>
+                            <span className={styles.toolActivityOpenHint}>收起</span>
+                          </span>
+                        </summary>
+                        <div className={styles.toolActivityDetails}>
+                          <section>
+                            <span>调用输入</span>
+                            <pre>{call?.detail || "等待调用信息"}</pre>
+                          </section>
+                          <section>
+                            <span>执行结果</span>
+                            {result ? (
+                              <pre>{result.detail || "工具已完成"}</pre>
+                            ) : (
+                              <p>工具正在执行，完成后会在当前卡片中更新结果。</p>
+                            )}
+                          </section>
+                          {settings.showProcessDetails ? (
+                            <button
+                              className={styles.toolActivityDebugButton}
+                              type="button"
+                              onClick={() =>
+                                setActivityDebugTarget({
+                                  activityId: item.id,
+                                  sessionId: activeSession.id,
+                                })
+                              }
+                            >
+                              <Info size={14} strokeWidth={2} />
+                              查看完整过程信息
+                            </button>
+                          ) : null}
+                        </div>
+                      </details>
+                    );
+                  }
+
+                  const item = entry;
+                  return item.kind === "message" ? (
                     <article
                       key={item.id}
                       className={`${styles.message} ${
@@ -7922,8 +8015,8 @@ export function AgentConsole({
                         ) : null}
                       </article>
                     );
-                  })(),
-                )}
+                  })();
+                })}
               </div>
               {!isFeedAtBottom ? (
                 <button

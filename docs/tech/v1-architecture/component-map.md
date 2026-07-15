@@ -51,6 +51,7 @@ date: 2026-07-06
 - chat / report / trace 三个页面。
 - session 级 SSE 订阅（`GET /api/events`），只读消费三层事件：Layer3 notification 驱动主 UI 状态、Layer2 重建 trace/debug 视图、Layer1 live delta 流式打字。
 - run、step、tool、task state、thinking trace 的前端合并。
+- 保留工具发起与结束两条 Feed Activity，并按 `runId + toolUseId` 投影为一张可展开的工具调用卡片。
 - 从持久化 Trace API 加载 Session Run、Run Overview Projection、Step index 和单 Step I/O；服务重启后通过当前 Session workspace 重新发现历史 Run。
 - 通过 `run.overview.updated` 实时替换当前 Run 的完整概览快照，并按 `latestSeq` 忽略重复或更早快照。
 - 在运行详情中装配运行概览、计划与进度视图和 Step 输入输出查看器，并在运行状态栏提供整体计划面板和入口。
@@ -116,6 +117,15 @@ Run 级整体计划与进度组件：
 ### `components/markdown-content.tsx`
 
 Markdown 渲染组件，当前用于 assistant 消息和报告正文。
+
+### `components/feed-tool-projection.ts`
+
+消息流工具 Activity 的纯渲染投影：
+
+- 按 `runId + toolUseId` 配对 `tool_call` 与 `tool_result`。
+- 保持原始 Feed Activity 数据、接收顺序和服务端两条通知不变。
+- 为单边到达、乱序、SSE 重放重复通知和跨 Run ID 复用提供稳定结果。
+- 对应测试为 `components/feed-tool-projection.test.ts`。
 
 ### `src/renderer/App.tsx`
 
