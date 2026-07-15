@@ -138,6 +138,276 @@ test("run controller preserves an eight-call causal batch in the next exact requ
   }
 });
 
+test("structured plan persists across steps without creating an attempt per revision", async () => {
+  const workspace = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ranni-run-plan-ledger-"),
+  );
+
+  try {
+    await withProvider(
+      (_request, index) =>
+        index === 0
+          ? [
+              sse("tool_call", {
+                arguments: JSON.stringify({
+                  approach: "inspect the workspace and produce the answer",
+                  exit_criteria: ["answer is ready"],
+                  reason: "the task requires a concrete workspace route",
+                }),
+                id: "attempt-1",
+                name: "replace_attempt",
+              }),
+              sse("tool_call", {
+                arguments: JSON.stringify({
+                  items: [
+                    {
+                      expected_outcome: "workspace facts are understood",
+                      status: "in_progress",
+                      title: "inspect workspace",
+                    },
+                    { title: "deliver answer" },
+                  ],
+                  reason: "establish the initial work coverage",
+                  reason_kind: "initial",
+                }),
+                id: "plan-1",
+                name: "update_plan",
+              }),
+              sse("tool_call", {
+                arguments: JSON.stringify({
+                  mode: "plan",
+                  next_action: "inspect workspace",
+                  plan: ["legacy plan must not replace structured items"],
+                }),
+                id: "state-1",
+                name: "update_task_state",
+              }),
+              sse("done", {
+                id: "response-plan",
+                model: "test-model",
+                status: "completed",
+              }),
+            ].join("")
+          : [
+              sse("content", { delta: "已完成现场整理。" }),
+              sse("done", {
+                id: "response-final",
+                model: "test-model",
+                status: "completed",
+              }),
+            ].join(""),
+      async (baseUrl, requests) => {
+        const eventBus = new EventBus();
+        const events: PublishedEvent[] = [];
+        eventBus.subscribe("plan-session", 0, (event) => events.push(event));
+        const result = await runAgentTurn({
+          eventBus,
+          messages: [{ role: "user", content: "整理当前工作区并给出回答" }],
+          modelConfig: {
+            baseUrl,
+            model: "test-model",
+            provider: "chatgpt-subscription",
+          },
+          runId: "plan-run",
+          sessionId: "plan-session",
+          streamKey: "plan-session",
+          workspaceRoot: workspace,
+        });
+
+        assert.equal(result.status, "completed");
+        assert.equal(requests.length, 2);
+        assert.match(
+          JSON.stringify(requests[1]?.input),
+          /inspect workspace/,
+        );
+        assert.match(
+          JSON.stringify(requests[1]?.input),
+          /inspect the workspace and produce the answer/,
+        );
+        const createdAttempts = events.filter(
+          (event) =>
+            event.type === "attempt.updated" &&
+            Boolean(
+              (event as { attemptDelta?: { created?: string } }).attemptDelta
+                ?.created,
+            ),
+        );
+        assert.equal(createdAttempts.length, 1);
+        assert.ok(events.some((event) => event.type === "plan.updated"));
+        const planRevisions = events.filter(
+          (event) =>
+            event.type === "plan.updated" &&
+            (event as { planChange?: { kind?: string } }).planChange?.kind ===
+              "revision",
+        );
+        assert.equal(planRevisions.length, 1);
+        const finalPlan = events.findLast(
+          (event) => event.type === "plan.updated",
+        ) as
+          | {
+              planChange?: {
+                snapshot?: { items?: Array<{ status?: string }> };
+              };
+            }
+          | undefined;
+        assert.ok(
+          finalPlan?.planChange?.snapshot?.items?.every(
+            (item) => item.status === "satisfied",
+          ),
+        );
+        const runDirectory = path.join(
+          workspace,
+          ".ranni",
+          "runs",
+          "plan-run",
+        );
+        assert.match(
+          await fs.readFile(path.join(runDirectory, "todo.md"), "utf8"),
+          /\| P01 \| inspect workspace \| done \|/,
+        );
+        assert.ok(
+          JSON.parse(
+            await fs.readFile(path.join(runDirectory, "plan.json"), "utf8"),
+          ),
+        );
+      },
+    );
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("recovery resumes causal state and reuses a completed tool call", async () => {
+  const workspace = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ranni-run-recovery-resume-"),
+  );
+
+  try {
+    await withProvider(
+      (_request, index) => {
+        if (index === 0 || index === 4) {
+          return [
+            sse("tool_call", {
+              arguments: JSON.stringify({
+                command: "printf x >> recovery-counter.txt",
+              }),
+              id: "durable-command-1",
+              name: "run_terminal",
+            }),
+            sse("done", {
+              id: `tool-response-${index}`,
+              model: "test-model",
+              status: "completed",
+            }),
+          ].join("");
+        }
+        if (index >= 1 && index <= 3) {
+          return sse("error", {
+            message: "fetch failed: transient provider outage",
+          });
+        }
+        return [
+          sse("content", { delta: "恢复后的任务已完成。" }),
+          sse("done", {
+            id: "recovered-final",
+            model: "test-model",
+            status: "completed",
+          }),
+        ].join("");
+      },
+      async (baseUrl, requests) => {
+        const firstBus = new EventBus();
+        const firstResult = await runAgentTurn({
+          eventBus: firstBus,
+          messages: [{ role: "user", content: "检查本地环境后给出简短回答" }],
+          modelConfig: {
+            baseUrl,
+            model: "test-model",
+            provider: "chatgpt-subscription",
+          },
+          runId: "interrupted-run",
+          sessionId: "recovery-session",
+          streamKey: "recovery-session",
+          workspaceRoot: workspace,
+        });
+
+        assert.equal(firstResult.status, "failed");
+        assert.ok(firstResult.checkpoint?.runState);
+        assert.equal(
+          await fs.readFile(path.join(workspace, "recovery-counter.txt"), "utf8"),
+          "x",
+        );
+
+        const foreignWorkspace = path.join(workspace, "foreign-workspace");
+        await fs.mkdir(foreignWorkspace);
+        await assert.rejects(
+          runAgentTurn({
+            eventBus: new EventBus(),
+            messages: [],
+            modelConfig: {
+              baseUrl,
+              model: "test-model",
+              provider: "chatgpt-subscription",
+            },
+            recoveryState: firstResult.checkpoint?.runState,
+            runId: "wrong-workspace-run",
+            sessionId: "recovery-session",
+            streamKey: "recovery-session",
+            workspaceRoot: foreignWorkspace,
+          }),
+          /different workspace/i,
+        );
+        assert.equal(requests.length, 4);
+
+        const resumedEvents: PublishedEvent[] = [];
+        const resumedBus = new EventBus();
+        resumedBus.subscribe("recovery-session", 0, (event) =>
+          resumedEvents.push(event),
+        );
+        const resumedResult = await runAgentTurn({
+          eventBus: resumedBus,
+          messages: [],
+          modelConfig: {
+            baseUrl,
+            model: "test-model",
+            provider: "chatgpt-subscription",
+          },
+          recoveryState: firstResult.checkpoint?.runState,
+          runId: "resumed-run",
+          sessionId: "recovery-session",
+          streamKey: "recovery-session",
+          workspaceRoot: workspace,
+        });
+
+        assert.equal(resumedResult.status, "completed");
+        assert.equal(requests.length, 6);
+        assert.equal(
+          await fs.readFile(path.join(workspace, "recovery-counter.txt"), "utf8"),
+          "x",
+        );
+        const reusedReceipt = resumedEvents.find(
+          (event) => event.type === "tool.receipt",
+        ) as { receipt?: { reused?: boolean } } | undefined;
+        assert.equal(reusedReceipt?.receipt?.reused, true);
+        const resumedRun = resumedEvents.find(
+          (event) => event.type === "run.started",
+        ) as
+          | {
+              resumedFromCheckpoint?: {
+                completedSteps?: number;
+                contextSnapshotHash?: string;
+              };
+            }
+          | undefined;
+        assert.equal(resumedRun?.resumedFromCheckpoint?.completedSteps, 1);
+        assert.ok(resumedRun?.resumedFromCheckpoint?.contextSnapshotHash);
+      },
+    );
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("premature PPT text is guarded and provider exhaustion preserves a recoverable gap", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "ranni-run-artifact-"));
 
@@ -187,7 +457,20 @@ test("premature PPT text is guarded and provider exhaustion preserves a recovera
         ) as { ready?: boolean; acceptanceGap?: string[] } | undefined;
         assert.equal(completion?.ready, false);
         assert.ok(completion?.acceptanceGap?.some((gap) => /pptx/i.test(gap)));
-        assert.ok(events.some((event) => event.type === "recovery.started"));
+        const recoveryEvent = events.find(
+          (event) => event.type === "recovery.started",
+        ) as
+          | {
+              checkpoint?: { checkpointRef?: string; schemaVersion?: number };
+              runState?: unknown;
+            }
+          | undefined;
+        assert.equal(recoveryEvent?.runState, undefined);
+        assert.equal(recoveryEvent?.checkpoint?.schemaVersion, 2);
+        assert.match(
+          recoveryEvent?.checkpoint?.checkpointRef ?? "",
+          /checkpoints\/checkpoint_001\.md$/,
+        );
         const terminal = events.findLast(
           (event) => event.type === "run.completed",
         ) as { status?: string } | undefined;

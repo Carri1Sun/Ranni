@@ -16,6 +16,11 @@ import {
   testComputerUseAvailability,
 } from "./computer-use/openai-computer-use";
 import type { AgentToolDefinition } from "./llm";
+import type {
+  PlanChange,
+  PlanItemProposal,
+  PlanRevisionReason,
+} from "./plan";
 import type { ResearchNotebook } from "./research";
 import type { TaskMemory } from "./task-memory";
 import {
@@ -62,6 +67,22 @@ export type ToolExecutionContext = {
   activeSkillNames?: string[];
   activateSkill?: (name: string) => void;
   toolSettings?: ToolSettings;
+  updatePlan?: (input: {
+    focusItemId?: string;
+    items: PlanItemProposal[];
+    reason: string;
+    reasonKind?: PlanRevisionReason;
+  }) => PlanChange;
+  replaceAttempt?: (input: {
+    approach: string;
+    assumptions: string[];
+    exitCriteria: string[];
+    reason: string;
+  }) => {
+    attemptId: string;
+    noChange?: boolean;
+    supersededAttemptId?: string;
+  };
   updateTaskState?: (patch: TaskStatePatch) => TaskState;
   workspaceRoot?: string;
 };
@@ -139,6 +160,60 @@ const updateTaskStateSchema = z.object({
   next_action: z.string().min(1).optional(),
   open_questions: z.array(z.string().min(1)).max(12).optional(),
   plan: z.array(z.string().min(1)).max(12).optional(),
+});
+
+const replaceAttemptSchema = z.object({
+  approach: z.string().min(1),
+  assumptions: z.array(z.string().min(1)).max(12).default([]),
+  exit_criteria: z.array(z.string().min(1)).max(8).default([]),
+  reason: z.string().min(1),
+});
+
+const optionalNonBlankString = z.preprocess(
+  (value) =>
+    typeof value === "string" && value.trim().length === 0
+      ? undefined
+      : value,
+  z.string().trim().min(1).optional(),
+);
+
+const updatePlanSchema = z.object({
+  focus_item_id: optionalNonBlankString,
+  items: z
+    .array(
+      z.object({
+        acceptance_refs: z.array(z.string().min(1)).max(12).optional(),
+        blocked_reason: optionalNonBlankString,
+        depends_on: z.array(z.string().min(1)).max(12).optional(),
+        evidence_hints: z.array(z.string().min(1)).max(12).optional(),
+        expected_outcome: optionalNonBlankString,
+        id: optionalNonBlankString,
+        intent: optionalNonBlankString,
+        status: z
+          .enum([
+            "blocked",
+            "cancelled",
+            "completed",
+            "in_progress",
+            "pending",
+          ])
+          .optional(),
+        title: z.string().min(1),
+      }),
+    )
+    .max(12),
+  reason: z.string().min(1),
+  reason_kind: z
+    .enum([
+      "acceptance_gap",
+      "failed_assumption",
+      "initial",
+      "new_evidence",
+      "recovery",
+      "refinement",
+      "user_change",
+    ])
+    .optional(),
 });
 
 const TASK_MEMORY_APPEND_SECTIONS = [
@@ -405,18 +480,72 @@ async function updateTaskState(
   );
   const noChange = changedFields.length === 0;
 
-  if (context.taskMemory && !noChange) {
-    await context.taskMemory.syncTaskState(nextTaskState);
-    context.updateTaskState({
-      memory: context.taskMemory.getStatus(),
-    });
-  }
-
   return JSON.stringify({
     changedFields,
     noChange,
     stateHash: getTaskStateHash(nextTaskState),
   });
+}
+
+async function updatePlan(
+  args: z.infer<typeof updatePlanSchema>,
+  context: ToolExecutionContext,
+) {
+  if (!context.updatePlan) {
+    throw new Error("当前运行未初始化工作计划账本。");
+  }
+  const change = context.updatePlan({
+    ...(args.focus_item_id ? { focusItemId: args.focus_item_id } : {}),
+    items: args.items.map((item) => ({
+      ...(item.acceptance_refs
+        ? { acceptanceRefs: item.acceptance_refs }
+        : {}),
+      ...(item.blocked_reason ? { blockedReason: item.blocked_reason } : {}),
+      ...(item.depends_on ? { dependsOn: item.depends_on } : {}),
+      ...(item.evidence_hints ? { evidenceHints: item.evidence_hints } : {}),
+      ...(item.expected_outcome
+        ? { expectedOutcome: item.expected_outcome }
+        : {}),
+      ...(item.id ? { id: item.id } : {}),
+      ...(item.intent ? { intent: item.intent } : {}),
+      ...(item.status ? { status: item.status } : {}),
+      title: item.title,
+    })),
+    reason: args.reason,
+    ...(args.reason_kind ? { reasonKind: args.reason_kind } : {}),
+  });
+  return JSON.stringify({
+    changed: change.changed,
+    changedItemIds: change.changedItemIds,
+    focusItemId: change.snapshot.focusItemId,
+    items: change.snapshot.items
+      .filter((item) => item.status !== "superseded")
+      .map((item) => ({
+        evidenceRefs: item.evidenceRefs,
+        id: item.id,
+        status: item.status,
+        title: item.title,
+      })),
+    kind: change.kind,
+    projectionVersion: change.snapshot.projectionVersion,
+    revision: change.snapshot.revision,
+  });
+}
+
+async function replaceAttempt(
+  args: z.infer<typeof replaceAttemptSchema>,
+  context: ToolExecutionContext,
+) {
+  if (!context.replaceAttempt) {
+    throw new Error("当前运行未初始化路线账本。");
+  }
+  const result = context.replaceAttempt({
+    approach: args.approach.trim(),
+    assumptions: args.assumptions.map((item) => item.trim()),
+    exitCriteria: args.exit_criteria.map((item) => item.trim()),
+    reason: args.reason.trim(),
+  });
+  return JSON.stringify(result);
 }
 
 async function initTaskMemory(
@@ -1247,7 +1376,7 @@ const toolRegistry = new Map<string, ToolDefinition>([
       tool: {
         name: "update_task_state",
         description:
-          "Patch the agent's current working note: mode, next action, assumptions, open questions, and an optional short plan. Use it when new evidence materially changes the current strategy or working judgment. This note does not prove external progress, artifact completion, or verification.",
+          "Patch the agent's current working note: mode, next action, current assumptions, and current open questions. Use update_plan for every Working Plan change. This note does not prove external progress, artifact completion, or verification.",
         input_schema: {
           type: "object",
           properties: {
@@ -1259,17 +1388,14 @@ const toolRegistry = new Map<string, ToolDefinition>([
             assumptions: {
               type: "array",
               items: { type: "string" },
-              description: "Reasonable assumptions being made without asking.",
-            },
-            plan: {
-              type: "array",
-              items: { type: "string" },
-              description: "Short executable plan. This replaces the prior plan.",
+              description:
+                "The complete current assumption list. This replaces the prior Agent Note list; use [] to clear resolved assumptions.",
             },
             open_questions: {
               type: "array",
               items: { type: "string" },
-              description: "Questions that still block safe progress.",
+              description:
+                "The complete current open-question list. This replaces the prior Agent Note list; use [] to clear resolved questions.",
             },
             next_action: {
               type: "string",
@@ -1280,6 +1406,146 @@ const toolRegistry = new Map<string, ToolDefinition>([
       },
       execute: async (rawArgs, context) =>
         updateTaskState(updateTaskStateSchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "update_plan",
+    {
+      schema: updatePlanSchema,
+      tool: {
+        name: "update_plan",
+        description:
+          "Create or revise the run's Working Plan with stable item IDs, current focus, expected outcomes, dependencies, and optional acceptance references. Use it when coverage, order, scope, or focus materially changes. A completed status is a model report until Tool Receipts or Acceptance support it. This coordination update does not prove external progress.",
+        input_schema: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              maxItems: 12,
+              items: {
+                type: "object",
+                properties: {
+                  id: {
+                    type: "string",
+                    description:
+                      "Reuse the stable item ID shown in the current Working Plan when revising an existing item.",
+                  },
+                  title: {
+                    type: "string",
+                    description: "A concise milestone or work outcome.",
+                  },
+                  intent: {
+                    type: "string",
+                    description: "Why this item matters to the user goal.",
+                  },
+                  status: {
+                    type: "string",
+                    enum: [
+                      "pending",
+                      "in_progress",
+                      "completed",
+                      "blocked",
+                      "cancelled",
+                    ],
+                    description:
+                      "The model's coordination status. completed still requires objective evidence.",
+                  },
+                  expected_outcome: {
+                    type: "string",
+                    description:
+                      "The observable result expected from this item without prescribing a tool sequence.",
+                  },
+                  acceptance_refs: {
+                    type: "array",
+                    items: { type: "string" },
+                    description:
+                      "Acceptance criterion IDs this item is intended to satisfy.",
+                  },
+                  depends_on: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Stable Plan Item IDs that must be resolved first.",
+                  },
+                  evidence_hints: {
+                    type: "array",
+                    items: { type: "string" },
+                    description:
+                      "Suggested evidence types; the harness records the actual evidence refs.",
+                  },
+                  blocked_reason: {
+                    type: "string",
+                    description: "Current blocker when status is blocked.",
+                  },
+                },
+                required: ["title"],
+              },
+            },
+            focus_item_id: {
+              type: "string",
+              description: "Stable ID of the item receiving current attention.",
+            },
+            reason: {
+              type: "string",
+              description:
+                "A concise reason for this revision, grounded in user steering, evidence, or the acceptance gap.",
+            },
+            reason_kind: {
+              type: "string",
+              enum: [
+                "initial",
+                "refinement",
+                "new_evidence",
+                "failed_assumption",
+                "user_change",
+                "acceptance_gap",
+                "recovery",
+              ],
+            },
+          },
+          required: ["items", "reason"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        updatePlan(updatePlanSchema.parse(rawArgs), context),
+    },
+  ],
+  [
+    "replace_attempt",
+    {
+      schema: replaceAttemptSchema,
+      tool: {
+        name: "replace_attempt",
+        description:
+          "Start a concrete route attempt or replace the current attempt after objective evidence changes the method, key assumption, or exit conditions. Do not use this for plan wording, item ordering, progress reporting, or a routine next action. This coordination update does not prove external progress.",
+        input_schema: {
+          type: "object",
+          properties: {
+            approach: {
+              type: "string",
+              description: "The concrete method this route attempt will use.",
+            },
+            reason: {
+              type: "string",
+              description:
+                "The evidence-backed reason for starting or replacing the route.",
+            },
+            assumptions: {
+              type: "array",
+              items: { type: "string" },
+              description: "Key assumptions this route depends on.",
+            },
+            exit_criteria: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Observable conditions for success, failure, or route replacement.",
+            },
+          },
+          required: ["approach", "reason"],
+        },
+      },
+      execute: async (rawArgs, context) =>
+        replaceAttempt(replaceAttemptSchema.parse(rawArgs), context),
     },
   ],
   [

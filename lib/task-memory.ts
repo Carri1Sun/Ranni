@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { TaskMemoryStatus, TaskState } from "./task-state";
+import type { PlanItemStatus, PlanSnapshot, SerializedPlanLedger } from "./plan";
 import {
   getWorkspaceRoot,
   resolveWorkspacePath,
@@ -9,6 +11,24 @@ import {
 } from "./workspace";
 
 type TodoStatus = "pending" | "doing" | "done" | "blocked" | "skipped";
+
+async function writePrivateJsonAtomically(
+  filePath: string,
+  value: unknown,
+) {
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await fs.rename(temporaryPath, filePath);
+    await fs.chmod(filePath, 0o600);
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
 
 export type TaskMemoryAppendSection =
   | "state"
@@ -119,7 +139,7 @@ function countTodoStatuses(content: string) {
   };
 
   for (const line of content.split(/\r?\n/)) {
-    const match = line.match(/^\|\s*T\d+\s*\|.*?\|\s*(pending|doing|done|blocked|skipped)\s*\|/i);
+    const match = line.match(/^\|\s*[PT]\d+\s*\|.*?\|\s*(pending|doing|done|blocked|skipped)\s*\|/i);
 
     if (!match) {
       continue;
@@ -201,7 +221,54 @@ function renderStateMarkdown(taskState: TaskState, latestUserPrompt: string) {
   ].join("\n");
 }
 
-function renderTodoMarkdown(taskState: TaskState) {
+function todoStatus(status: PlanItemStatus): TodoStatus {
+  if (status === "active") return "doing";
+  if (status === "satisfied") return "done";
+  if (status === "blocked") return "blocked";
+  if (status === "cancelled" || status === "superseded") return "skipped";
+  return "pending";
+}
+
+function escapeTable(value: string) {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function renderTodoMarkdown(taskState: TaskState, planSnapshot?: PlanSnapshot) {
+  const structuredItems = planSnapshot?.items.filter(
+    (item) => item.status !== "superseded",
+  );
+  if (structuredItems && structuredItems.length > 0) {
+    const structuredPlan = planSnapshot as PlanSnapshot;
+    return [
+      "# Todo",
+      "",
+      `Plan: ${structuredPlan.id} · revision ${structuredPlan.revision} · projection ${structuredPlan.projectionVersion}`,
+      "",
+      "| id | task | status | success check | dependency | notes |",
+      "|---|---|---|---|---|---|",
+      ...structuredItems.map((item) => {
+        const successCheck =
+          item.expectedOutcome ||
+          (item.acceptanceRefs.length > 0
+            ? `Acceptance: ${item.acceptanceRefs.join(", ")}`
+            : "需要 Tool Receipt 或完成检查依据");
+        const notes = [
+          item.id === structuredPlan.focusItemId ? "current focus" : "",
+          item.evidenceRefs.length > 0
+            ? `${item.evidenceRefs.length} evidence refs`
+            : "",
+          item.blockedReason ? `blocked: ${item.blockedReason}` : "",
+          item.outcome ?? "",
+        ]
+          .filter(Boolean)
+          .join("; ");
+        return `| ${item.id} | ${escapeTable(item.title)} | ${todoStatus(item.status)} | ${escapeTable(successCheck)} | ${escapeTable(item.dependsOn.join(", ") || "none")} | ${escapeTable(notes || "auto-generated")} |`;
+      }),
+      "",
+      `Updated: ${formatTimestamp()}`,
+    ].join("\n");
+  }
+
   const plan = taskState.plan.length > 0 ? taskState.plan : [taskState.nextAction].filter(Boolean);
 
   return [
@@ -213,7 +280,7 @@ function renderTodoMarkdown(taskState: TaskState) {
       const id = `T${String(index + 1).padStart(2, "0")}`;
       const status = index === 0 && taskState.currentMode !== "synthesis" ? "doing" : "pending";
       const successCheck = taskState.successCriteria[index] ?? "完成后更新 state.md 或 verification.md";
-      return `| ${id} | ${item.replace(/\|/g, "\\|")} | ${status} | ${successCheck.replace(/\|/g, "\\|")} | none | auto-generated |`;
+      return `| ${id} | ${escapeTable(item)} | ${status} | ${escapeTable(successCheck)} | none | legacy projection |`;
     }),
     "",
     `Updated: ${formatTimestamp()}`,
@@ -325,7 +392,10 @@ export function createTaskMemory({
     );
   }
 
-  async function ensureInitialized(taskState: TaskState) {
+  async function ensureInitialized(
+    taskState: TaskState,
+    serializedPlan?: SerializedPlanLedger,
+  ) {
     await ensureDirectories();
 
     if (!initialized) {
@@ -341,9 +411,22 @@ export function createTaskMemory({
         ),
         fs.writeFile(
           filePath("todo.md"),
-          preserveManualUpdates(renderTodoMarkdown(taskState), "", "Manual Todo Updates"),
+          preserveManualUpdates(
+            renderTodoMarkdown(taskState, serializedPlan?.snapshot),
+            "",
+            "Manual Todo Updates",
+          ),
           "utf8",
         ),
+        ...(serializedPlan
+          ? [
+              fs.writeFile(
+                filePath("plan.json"),
+                `${JSON.stringify(serializedPlan, null, 2)}\n`,
+                "utf8",
+              ),
+            ]
+          : []),
         fs.writeFile(
           filePath("verification.md"),
           preserveManualUpdates(
@@ -418,8 +501,11 @@ export function createTaskMemory({
     return lastSummary;
   }
 
-  async function syncTaskState(taskState: TaskState) {
-    await ensureInitialized(taskState);
+  async function syncTaskState(
+    taskState: TaskState,
+    serializedPlan?: SerializedPlanLedger,
+  ) {
+    await ensureInitialized(taskState, serializedPlan);
     await Promise.all([
       renderGeneratedFile({
         existingPath: filePath("state.md"),
@@ -428,9 +514,18 @@ export function createTaskMemory({
       }).then((content) => fs.writeFile(filePath("state.md"), content, "utf8")),
       renderGeneratedFile({
         existingPath: filePath("todo.md"),
-        rendered: renderTodoMarkdown(taskState),
+        rendered: renderTodoMarkdown(taskState, serializedPlan?.snapshot),
         title: "Manual Todo Updates",
       }).then((content) => fs.writeFile(filePath("todo.md"), content, "utf8")),
+      ...(serializedPlan
+        ? [
+            fs.writeFile(
+              filePath("plan.json"),
+              `${JSON.stringify(serializedPlan, null, 2)}\n`,
+              "utf8",
+            ),
+          ]
+        : []),
       renderGeneratedFile({
         existingPath: filePath("verification.md"),
         rendered: renderVerificationMarkdown(taskState),
@@ -581,10 +676,12 @@ export function createTaskMemory({
 
   async function saveCheckpoint({
     nextAction,
+    recoveryState,
     summary,
     title,
   }: {
     nextAction?: string;
+    recoveryState?: unknown;
     summary: string;
     title?: string;
   }) {
@@ -609,6 +706,7 @@ export function createTaskMemory({
       "## Resume Instructions",
       "- Read `state.md`.",
       "- Read `todo.md`.",
+      "- Read `plan.json` when present and continue the recorded revision.",
       "- Read the specialized file relevant to the next action.",
       "",
       "## Memory Snapshot",
@@ -617,6 +715,12 @@ export function createTaskMemory({
     ].join("\n");
 
     await fs.writeFile(targetPath, content, "utf8");
+    if (recoveryState !== undefined) {
+      await writePrivateJsonAtomically(
+        targetPath.replace(/\.md$/i, ".json"),
+        recoveryState,
+      );
+    }
     latestCheckpointPath = toWorkspaceRelative(targetPath, resolvedWorkspaceRoot);
     initialized = true;
     updatedAt = Date.now();
@@ -643,6 +747,10 @@ export function createTaskMemory({
       };
     },
     readSummary,
+    async readPlan() {
+      const content = await readIfExists(filePath("plan.json"));
+      return content ? (JSON.parse(content) as unknown) : null;
+    },
     recordError,
     recordEvidence,
     saveCheckpoint,

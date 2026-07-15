@@ -1,6 +1,9 @@
 import type { AgentRuntimeServices } from "./runtime-services";
 import type { AgentEventSink } from "./event-sink";
-import type { AgentRunState } from "./run-state";
+import {
+  createAgentRunRecoverySnapshot,
+  type AgentRunState,
+} from "./run-state";
 import { decideRecovery } from "./recovery-controller";
 import { StepExecutionError } from "./step-runner";
 import type { RunAgentTurnResult } from "./types";
@@ -51,11 +54,13 @@ export function createRunTerminator({
     error,
     status = "failed",
     totalSteps = state.completedSteps,
+    recoverable = false,
   }: {
     checkpoint?: RunAgentTurnResult["checkpoint"];
     error: string;
     status?: TerminalStatus;
     totalSteps?: number;
+    recoverable?: boolean;
   }): RunAgentTurnResult {
     const endedAt = Date.now();
     sink.emit({
@@ -70,6 +75,7 @@ export function createRunTerminator({
     return {
       ...(checkpoint ? { checkpoint } : {}),
       error,
+      ...(recoverable ? { recoverable: true } : {}),
       status,
       totalSteps,
     };
@@ -82,6 +88,7 @@ export function createRunTerminator({
     const stepError =
       error instanceof StepExecutionError ? error.cause : error;
     const acceptanceSnapshot = state.acceptance.snapshot();
+    const runStateSnapshot = createAgentRunRecoverySnapshot(state);
     const decision = decideRecovery({
       abort: signal,
       acceptanceSnapshot,
@@ -92,14 +99,50 @@ export function createRunTerminator({
           : state.contextSnapshotHash,
       error: stepError,
       observedState: state.receiptRegistry.snapshot(),
+      runState: runStateSnapshot,
     });
     const stepId =
       error instanceof StepExecutionError ? error.stepId : crypto.randomUUID();
     const stepIndex =
       error instanceof StepExecutionError ? error.stepIndex : currentStepIndex;
 
+    let checkpointRef: string | undefined;
+    if (decision.kind === "failed" && decision.recoverable) {
+      try {
+        await taskMemory.saveCheckpoint({
+          nextAction: decision.resumeInstruction,
+          recoveryState: decision.checkpoint.runState,
+          summary: [
+            decision.message,
+            ...decision.gaps.map((gap) => `- ${gap}`),
+          ].join("\n"),
+          title: "Provider recovery checkpoint",
+        });
+        checkpointRef = taskMemory.getStatus().latestCheckpointPath ?? undefined;
+      } catch (checkpointError) {
+        sink.emit({
+          message: `恢复检查点写入失败，运行现场仍保留在内存和 workspace：${
+            checkpointError instanceof Error
+              ? checkpointError.message
+              : String(checkpointError)
+          }`,
+          runId,
+          timestamp: Date.now(),
+          type: "status",
+        });
+      }
+    }
+
+    const activeAttemptId = state.attempts.active()?.id;
     sink.publishTrace({
       acceptanceGap: acceptanceSnapshot.gap,
+      checkpoint: {
+        ...(activeAttemptId ? { activeAttemptId } : {}),
+        ...(checkpointRef ? { checkpointRef } : {}),
+        completedSteps: state.completedSteps,
+        planRevision: state.planLedger.snapshot().revision,
+        schemaVersion: runStateSnapshot.schemaVersion,
+      },
       contextSnapshotHash: decision.checkpoint.causalTailSnapshotHash,
       error: decision.error.message,
       runId,
@@ -124,37 +167,17 @@ export function createRunTerminator({
       );
     }
 
-    if (decision.kind === "failed" && decision.recoverable) {
-      try {
-        await taskMemory.saveCheckpoint({
-          nextAction: decision.resumeInstruction,
-          summary: [
-            decision.message,
-            ...decision.gaps.map((gap) => `- ${gap}`),
-          ].join("\n"),
-          title: "Provider recovery checkpoint",
-        });
-      } catch (checkpointError) {
-        sink.emit({
-          message: `恢复检查点写入失败，运行现场仍保留在内存和 workspace：${
-            checkpointError instanceof Error
-              ? checkpointError.message
-              : String(checkpointError)
-          }`,
-          runId,
-          timestamp: Date.now(),
-          type: "status",
-        });
-      }
-    }
-
     return fail({
       checkpoint: {
         acceptanceGap: acceptanceSnapshot.gap,
         contextSnapshotHash: decision.checkpoint.causalTailSnapshotHash,
+        ...(decision.checkpoint.runState
+          ? { runState: decision.checkpoint.runState }
+          : {}),
         ...(workspaceRoot ? { workspaceRoot } : {}),
       },
       error: decision.message,
+      recoverable: decision.kind === "failed" && decision.recoverable,
       status: decision.kind === "cancelled" ? "cancelled" : "failed",
       totalSteps: Math.max(state.completedSteps, stepIndex),
     });

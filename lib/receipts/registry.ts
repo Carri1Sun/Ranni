@@ -81,8 +81,15 @@ function parseTerminalResult(result: string) {
   };
 }
 
+const PLANNING_STATE_TOOLS = new Set([
+  "plan_research",
+  "replace_attempt",
+  "update_plan",
+  "update_task_state",
+]);
+
 function inferCategory(toolName: string): ReceiptCategory {
-  if (toolName === "update_task_state") return "state";
+  if (PLANNING_STATE_TOOLS.has(toolName)) return "state";
   if (toolName === "run_terminal") return "command";
   if (/validate|inspect|review/.test(toolName)) return "verification";
   if (/slide|pptx|deck|manifest|style/.test(toolName)) return "artifact";
@@ -282,15 +289,19 @@ export function createToolReceipt({
 }
 
 function initialObservedState(): ObservedState {
-  return {
+  const state = {
     artifacts: {},
     commands: [],
     evidence: {},
     files: {},
     receipts: [],
-    stateHash: stableReceiptHash("empty"),
     unresolvedErrors: [],
     verification: [],
+  };
+
+  return {
+    ...state,
+    stateHash: stateHash(state),
   };
 }
 
@@ -305,6 +316,14 @@ function stateHash(state: Omit<ObservedState, "stateHash">) {
   });
 }
 
+function executionKey(receipt: ToolReceipt) {
+  return `${receipt.toolUseId}:${receipt.inputHash}`;
+}
+
+function receiptFingerprint(receipt: ToolReceipt) {
+  return `${receipt.toolName}:${receipt.inputHash}:${receipt.resultHash}:${receipt.domainStatus}`;
+}
+
 export class ReceiptRegistry {
   private state = initialObservedState();
   private readonly byExecutionKey = new Map<string, ToolReceipt>();
@@ -315,20 +334,20 @@ export class ReceiptRegistry {
   }
 
   record(receipt: ToolReceipt) {
-    const executionKey = `${receipt.toolUseId}:${receipt.inputHash}`;
-    const completed = this.byExecutionKey.get(executionKey);
+    const key = executionKey(receipt);
+    const completed = this.byExecutionKey.get(key);
 
     if (completed) {
       return { ...completed, reused: true };
     }
 
-    const fingerprint = `${receipt.toolName}:${receipt.inputHash}:${receipt.resultHash}:${receipt.domainStatus}`;
+    const fingerprint = receiptFingerprint(receipt);
     receipt.unchanged = receipt.unchanged || this.fingerprints.has(fingerprint);
     if (receipt.unchanged && receipt.success) {
       receipt.domainStatus = "unchanged";
     }
     this.fingerprints.add(fingerprint);
-    this.byExecutionKey.set(executionKey, receipt);
+    this.byExecutionKey.set(key, receipt);
     this.state.receipts.push(receipt);
 
     for (const file of receipt.projection.files ?? []) {
@@ -410,5 +429,22 @@ export class ReceiptRegistry {
 
   snapshot(): ObservedState {
     return structuredClone(this.state);
+  }
+
+  restore(snapshot: ObservedState) {
+    const restored = structuredClone(snapshot);
+    restored.stateHash = stateHash(restored);
+
+    this.byExecutionKey.clear();
+    this.fingerprints.clear();
+    for (const receipt of restored.receipts) {
+      const key = executionKey(receipt);
+      if (!this.byExecutionKey.has(key)) {
+        this.byExecutionKey.set(key, receipt);
+      }
+      this.fingerprints.add(receiptFingerprint(receipt));
+    }
+
+    this.state = restored;
   }
 }

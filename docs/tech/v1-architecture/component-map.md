@@ -27,6 +27,8 @@ date: 2026-07-06
 | --- | --- |
 | `README.md` | 项目入口文档，说明当前能力、启动方式、API 和文档索引 |
 | `AGENTS.md` | 给后续 coding agent 的仓库规则、提交格式、文档维护规则 |
+| `UI-NAMING.md` | 页面区域、可见 UI 元素和事件到 UI 投影的权威词表 |
+| `CONCEPT-NAMING.md` | Agent Runtime 概念、状态语义、事件层和模块责任的权威词表 |
 | `.env.example` | 本地环境变量模板 |
 | `.gitignore` | 忽略依赖、构建产物、运行期 research 和 `.ranni` 记忆 |
 | `package.json` | npm 脚本、运行依赖和开发依赖 |
@@ -49,8 +51,9 @@ date: 2026-07-06
 - chat / report / trace 三个页面。
 - session 级 SSE 订阅（`GET /api/events`），只读消费三层事件：Layer3 notification 驱动主 UI 状态、Layer2 重建 trace/debug 视图、Layer1 live delta 流式打字。
 - run、step、tool、task state、thinking trace 的前端合并。
-- 从持久化 Trace API 加载 Session Run、Step index 和单 Step I/O；服务重启后通过当前 Session workspace 重新发现历史 Run。
-- 在运行详情中装配运行概览和 Step 输入输出查看器，并在运行状态栏提供入口。
+- 从持久化 Trace API 加载 Session Run、Run Overview Projection、Step index 和单 Step I/O；服务重启后通过当前 Session workspace 重新发现历史 Run。
+- 通过 `run.overview.updated` 实时替换当前 Run 的完整概览快照，并按 `latestSeq` 忽略重复或更早快照。
+- 在运行详情中装配运行概览、计划与进度视图和 Step 输入输出查看器，并在运行状态栏提供整体计划面板和入口。
 - thinking delta 的前端内存态展示、最终 thinking 持久化切换和 assistant delta 消息更新。
 - 前端流事件顺序日志、消息流 UI 顺序和导出。
 - 最多 3 个并行 agent run 的前端状态、按 session 终止和上限弹窗。
@@ -79,26 +82,36 @@ date: 2026-07-06
 - 左侧导航。
 - 会话消息。
 - 报告页。
-- Trace 页面。
+- 运行详情页。
 - 运行状态栏。
 - 会话过程项、运行中状态 badge、扫光动效。
 - Run 生命周期弱提示和 thinking 正文流式/渐进展示。
 - 设置弹窗。
 - workspace picker。
 - provider list。
-- 运行概览、语义卡片、验收状态、Step I/O tabs、输入构成、上下文健康和窄屏布局。
+- 运行概览、整体计划面板、计划覆盖与交付验收进度条、计划变化时间线、语义卡片、验收状态、Step I/O tabs、输入构成、上下文健康和窄屏布局。
 
 ### `components/run-observability.tsx`
 
 运行详情的语义展示组件：
 
-- 运行概览展示当前路线、下一步、验收清单、交付缺口、当前阻塞、完成依据和进展回执。
+- 运行概览展示当前计划、当前路线、下一步、验收清单、交付缺口、当前阻塞、完成依据和进展回执。
 - Step 输入输出查看器展示 Input / Output / 原始数据 tabs、上下文健康检查、输入构成列表和 tool call/result 配对。
 - 持久化 I/O 加载失败或旧 Run 缺少语义字段时回退到实时 Legacy Trace。
 
+### `components/run-plan-progress.tsx`
+
+Run 级整体计划与进度组件：
+
+- `compact` 形态嵌入运行状态栏，持续展示当前 Plan Focus、有效计划项和两类进度。
+- `detail` 形态构成“计划与进度”视图，展示完整计划项、当前 Attempt、下一动作、已取消或已替代项和计划变化时间线。
+- 计划覆盖统计 `satisfied / 有效计划项`，分母排除 `cancelled` 和 `superseded`；交付验收统计必需验收项中的 `passed + waived / required`。
+- “调整计划”把自然语言要求预填到 Composer；Agent 通过 `update_plan` 形成结构化 Plan Revision 后，UI 才显示新的修订。
+- 时间线条目可以按 `stepIndex` 定位到对应历史 Step I/O。
+
 ### `components/run-observability-model.ts`
 
-把持久化 Step I/O 和实时 `TraceStep` 确定性投影为 UI view model。负责 Acceptance / Progress / Attempt 汇总、因果链健康检查、Context section 展开数据和按 toolUseId 配对，避免 React 组件承担 Trace 语义推导。对应测试为 `components/run-observability-model.test.ts`。
+优先把 `RunOverviewProjection` 确定性投影为当前 Run 的 UI view model，并在缺少运行级快照时从持久化 Step I/O 或实时 `TraceStep` 做 Legacy 回退。负责 Plan、Acceptance、Progress、Attempt 汇总、计划时间线、因果链健康检查、Context section 展开数据和按 toolUseId 配对，避免 React 组件承担 Trace 语义推导。当前完整快照与用户选择的历史 Step I/O 保持独立。对应测试为 `components/run-observability-model.test.ts`。
 
 ### `components/markdown-content.tsx`
 
@@ -127,7 +140,7 @@ Express 应用定义。
 - session title 生成。
 - 接线全局 EventBus / RunRegistry / EventMapper。
 - 初始化 RunTraceStore，并注册持久化 Run / Step 查询路由。
-- Command 通道：启动 run、补充消息（steer）、中断（abort），最多 3 个 active run 并发上限。
+- Command 通道：启动 run、补充消息（steer）、中断（abort），最多 3 个 active run 并发上限；新 Run 会消费同 Session、同 workspace 的最新可恢复状态，并把最新用户消息作为恢复 Steering。
 - Event 通道：`GET /api/events` SSE 单向下行广播（Last-Event-ID 续传 + 心跳）。
 - model provider 测试。
 - Tavily 测试。
@@ -149,6 +162,7 @@ Express 应用定义。
 - `POST /api/runs`（启动 run，达到上限返回 `AGENT_CONCURRENCY_LIMIT`）
 - `GET /api/runs/status`（按 session 查询当前进程内 Run 状态）
 - `GET /api/sessions/:sessionId/runs?workspaceRoot=...`（合并当前进程与 workspace 持久化 Run Trace）
+- `GET /api/runs/:runId/overview?workspaceRoot=...`（读取当前 Run 的完整运行概览投影）
 - `GET /api/runs/:runId/steps?workspaceRoot=...`（读取或重新发现 Run，并返回 Step 索引）
 - `GET /api/runs/:runId/steps/:stepId/io?workspaceRoot=...`（读取冻结的 Step 输入输出）
 - `GET /api/events`（SSE，query `streamKey` + `lastSeq`）
@@ -180,7 +194,7 @@ Express 应用定义。
 | --- | --- |
 | `lib/agent/run-controller.ts` | Run 初始化、Steering、Step 循环、终止和预算 |
 | `lib/agent/step-runner.ts` | 冻结 Context / exact request、调用 Provider、追加完整工具批次、发布语义事件并委托完成判断 |
-| `lib/agent/run-state.ts` | `AgentRunState`、Task Contract、Working Set 和 TaskState 兼容投影 |
+| `lib/agent/run-state.ts` | `AgentRunState`、Task Contract、Working Set、`planAuthority` 计划权威边界和 TaskState 兼容投影 |
 | `lib/agent/runtime-services.ts` | Research Notebook 与 Task Memory 的领域服务创建适配边界，向通用 Controller 暴露窄运行依赖 |
 | `lib/agent/event-sink.ts` | v2 运行事件发布与 legacy StreamEvent 兼容 |
 | `lib/agent/tool-batch-executor.ts` | 工具请求校验、安全检查、顺序执行、幂等复用和完整 Tool Receipt 批次 |
@@ -200,12 +214,13 @@ Express 应用定义。
 
 `lib/active-context.ts` 只保留迁移兼容 facade，不再按 HTML-to-PPTX phase 投影或删除 conversation。
 
-### `lib/receipts/`、`lib/acceptance.ts`、`lib/progress.ts`、`lib/plan-attempt.ts`
+### `lib/receipts/`、`lib/acceptance.ts`、`lib/progress.ts`、`lib/plan.ts`、`lib/plan-attempt.ts`
 
 - `receipts/registry.ts`：工具事实进入 Observed State 的统一入口；记录 input/result hash、文件、命令、证据、工件、验证和未解决错误，并按 `(toolUseId, inputHash)` 复用已完成执行。
 - `acceptance.ts`：从 Deliverable Contract 派生 criterion，并且只根据当前有效回执或用户明确豁免更新状态。
 - `progress.ts`：区分 objective progress、information gain 和 regression；`noObjectiveProgressStreak` 的 3 / 6 轮阈值只提醒交付节奏，相同策略真实失败或 `noMeaningfulProgressStreak` 达到阈值时更新 Attempt，10 轮无 meaningful progress 时保存 checkpoint。
-- `plan-attempt.ts`：维护当前路线、失败、替代和证据引用。
+- `plan.ts`：维护 Working Plan、稳定 Plan Item ID、Plan Revision、Objective Projection、Plan Focus 与恢复序列化。`update_plan` 修订计划；候选计划在提交前事务式校验重复 ID、自依赖、未知依赖和依赖环；Tool Receipt 与 Acceptance Snapshot 协调计划项客观状态。
+- `plan-attempt.ts`：维护 Attempt、Assumption、路线失败、替代和证据引用。`replace_attempt` 在具体方法实质改变时创建新 Attempt。
 
 ### `lib/policies/registry.ts`、`lib/html-to-pptx/artifact-policy.ts` 与 `lib/html/artifact-policy.ts`
 
@@ -219,8 +234,8 @@ Session 消息历史存储层。负责读取和校验 `ranni.session-history.v1`
 
 v2 事件驱动架构的核心模块。
 
-- `schema.ts`：三层事件类型（ProviderEvent / TraceEvent / ClientNotification）+ 三段式（textId / thinkingId）+ 共享展示类型（ActivityDisplay / ProcessIconId / ActivityType）+ `DURABLE_EVENT_TYPES`。
-- `schema.ts` 的语义 Trace 事件还包括 `tool.batch.started`、`tool.receipt`、`state.observed.updated`、`attempt.updated`、`assumption.invalidated`、`acceptance.updated`、`progress.receipt`、`recovery.started` 和 `completion.checked`。
+- `schema.ts`：三层事件类型（ProviderEvent / TraceEvent / ClientNotification）+ 三段式（textId / thinkingId）+ 共享展示类型（ActivityDisplay / ProcessIconId / ActivityType）+ `DURABLE_EVENT_TYPES`；`run.overview.updated` 携带完整 `RunOverviewProjection`。
+- `schema.ts` 的语义 Trace 事件还包括 `tool.batch.started`、`tool.receipt`、`state.observed.updated`、`plan.updated`、`attempt.updated`、`assumption.invalidated`、`acceptance.updated`、`progress.receipt`、`recovery.started` 和 `completion.checked`。
 - `event-bus.ts`：进程内单例 EventBus。per-streamKey(=sessionId) ring buffer + 单调 seq + 同步回放订阅 + `subscribeAll`。durable 入 buffer 可回放，live-only 仅广播。
 - `legacy-map.ts`：旧 `StreamEvent` → v2 事件映射纯函数，供 `lib/agent/event-sink.ts` 的兼容发布层使用。
 
@@ -228,15 +243,16 @@ v2 事件驱动架构的核心模块。
 
 运行实例管理与展示投影。
 
-- `run-registry.ts`：运行注册表。runId 在此生成（上移自 agent），维护 steerQueue（steer/drainSteer）、abort（触发 AbortController + 清空队列）、并发计数（activeCount）。
-- `event-mapper.ts`：EventMapper。订阅 Layer2 TraceEvent 并确定性投影为 Layer3 ClientNotification；默认不发辅助模型请求。仅在 `RANNI_ACTIVITY_REWRITE_ENABLED=true` 时为工具活动异步生成 model display；`task.state` 继续按签名去重。
+- `run-registry.ts`：运行注册表。runId 在此生成（上移自 agent），维护 steerQueue（steer/drainSteer）、abort（触发 AbortController + 清空队列）、并发计数（activeCount），并暂存失败 Run 的可恢复状态。下一次同 Session、同 workspace 请求会一次性取出该状态；恢复绑定校验防止 Receipt Registry 跨 workspace 复用副作用。
+- `run-overview-projection.ts`：共享纯 reducer。按单调事件 `seq` 聚合 Working Plan、Attempt、Acceptance、Progress、TaskState、Observed State、Completion 和 Recovery，生成完整 `RunOverviewProjection`、`latestSeq` 与最多 120 条变化时间线；同 Run 的重复或更早事件保持幂等。
+- `event-mapper.ts`：EventMapper。订阅 Layer2 TraceEvent 并确定性投影为 Layer3 ClientNotification；对运行概览事实使用共享 reducer，发布 `run.overview.updated` 完整快照。默认不发辅助模型请求。仅在 `RANNI_ACTIVITY_REWRITE_ENABLED=true` 时为工具活动异步生成 model display；`task.state` 继续按签名去重。
 - `display-fallback.ts`：展示文案 fallback 纯函数（前后端共享，从 components/agent-console.tsx 抽取）。
 - `activity-rewrite.ts`：LLM 改写逻辑（prompt / 脱敏 / 解析 / `rewriteActivityDisplay`），供 mapper 使用。
-- `run-trace-store.ts`：把脱敏后的 Layer2 事实增量写入 Session workspace 下的 `.ranni/runs/<runId>/`，维护 run summary、Step index 和逐 Step I/O；支持按 workspace 发现进程重启前的 Run。
+- `run-trace-store.ts`：把脱敏后的 Layer2 事实增量写入 Session workspace 下的 `.ranni/runs/<runId>/`，使用同一 reducer 原子维护 `overview.json`，同时维护 run summary、Step index 和逐 Step I/O；支持按 workspace 发现进程重启前的 Run。
 
 ### `src/server/run-trace-routes.ts`
 
-提供持久化 Trace 查询：Session Run 列表、Run Step 索引和单 Step I/O。运行中的 Run 使用 RunRegistry workspace 映射；UI 为历史 Session 附带已选择的 workspaceRoot，路由据此扫描 `.ranni/runs/` 并恢复只读查询映射。
+提供持久化 Trace 查询：Session Run 列表、Run Overview Projection、Run Step 索引和单 Step I/O。运行中的 Run 使用 RunRegistry workspace 映射；UI 为历史 Session 附带已选择的 workspaceRoot，路由据此扫描 `.ranni/runs/` 并恢复只读查询映射。`GET /api/runs/:runId/overview` 与 SSE `run.overview.updated` 返回同一种完整快照结构。
 
 ### `lib/tools.ts`
 
@@ -246,6 +262,7 @@ v2 事件驱动架构的核心模块。
 
 - 定义工具 schema。
 - 执行文件、搜索、终端、网页、research、task memory 工具。
+- 注册 `update_plan` 和 `replace_attempt`，分别修订 Working Plan 和替换具体 Attempt。
 - 让文件列表、读取、内容搜索和 task memory 读取等安全观察能力保持可组合。
 - 注册 `operate_computer`，把 OpenAI computer tool loop 接入 agent 工具调用。
 - 限制 workspace 越界。
@@ -268,7 +285,7 @@ OpenAI computer-use 运行层。
 
 结构化任务状态。
 
-`update_task_state` 只允许模型维护 mode、next action、assumptions、open questions 和 plan。用户目标、交付条件、客观 facts、文件、命令和 verification 由 Task Contract 与 Receipt Registry 维护；同义更新返回 `noChange: true`，不会产生客观进展。
+`update_task_state` 的模型可见契约只允许维护 mode、next action、assumptions 和 open questions。执行层继续解析旧调用方的兼容 plan 输入。用户目标、交付条件、客观 facts、文件、命令和 verification 由 Task Contract 与 Receipt Registry 维护。`AgentRunState.planAuthority` 在 `legacy` 与 `structured` 之间标记计划权威边界；首次使用 `update_plan` 后，结构化 Working Plan 持续作为权威，`TaskState.plan` 只同步标题兼容投影。旧 plan 输入只在 `legacy` 模式下桥接到 Plan Ledger。同义更新返回 `noChange: true`，不会产生客观进展。
 
 ### `lib/task-memory.ts`
 
@@ -280,6 +297,7 @@ OpenAI computer-use 运行层。
 .ranni/runs/<runId>/
   state.md
   todo.md
+  plan.json
   verification.md
   errors.md
   decisions.md
@@ -293,6 +311,8 @@ OpenAI computer-use 运行层。
   sources/
   checkpoints/
 ```
+
+`plan.json` 保存可恢复 Plan Ledger，`todo.md` 按稳定 Plan Item ID 生成人类可读投影。checkpoint 可以同时写入完整 `AgentRunRecoverySnapshot` JSON。
 
 ### `lib/research.ts`
 

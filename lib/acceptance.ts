@@ -232,6 +232,10 @@ export class AcceptanceLedger {
     const criteria = structuredClone(this.criteria);
     return { criteria, gap: gap(criteria) };
   }
+
+  restore(snapshot: AcceptanceSnapshot) {
+    this.criteria = structuredClone(snapshot.criteria);
+  }
 }
 
 export function createTextDeliverableContract(): DeliverableContract {

@@ -2,6 +2,7 @@ import type { AcceptanceSnapshot } from "../acceptance";
 import type { PlanAttemptRecord } from "../plan-attempt";
 import type { ObservedState } from "../receipts/types";
 import { collectCompletionIssues } from "./finalization-controller";
+import type { AgentRunRecoverySnapshot } from "./run-state";
 
 export type RecoveryCheckpoint = {
   acceptanceSnapshot: AcceptanceSnapshot;
@@ -9,6 +10,7 @@ export type RecoveryCheckpoint = {
   causalTailSnapshotHash: string;
   observedState: ObservedState;
   observedStateHash: string;
+  runState?: AgentRunRecoverySnapshot;
 };
 
 export type RecoveryError = {
@@ -56,6 +58,7 @@ export type RecoveryInput = {
   causalTailSnapshotHash: string;
   error: unknown;
   observedState: ObservedState;
+  runState?: AgentRunRecoverySnapshot;
 };
 
 function errorDetails(error: unknown): Omit<RecoveryError, "transientProviderFailure"> {
@@ -86,6 +89,7 @@ function createCheckpoint({
   attempt,
   causalTailSnapshotHash,
   observedState,
+  runState,
 }: Omit<RecoveryInput, "abort" | "error">): RecoveryCheckpoint {
   return {
     acceptanceSnapshot: structuredClone(acceptanceSnapshot),
@@ -93,6 +97,7 @@ function createCheckpoint({
     causalTailSnapshotHash,
     observedState: structuredClone(observedState),
     observedStateHash: observedState.stateHash,
+    ...(runState ? { runState: structuredClone(runState) } : {}),
   };
 }
 
@@ -171,6 +176,7 @@ export function decideRecovery({
   causalTailSnapshotHash,
   error,
   observedState,
+  runState,
 }: RecoveryInput): RecoveryDecision {
   const transientProviderFailure = isTransientProviderFailure(error);
   const details = {
@@ -182,6 +188,7 @@ export function decideRecovery({
     attempt,
     causalTailSnapshotHash,
     observedState,
+    runState,
   });
 
   if (isAbortRequested(abort, error)) {

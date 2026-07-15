@@ -1973,6 +1973,401 @@
   color: var(--ranni-warning) !important;
 }
 
+.planProgressPanel {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid rgba(143, 167, 255, 0.24);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(145deg, rgba(143, 167, 255, 0.09), transparent 46%),
+    var(--ranni-soft-surface);
+  box-shadow: var(--shadow-inset);
+}
+
+.planLiveStatus {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.planProgressPanelCompact {
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-color: var(--ranni-line-1);
+  border-radius: var(--radius-md);
+  background: var(--ranni-subtle-surface);
+}
+
+.planProgressHeader,
+.planItemTitleRow,
+.planTimelineHeader,
+.planTimelineHeader > div,
+.planTimeline button > div > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.planProgressHeader > div,
+.planTimelineHeader > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.planProgressHeader > div > span,
+.planTimelineHeader > div > span,
+.planRouteSummary span {
+  color: var(--ranni-accent-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.planProgressHeader > div > strong {
+  overflow: hidden;
+  color: var(--ranni-text-0);
+  font-size: 15px;
+  font-weight: 680;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planSyncBadge {
+  flex: none;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-pill);
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.planSyncBadgeLive {
+  border-color: rgba(104, 214, 163, 0.28);
+  background: var(--ranni-success-soft);
+  color: var(--ranni-success);
+}
+
+.planProgressMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.planMetric {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.planMetric > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.planMetric span,
+.planProgressMeta,
+.planItem small,
+.planRouteSummary small,
+.planTimeline button span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.planMetric strong {
+  color: var(--ranni-text-0);
+  font-size: 12px;
+}
+
+.planProgressTrack {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--ranni-inset-surface);
+  box-shadow: inset 0 0 0 1px var(--ranni-line-1);
+}
+
+.planProgressTrack > span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ranni-accent-0), var(--ranni-success));
+  transition: width var(--motion-base) var(--ease-ranni);
+}
+
+.planProgressMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.planProgressMeta span + span::before {
+  content: "·";
+  margin-right: 12px;
+  color: var(--ranni-line-2);
+}
+
+.planItemList {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.planItem {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: 10px 11px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.planItem > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.planItemStatus {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border: 1px solid var(--ranni-text-3);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.planItemFocus {
+  border-color: rgba(143, 167, 255, 0.36);
+  background: var(--ranni-accent-soft);
+}
+
+.planItem_active .planItemStatus {
+  border-color: var(--ranni-accent-2);
+  background: var(--ranni-accent-2);
+  box-shadow: 0 0 0 4px rgba(143, 167, 255, 0.12);
+  animation: statusPulse 1.6s ease-in-out infinite;
+}
+
+.planItem_satisfied .planItemStatus {
+  border-color: var(--ranni-success);
+  background: var(--ranni-success);
+}
+
+.planItem_blocked .planItemStatus {
+  border-color: var(--ranni-warning);
+  background: var(--ranni-warning);
+}
+
+.planItem_cancelled,
+.planItem_superseded {
+  opacity: 0.62;
+}
+
+.planItem_cancelled strong,
+.planItem_superseded strong {
+  text-decoration: line-through;
+}
+
+.planItemTitleRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planItemTitleRow > span {
+  flex: none;
+  color: var(--ranni-text-3);
+  font-size: 10px;
+}
+
+.planItem p {
+  color: var(--ranni-text-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.planItem .planItemBlocked {
+  color: var(--ranni-warning);
+}
+
+.planMoreHint {
+  color: var(--ranni-text-3);
+  font-size: 11px;
+}
+
+.planRouteSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.planRouteSummary > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: var(--space-3);
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-inset-surface);
+}
+
+.planRouteSummary strong {
+  overflow-wrap: anywhere;
+  color: var(--ranni-text-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.planArchive {
+  padding: var(--space-3);
+  border: 1px dashed var(--ranni-line-2);
+  border-radius: var(--radius-sm);
+}
+
+.planArchive > summary {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.planArchive[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.planTimelineSection {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--ranni-line-1);
+}
+
+.planTimelineHeader > span {
+  color: var(--ranni-text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.planTimelineHeader strong {
+  color: var(--ranni-text-0);
+  font-size: 14px;
+}
+
+.planTimeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planTimeline li {
+  position: relative;
+}
+
+.planTimeline li:not(:last-child)::after {
+  position: absolute;
+  top: 24px;
+  bottom: -8px;
+  left: 6px;
+  width: 1px;
+  background: var(--ranni-line-2);
+  content: "";
+}
+
+.planTimeline button {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 9px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.planTimeline button:disabled {
+  cursor: default;
+}
+
+.planTimelineDot {
+  position: relative;
+  z-index: 1;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  border: 2px solid var(--ranni-soft-surface);
+  border-radius: 50%;
+  background: var(--ranni-accent-2);
+  box-shadow: 0 0 0 1px rgba(143, 167, 255, 0.3);
+}
+
+.planTimeline button > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.planTimeline button strong {
+  color: var(--ranni-text-1);
+  font-size: 12px;
+}
+
+.planTimeline button p {
+  color: var(--ranni-text-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.planProgressActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.planProgressActions button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--ranni-line-1);
+  border-radius: var(--radius-sm);
+  background: var(--ranni-secondary-bg);
+  color: var(--ranni-text-1);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.planProgressActions button:last-child {
+  border-color: rgba(143, 167, 255, 0.3);
+  background: var(--ranni-accent-soft);
+}
+
 .stepIOTabs {
   display: flex;
   gap: 4px;
@@ -2145,6 +2540,18 @@
   cursor: not-allowed;
   opacity: 0.46;
   box-shadow: none;
+}
+
+.runningComposerActions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.runningComposerActions .submitButton {
+  position: static;
 }
 
 .stopButton {
@@ -3683,6 +4090,16 @@
     width: calc(100% - 16px);
   }
 
+  .runningComposerActions {
+    left: 8px;
+    width: calc(100% - 16px);
+  }
+
+  .runningComposerActions .submitButton {
+    width: auto;
+    flex: 1 1 0;
+  }
+
   .composerSkillToolbar {
     bottom: 52px;
     max-width: calc(100% - 16px);
@@ -3790,7 +4207,8 @@
 
   .activityActive .activityTopLine strong,
   .activityActive .activityTopLine span,
-  .activityActive .activityContent p {
+  .activityActive .activityContent p,
+  .planItem_active .planItemStatus {
     animation: none;
     background-position: -80% 50%;
   }

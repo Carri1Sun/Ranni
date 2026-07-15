@@ -4,9 +4,9 @@ version: v1
 date: 2026-07-14
 ---
 
-# Ranni 架构概念词典
+# Ranni 架构概念实现索引
 
-本词典对齐 Ranni 当前代码中真实存在、并且会在沟通中反复出现的名词。每一条都标注了它在代码里的落点，方便对照实现。词条按「先看懂整体，再看懂细节」的顺序排列。
+本文对齐 Ranni 当前代码中的概念落点，方便从协作名词追到实现。项目协作中的规范名称与责任边界以仓库根目录 [`CONCEPT-NAMING.md`](../../../CONCEPT-NAMING.md) 为准；可见 UI 名称与事件投影以 [`UI-NAMING.md`](../../../UI-NAMING.md) 为准。本文补充代码位置、实现细节和跨架构索引。
 
 > 约定：本文中的「已实现」指当前代码里真实运行的逻辑；「规划中 / 后置」指文档里描述过、但代码尚未落地的能力。区分见 [ranni-architecture-report.md](./ranni-architecture-report.md) 第 9 章。
 
@@ -18,15 +18,15 @@ date: 2026-07-14
 ### Session（会话）
 一次连续对话的载体。每个 Session 拥有独立的执行边界目录 `workspaceRoot`。完整用户与 assistant 消息持久化在该 Session workspace 的 `.ranni/session-history.json`（见 `lib/session-history-store.ts`）。前端按需从后端加载历史，localStorage 仅作兼容缓存和界面状态。
 
-### Session Workspace（会话工作区）
+### Session Workspace（Session 工作区）
 发送首条消息时，后端在 `RANNI_DEFAULT_WORKSPACE`（默认 `~/Documents/Ranni-Workspace`）下自动创建 `ranni-session-YYYY-MM-DD_HH-mm-ss` 目录，作为该 Session 的执行边界。文件工具、终端 cwd、research 产物、`.ranni` 任务记忆都被限制在该目录内。校验逻辑在 `src/server/app.ts` 的 `assertSessionWorkspaceDirectory`：目录必须位于默认根下且名为 `ranni-session-*`。
 
-### Run（一轮运行）
+### Run（运行）
 用户一次发送触发的一轮 Agent 执行，由 `runId` 唯一标识。一个 Session 可以有多个 Run（多轮对话），同一 Session 的多个 Run 共享同一个 `streamKey`（= sessionId）。Run 在 `RunRegistry` 中注册、可被 steer（补充消息）、可被 abort（中断）。
 
 ## 二、Harness 与 Agent
 
-### Harness（运行控制层）
+### Agent Harness（运行控制层）
 包在模型外面的工程控制层，负责组装 prompt、维护因果 Context、调度工具、记录客观状态、守住完成条件、处理恢复并记录 Trace。可近似记为 `Agent = Model + Harness`。当前核心落点包括稳定 facade `lib/agent.ts`、`lib/agent/`、`lib/context/`、`lib/receipts/`、`lib/policies/`、`lib/llm/`、`lib/tools.ts`、`lib/trace.ts` 与 `src/server/`。概念来源见 [core-concept/harness.md](../v1-architecture/core-concept/harness.md)。
 
 ### Agent Loop（主循环）
@@ -37,32 +37,32 @@ Harness 驱动模型多步执行的核心循环。`lib/agent.ts` 只提供 `runA
 
 ## 三、状态与记忆
 
-### TaskState（结构化任务状态）
-一次 Run 内的兼容工作状态，定义在 `lib/task-state.ts`。当前模型只能通过 `update_task_state` 更新 currentMode、nextAction、assumptions、openQuestions 和 plan；goal、deliverable、constraints、success criteria、facts、files、commands 和 verification 由 Harness 维护。每轮请求会把相关 Agent Note 投影到 Working Set。
+### TaskState（任务状态兼容投影）
+一次 Run 内的兼容工作状态，定义在 `lib/task-state.ts`。模型可以通过 `update_task_state` 更新 currentMode、nextAction、assumptions、openQuestions 和兼容 `plan`；goal、deliverable、constraints、success criteria、facts、files、commands 和 verification 由 Harness 维护。`TaskState.plan` 只是 Working Plan 当前计划项标题列表的兼容投影：旧输入经 `PlanLedger.updateLegacy` 桥接到计划账本，Harness 再用账本标题回写该字段。新调用使用 `update_plan`。
 
 ### TaskIntent（任务意图区）
 旧 TaskState 中的兼容概念。当前稳定用户意图进入 Task Contract；模型策略进入 Agent Note。`update_task_state` 不能覆盖用户目标或客观完成条件。
 
-### ObservedState（观察状态区）
+### ObservedState（客观现场）
 由 `lib/receipts/registry.ts` 根据 Tool Receipt 维护的权威运行事实：文件与 hash、命令退出码、证据、draft / accepted / exported / validated 工件、验证结果和未解决错误。每条回执保存 input/result hash 与事实投影；失败工具不会生成成功文件或工件事实。TaskState 中的 files / commands / verification 只是兼容投影。
 
-### currentMode（认知姿态）
-表达 Agent 当前认知姿态的字段，取值 10 种：`intake / recon / plan / edit / shell / verify / debug / review / research / synthesis`（见 `task-state.ts` 的 `ACTION_MODES`）。它只用于提示和 trace，**不参与安全观察工具的授权判断**，也不是强制阶段状态机。Harness 会根据工具类型自动推进 mode（如 `read_file` → `recon`，`search_web` → `research`，验证命令 → `verify`）。
+### currentMode（行动模式）
+表达 Agent 当前行动意图的字段，取值 10 种：`intake / recon / plan / edit / shell / verify / debug / review / research / synthesis`（见 `task-state.ts` 的 `ACTION_MODES`）。它用于 Agent 工作笔记、Context 和 Trace 展示，不参与安全观察工具的授权判断。模型通过 `update_task_state` 更新该字段；Finalization 与 Chunked Final 控制器在进入验证修复或结果综合时也会协调该字段。
 
 ### verification（验证状态）
 TaskState 中的兼容摘要，取值 `not_needed / pending / passed / failed / skipped`。权威验证事实保存在 Receipt Registry 的 `verification` 列表，并由 Acceptance Ledger 绑定到 required criterion；模型无法直接把 verification 或 Acceptance 标记为 passed。
 
-### Durable Task Memory（持久任务记忆）
-每个 Run 在 Session workspace 下创建 `.ranni/runs/<runId>/`，落盘任务现场，实现 `lib/task-memory.ts`。包含 `state.md / todo.md / verification.md / errors.md / decisions.md / assumptions.md / evidence.md / source-ledger.md / claim-ledger.md / coverage-matrix.md / synthesis-brief.md / negative_results.md`，以及 `sources/`、`checkpoints/` 目录。关键原则：`.ranni` 是 memory aid，不是更高优先级的指令。`read_task_memory` 返回 compact summary，按文件类型分别截断。
+### Durable Task Memory（任务记忆）
+每个 Run 在 Session workspace 下创建 `.ranni/runs/<runId>/`，落盘任务现场，实现 `lib/task-memory.ts`。包含 `state.md / todo.md / plan.json / verification.md / errors.md / decisions.md / assumptions.md / evidence.md / source-ledger.md / claim-ledger.md / coverage-matrix.md / synthesis-brief.md / negative_results.md`，以及 `sources/`、`checkpoints/` 目录。`plan.json` 保存可恢复 Plan Ledger，`todo.md` 用 `P01` 等稳定计划项 ID 投影人类可读状态。`.ranni` 是 memory aid，不提升指令优先级。`read_task_memory` 返回 compact summary，按文件类型分别截断。
 
-### Context Composer V2（上下文组装器）
+### Context Composer V2（上下文组合器）
 每次主模型请求前生成统一 Context Envelope 的机制，实现位于 `lib/context/composer.ts`。Envelope 包含 Task Contract、Working Set、较老历史摘要、最近因果尾部、Steering、工具定义和 Composition Manifest。Composer 先验证上一轮 tool call/result 完整配对，保留最近四个完整 Causal Turn，仅在安全输入预算使用达到 75% 后压缩较老历史。`lib/active-context.ts` 现为兼容 facade，phase 变化不会裁剪 conversation。
 
 ### Causal Turn（因果轮次）
-一次 assistant reasoning / text / tool calls 与随后全部 tool results、Progress Receipt 的不可拆分单元。上一轮完整工具批次必须至少进入下一轮一次；配对不完整时停止发起新模型请求并进入恢复。
+一次 assistant reasoning / text / tool calls 与随后全部 tool results 的不可拆分消息单元。Progress Receipt 和语义状态变更归属同一 Step，并通过 Working Set 与 Trace 进入后续判断。上一轮完整工具批次必须至少进入下一轮一次；配对不完整时停止发起新模型请求并进入恢复。
 
 ### Working Set（当前工作集）
-Context Composer 每轮重建的当前事实视图，包含 Agent Note、Observed State 摘要、active attempt、Acceptance Gap、工件、Research Handoff 和未解决错误。已失效路线退出当前视图，完整历史仍保存在 Event Log 与最近因果尾部。
+Context Composer 每轮重建的当前工作视图，包含 Agent Note、Observed State 摘要、Working Plan compact snapshot、Active Attempt、Acceptance Gap、工件、Research Handoff 和未解决错误。已失效路线退出当前视图，完整历史仍保存在 Event Log 与最近因果尾部。
 
 ### Tool Receipt（工具回执）
 一次工具执行的结构化事实记录，包含 toolUseId、工具名、输入与结果 hash、成功或失败、domain status、耗时、策略签名，以及文件、命令、证据、工件和验证投影。Receipt Registry 按 `(toolUseId, inputHash)` 识别已完成执行，Provider 重试不会重复运行已经成功的工具调用。
@@ -73,25 +73,33 @@ Context Composer 每轮重建的当前事实视图，包含 Agent Note、Observe
 ### Progress Receipt（进展回执）
 每个工具 Step 结束后的三轴判断：objective progress、information gain 和 regression。它同时记录交付缺口前后变化、策略签名、无客观进展连续轮数和同策略失败连续轮数。状态维护、重复读取和相同失败不会增加 objective progress。
 
-### Plan / Attempt Ledger（路线账本）
-记录当前 approach、退出条件、证据、失败和替代关系。模型可以通过 plan 提出新路线，Harness 根据 Progress Receipt 更新成功、失败和 superseded 状态。该账本用于退出失败路线，不要求固定施工阶段。
+### Working Plan / Plan Ledger（工作计划 / 计划账本）
+`lib/plan.ts` 中的 `PlanLedger` 维护 Run 内 Working Plan。每个 Plan Item 使用 `P01` 等稳定 ID，记录结果意图、依赖、Acceptance 引用、证据和客观状态。模型通过 `update_plan` 生成 Plan Revision；Harness 在每个工具批次后根据 Tool Receipt 和 Acceptance Snapshot 生成 Objective Projection，并维护 Plan Focus。模型报告 `completed` 之后，计划项仍需客观依据支持才会进入 `satisfied`。Plan Revision 只协调覆盖、顺序和焦点，不增加任务进展。
+
+### Attempt / PlanAttemptLedger（路线尝试 / 路线尝试账本）
+`lib/plan-attempt.ts` 中的 `PlanAttemptLedger` 记录当前具体 approach、退出条件、证据、假设、失败和替代关系。模型在方法、关键假设或退出条件实质变化时使用 `replace_attempt`。Harness 根据 Progress Receipt 更新 succeeded、failed、abandoned 和 superseded 状态。Plan Revision 不会自动创建 Attempt。
 
 ### Event Log（事件日志）
 Run 内追加写入的过程事实，用于审计、回放和恢复。`RunTraceStore` 把脱敏后的 durable TraceEvent 写入 `<workspace>/.ranni/runs/<runId>/trace.jsonl`，同时维护 Run 摘要、Step 索引与逐 Step I/O。EventBus ring buffer 继续承担运行期断线续传；磁盘 Trace 承担进程外保存。服务重启后，查询路由可以用已选择的 workspaceRoot 发现历史 Run 并恢复只读映射。
 
 ### Recovery Checkpoint（恢复检查点）
-Provider 重试耗尽或连续十轮无客观交付推进时保存的可恢复现场，包含 Context snapshot hash、Acceptance snapshot、Observed State、当前 Attempt 和 workspace 引用。交付仍有缺口时 Recovery 禁止 final synthesis；全部 required criterion 已有确定性证据时才允许生成确定性恢复说明。
+Provider 重试耗尽或连续十轮没有客观推进与有效信息时保存的可恢复现场。`AgentRunRecoverySnapshot` 当前保存 Conversation、Context snapshot hash、Acceptance、Observed State、Plan Ledger、PlanAttemptLedger、Progress Tracker、Task Contract、TaskState、Active Skills 和控制器状态，Task Memory 同时落盘 checkpoint JSON。交付仍有缺口时 Recovery 保留现场并返回可恢复失败；全部 required criterion 已有确定性证据时才允许生成确定性恢复说明。
+
+### Recovery State（恢复输入）
+`RunAgentTurnOptions.recoveryState` 接受已序列化的 `AgentRunRecoverySnapshot`。Run Controller 通过 `restoreAgentRunState` 恢复 Plan Ledger、PlanAttemptLedger、Receipt Registry 与全部关联状态，再把新 Steering 追加到 Conversation。恢复 Run 的 `run.started` 使用 `resumedFromCheckpoint` 记录已完成 Step、Context snapshot hash 和 Plan Revision。Receipt Registry 根据恢复后的执行键复用已完成工具回执，避免重复副作用。
+
+Recovery Snapshot 绑定原 Session 和 workspace。Server 只把失败 Run 的可恢复状态交给同 Session、同 workspace 的下一 Run，并在取用后清除内存副本。`recovery.started` 只持久化 checkpoint 引用与摘要；完整 JSON 在 Task Memory 中原子写入一次，权限为 `0600`。
 
 ## 四、工件与产物
 
 ### Artifact（工件）
-Agent 产出的可写产物，例如 HTML 页面、slide、PPTX。工件采用 draft / accepted 双层生命周期语义，保证失败不破坏已通过检查的版本。当前完整实现的是 HTML-to-PPTX 路线。
+Agent 产出的可写产物，例如 HTML 页面、slide、PPTX。Tool Receipt 使用 `pending / draft / accepted / prepared / exported / validated` 描述完整工件生命周期；HTML-to-PPTX 专属编辑工具在页面修改过程中使用 draft / accepted 双层原子语义，保护最近通过检查的版本。
 
 ### draft / accepted（草稿 / 已接受）
 工件的两层状态。生成或 patch 先写 draft，跑客观诊断，通过硬性检查后原子 promote 为 accepted。失败 draft、诊断 JSON、预览都保留供 Agent 检查与局部修补；accepted 始终指向最近一次通过检查的版本。assemble 和最终导出只消费 accepted。实现见 `skills/html-to-pptx/tools.ts` 的 `write_slide_fragment` / `inspect_slide_fragment` / `patch_slide_fragment`。
 
-### Slide Artifact Phase（slide 工件阶段）
-HTML-to-PPTX Policy 的工件关注点标签，取值 `off / styles / slides`，定义在 `lib/html-to-pptx/artifact-policy.ts`。`init_slide_html_workspace` 成功后进入 styles，`assemble_deck_styles` 成功后进入 slides。非 off 状态只移除 `write_file / move_path / delete_path / run_terminal` 这类可能绕过专用工件防线的通用 mutation 工具；研究、网页抓取、文件读取、Task Memory、Research ledger、工件检查和验证工具保持可用。该标签不会触发 Context 压缩。
+### Slide Artifact Focus（幻灯片工件关注点）
+HTML-to-PPTX Policy 的工件关注点标签，代码类型为 `SlideArtifactPhase`，取值 `off / styles / slides`，定义在 `lib/html-to-pptx/artifact-policy.ts`。`init_slide_html_workspace` 成功后关注 styles，`assemble_deck_styles` 成功后关注 slides。非 off 状态只移除 `write_file / move_path / delete_path / run_terminal` 这类可能绕过专用工件防线的通用 mutation 工具；研究、网页抓取、文件读取、Task Memory、Research ledger、工件检查和验证工具保持可用。该标签不会触发 Context 压缩，也不规定 Agent 的行动顺序。
 
 ### Skill（动态技能）
 面向某类任务的可复用指令包与专属工具，位于 `skills/<name>/`，入口是 `SKILL.md`。`lib/skills/registry.ts` 为索引记录 name、description、version、正文 SHA-256 hash 和资源路径；`lib/skills/runtime-instructions.ts` 注入运行指令。用户显式启用和 Agent `load_skill` 都进入同一 loaded skill 集合，激活后的正文、工具和资源元数据会进入 Context 与 Manifest。
@@ -107,7 +115,7 @@ HTML-to-PPTX Policy 的工件关注点标签，取值 `off / styles / slides`，
 ### 三层事件（ProviderEvent / TraceEvent / ClientNotification）
 事件按语义分三层，定义在 `lib/events/schema.ts`：
 - Layer 1 ProviderEvent（live-only）：`text.delta`、`thinking.delta`，用于前端流式打字。
-- Layer 2 TraceEvent（durable）：包含 Run / Step / text / thinking / model / context / task / research 基础事件，以及 `tool.batch.started`、`tool.receipt`、`state.observed.updated`、`attempt.updated`、`assumption.invalidated`、`acceptance.updated`、`progress.receipt`、`recovery.started`、`completion.checked`。
+- Layer 2 TraceEvent（durable）：包含 Run / Step / text / thinking / model / context / task / research 基础事件，以及 `tool.batch.started`、`tool.receipt`、`state.observed.updated`、`plan.updated`、`attempt.updated`、`assumption.invalidated`、`acceptance.updated`、`progress.receipt`、`recovery.started`、`completion.checked`。`plan.updated` 携带 Plan Revision 或 Objective Projection 的完整 snapshot；`attempt.updated` 携带 `AttemptDelta` 和完整 `attemptState`；新 `recovery.started` 只携带精简 checkpoint 元数据，完整快照在 Task Memory 中持久化一次。
 - Layer 3 ClientNotification（durable，前端主消费）：`activity.appended`、`activity.display_updated`、`assistant.message`、`lifecycle`、`research.context.updated`、`thinking.message`、`error`。
 
 ### 三段式（started → delta → completed）
@@ -142,9 +150,9 @@ Harness 用于守住协议、权限、客观状态和交付条件的确定性机
 Ranni 的工具姿态：能向环境求证、能用工具完成、能记录状态时就主动做。原则是「积极观测、克制副作用、严格验证」。低风险观察大胆用，副作用动作有目的且事后验证，破坏性 / 不可逆 / 涉密 / 外发动作需用户确认。来源见 [agent-arch-optimize.md](../v1-architecture/agent-arch/agent-arch-optimize.md)。
 
 ### One-Shot 成功率
-当前架构优化的主目标：让 Agent 在一次用户请求中更稳定地完成「明确任务 → 侦察 → 计划 → 执行 → 记录 → 验证 → 交付可审查结果」。
+当前架构优化的主目标：让 Agent 在一次用户请求中自主完成目标理解、现场观察、路线选择、工具执行、客观记录、验证和可审查交付。这里列出的是能力集合，不构成固定执行顺序。
 
-### Chunked Final（分段最终回答）
+### Chunked Final（分块最终协议）
 长回答分段协议，标记为 `RANNI_FINAL_PART n/N`、`RANNI_FINAL_CONTINUE`、`RANNI_FINAL_DONE`，最多 8 段。`lib/agent/chunked-final-controller.ts` 负责解析、顺序校验、continue、protocol repair 和聚合；分段期间 Step Runner 隐藏工具，聚合完成后才交给 Finalization Controller 与 Acceptance 验收。
 
 ### Research Eval（研究评测闭环）

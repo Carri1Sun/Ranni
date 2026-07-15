@@ -102,6 +102,9 @@ export function mapLegacyTraceEvent(
         sessionId: ctx.sessionId,
         type: "run.started",
         prompt: event.prompt,
+        ...(event.resumedFromCheckpoint
+          ? { resumedFromCheckpoint: event.resumedFromCheckpoint }
+          : {}),
         runtime: event.runtime,
         startedAt: event.startedAt,
         toolDefinitions: event.toolDefinitions,

@@ -177,7 +177,6 @@ export function createInitialTaskState(latestUserPrompt: string): TaskState {
     facts: [],
     filesTouched: [],
     goal,
-    memory: undefined,
     nextAction: "建立任务契约并选择下一步行动。",
     openQuestions: [],
     plan: [],
@@ -193,8 +192,12 @@ export function applyTaskStatePatch(
   current: TaskState,
   patch: TaskStatePatch,
 ): TaskState {
+  const memory = patch.memory ?? current.memory;
+
   return {
-    assumptions: mergeList(current.assumptions, patch.assumptions),
+    assumptions: patch.assumptions
+      ? compactList(patch.assumptions)
+      : current.assumptions,
     commandsRun: mergeList(current.commandsRun, patch.commandsRun, 40),
     constraints: mergeList(current.constraints, patch.constraints),
     currentMode: patch.currentMode ?? current.currentMode,
@@ -202,9 +205,11 @@ export function applyTaskStatePatch(
     facts: mergeList(current.facts, patch.facts, 40),
     filesTouched: mergeList(current.filesTouched, patch.filesTouched, 80),
     goal: cleanScalar(patch.goal) ?? current.goal,
-    memory: patch.memory ?? current.memory,
+    ...(memory ? { memory } : {}),
     nextAction: cleanScalar(patch.nextAction) ?? current.nextAction,
-    openQuestions: mergeList(current.openQuestions, patch.openQuestions),
+    openQuestions: patch.openQuestions
+      ? compactList(patch.openQuestions)
+      : current.openQuestions,
     plan: patch.plan ? compactList(patch.plan, 12) : current.plan,
     successCriteria: patch.successCriteria
       ? compactList(patch.successCriteria)

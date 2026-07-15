@@ -1,4 +1,5 @@
 import type { AgentMessage } from "../llm";
+import type { CompactPlanSnapshot } from "../plan";
 import type { TraceToolDefinition } from "../trace";
 
 export type ContextSectionName =
@@ -81,6 +82,7 @@ export type WorkingSetView = {
   };
   artifactSummary: string[];
   observedFacts: string[];
+  plan: CompactPlanSnapshot;
   researchHandoff?: {
     artifactPlan: string[];
     claimIds: string[];

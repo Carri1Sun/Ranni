@@ -23,9 +23,14 @@ import type {
 } from "../trace";
 import type { TaskState } from "../task-state";
 import type { AcceptanceDelta, AcceptanceSnapshot } from "../acceptance";
-import type { AttemptDelta } from "../plan-attempt";
+import type {
+  AttemptDelta,
+  PlanAttemptLedgerSnapshot,
+} from "../plan-attempt";
+import type { PlanChange } from "../plan";
 import type { StepProgressReceipt } from "../progress";
 import type { ObservedState, ToolReceipt } from "../receipts/types";
+import type { RunOverviewProjection } from "../runs/run-overview-projection";
 
 // ---- 共享展示类型（前后端共用，展示逻辑后移后的契约）-------------------------
 
@@ -95,6 +100,11 @@ export type ProviderEvent = TextDeltaEvent | ThinkingDeltaEvent;
 export type RunStartedEvent = RunLocator & {
   type: "run.started";
   prompt: string;
+  resumedFromCheckpoint?: {
+    completedSteps: number;
+    contextSnapshotHash: string;
+    planRevision: number;
+  };
   runtime: TraceRuntimeInfo;
   startedAt: number;
   toolDefinitions: TraceToolDefinition[];
@@ -222,6 +232,13 @@ export type ObservedStateUpdatedEvent = StepLocator & {
 export type AttemptUpdatedEvent = StepLocator & {
   type: "attempt.updated";
   attemptDelta: AttemptDelta;
+  /** Full post-transition projection so the event can be replayed independently. */
+  attemptState?: PlanAttemptLedgerSnapshot;
+};
+
+export type PlanUpdatedEvent = StepLocator & {
+  type: "plan.updated";
+  planChange: PlanChange;
 };
 
 export type AssumptionInvalidatedEvent = StepLocator & {
@@ -245,6 +262,13 @@ export type ProgressReceiptEvent = StepLocator & {
 export type RecoveryStartedEvent = StepLocator & {
   type: "recovery.started";
   acceptanceGap: string[];
+  checkpoint?: {
+    activeAttemptId?: string;
+    checkpointRef?: string;
+    completedSteps: number;
+    planRevision: number;
+    schemaVersion: number;
+  };
   contextSnapshotHash: string;
   error: string;
 };
@@ -277,6 +301,7 @@ export type TraceEvent =
   | ResearchStateEvent
   | RunStatusEvent
   | ObservedStateUpdatedEvent
+  | PlanUpdatedEvent
   | AttemptUpdatedEvent
   | AssumptionInvalidatedEvent
   | AcceptanceUpdatedEvent
@@ -355,6 +380,19 @@ export type ThinkingMessageNotification = {
   stepIndex?: number;
 };
 
+/**
+ * 当前 Run 的完整计划、验收与进展投影。
+ *
+ * `latestSeq` 指向生成该投影的 Layer 2 事件；前端据此忽略 SSE 重放中的
+ * 重复或乱序快照。刷新或断线恢复时，同一结构也可以从 overview API 读取。
+ */
+export type RunOverviewUpdatedNotification = {
+  runId: string;
+  sessionId: string;
+  type: "run.overview.updated";
+  overview: RunOverviewProjection;
+};
+
 export type ClientNotification =
   | ActivityAppendedNotification
   | ActivityDisplayUpdatedNotification
@@ -362,6 +400,7 @@ export type ClientNotification =
   | LifecycleNotification
   | ResearchContextUpdatedNotification
   | ThinkingMessageNotification
+  | RunOverviewUpdatedNotification
   | ErrorNotification;
 
 // ---- 聚合 -------------------------------------------------------------------
@@ -389,6 +428,7 @@ export const DURABLE_EVENT_TYPES: ReadonlySet<string> = new Set<StreamEventV2["t
   "research.state",
   "run.status",
   "state.observed.updated",
+  "plan.updated",
   "attempt.updated",
   "assumption.invalidated",
   "acceptance.updated",
@@ -401,6 +441,7 @@ export const DURABLE_EVENT_TYPES: ReadonlySet<string> = new Set<StreamEventV2["t
   "lifecycle",
   "research.context.updated",
   "thinking.message",
+  "run.overview.updated",
   "error",
 ]);
 

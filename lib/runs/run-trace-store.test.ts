@@ -51,6 +51,22 @@ test("persists ordered durable trace events and frozen step input/output", async
     },
     { durable: true },
   );
+  eventBus.publish(
+    sessionId,
+    {
+      type: "run.overview.updated",
+      runId,
+      sessionId,
+      overview: {
+        latestSeq: 0,
+        runId,
+        schemaVersion: 1,
+        timeline: [],
+        updatedAt: 1_035,
+      },
+    },
+    { durable: true },
+  );
   eventBus.publish(sessionId, {
     type: "step.started",
     runId,
@@ -177,6 +193,97 @@ test("persists ordered durable trace events and frozen step input/output", async
     },
     { durable: true },
   );
+  eventBus.publish(
+    sessionId,
+    {
+      type: "attempt.updated",
+      runId,
+      sessionId,
+      stepId,
+      stepIndex: 1,
+      attemptDelta: {
+        activeAttemptId: "attempt-2",
+        created: "attempt-2",
+        superseded: "attempt-1",
+      },
+      attemptState: {
+        assumptions: [],
+        attempts: [
+          {
+            approach: "inspect then write",
+            assumptionIds: [],
+            endedAtStep: 1,
+            evidenceRefs: [],
+            exitCriteria: [],
+            id: "attempt-1",
+            startedAtStep: 0,
+            status: "superseded",
+            supersededBy: "attempt-2",
+          },
+          {
+            approach: "write from inspected evidence",
+            assumptionIds: [],
+            evidenceRefs: [],
+            exitCriteria: ["artifact exists"],
+            id: "attempt-2",
+            startedAtStep: 1,
+            status: "active",
+          },
+        ],
+      },
+    },
+    { durable: true },
+  );
+  eventBus.publish(
+    sessionId,
+    {
+      type: "plan.updated",
+      runId,
+      sessionId,
+      stepId,
+      stepIndex: 1,
+      planChange: {
+        changed: true,
+        changedItemIds: ["P01"],
+        kind: "revision",
+        snapshot: {
+          focusItemId: "P01",
+          id: "plan-1",
+          items: [
+            {
+              acceptanceRefs: [],
+              attemptIds: ["attempt-2"],
+              createdAtStep: 1,
+              dependsOn: [],
+              evidenceHints: ["file receipt"],
+              evidenceRefs: ["tool-use-1"],
+              id: "P01",
+              intent: "Create the requested artifact",
+              modelStatus: "in_progress",
+              status: "active",
+              statusSource: "receipt",
+              title: "Create artifact",
+              updatedAtStep: 1,
+            },
+          ],
+          projectionVersion: 1,
+          revision: 1,
+          revisions: [
+            {
+              changedItemIds: ["P01"],
+              createdAtStep: 1,
+              id: "revision-1",
+              itemIds: ["P01"],
+              number: 1,
+              reason: "Initial plan",
+              reasonKind: "initial",
+            },
+          ],
+        },
+      },
+    },
+    { durable: true },
+  );
   eventBus.publish(sessionId, {
     type: "text.completed",
     runId,
@@ -218,9 +325,13 @@ test("persists ordered durable trace events and frozen step input/output", async
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as PersistedTraceEvent);
-  assert.equal(traceEvents.length, 16);
+  assert.equal(traceEvents.length, 18);
   assert.equal(
     traceEvents.some((event) => event.type === "activity.appended"),
+    false,
+  );
+  assert.equal(
+    traceEvents.some((event) => event.type === "run.overview.updated"),
     false,
   );
   assert.deepEqual(
@@ -231,8 +342,16 @@ test("persists ordered durable trace events and frozen step input/output", async
   const run = await store.readRun(runId);
   assert.ok(run);
   assert.equal(run.status, "completed");
-  assert.equal(run.traceEventCount, 16);
+  assert.equal(run.traceEventCount, 18);
   assert.equal(run.stepCount, 1);
+
+  const overview = await store.readOverview(runId);
+  assert.ok(overview);
+  assert.equal(overview.plan?.focusItemId, "P01");
+  assert.equal(overview.attempt?.attempts[1]?.id, "attempt-2");
+  assert.ok(
+    overview.timeline.some((entry) => entry.type === "plan.revision"),
+  );
 
   const index = await store.listSteps(runId);
   assert.ok(index);
@@ -269,6 +388,20 @@ test("persists ordered durable trace events and frozen step input/output", async
   assert.equal(io.output.toolResults.length, 1);
   assert.equal(io.output.toolReceipts.length, 1);
   assert.equal(io.output.progressReceipts.length, 1);
+  assert.equal(io.output.attemptDeltas.length, 1);
+  assert.equal(
+    (
+      io.output.latestAttemptState as {
+        attempts: Array<{ approach: string }>;
+      }
+    ).attempts[1]?.approach,
+    "write from inspected evidence",
+  );
+  assert.equal(io.output.planChanges?.length, 1);
+  assert.equal(
+    (io.output.latestPlanState as { focusItemId: string }).focusItemId,
+    "P01",
+  );
   assert.equal(io.output.status, "completed");
 
   const persistedIndexPath = path.join(runDirectory, "step-index.json");
@@ -286,5 +419,6 @@ test("persists ordered durable trace events and frozen step input/output", async
   );
 
   const persistedFiles = await fs.readdir(runDirectory);
+  assert.ok(persistedFiles.includes("overview.json"));
   assert.equal(persistedFiles.some((fileName) => fileName.endsWith(".tmp")), false);
 });

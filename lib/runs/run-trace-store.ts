@@ -5,6 +5,11 @@ import path from "node:path";
 
 import type { EventBus, PublishedEvent } from "../events/event-bus";
 import type { RunRegistry } from "./run-registry";
+import {
+  createRunOverviewProjection,
+  reduceRunOverviewProjection,
+  type RunOverviewProjection,
+} from "./run-overview-projection";
 
 const TRACE_SCHEMA_VERSION = 1;
 const REDACTED_VALUE = "[REDACTED]";
@@ -16,6 +21,7 @@ const CLIENT_NOTIFICATION_TYPES = new Set([
   "lifecycle",
   "research.context.updated",
   "thinking.message",
+  "run.overview.updated",
   "text.delta",
   "thinking.delta",
 ]);
@@ -24,6 +30,7 @@ const SEMANTIC_OUTPUT_TYPES = new Set([
   "assumption.invalidated",
   "attempt.updated",
   "completion.checked",
+  "plan.updated",
   "progress.receipt",
   "recovery.started",
   "state.observed.updated",
@@ -114,6 +121,7 @@ export type StepTraceOutput = {
   taskStates: unknown[];
   observedStates: unknown[];
   attemptDeltas: unknown[];
+  planChanges?: unknown[];
   assumptionInvalidations: unknown[];
   acceptanceDeltas: unknown[];
   researchStates: string[];
@@ -125,6 +133,8 @@ export type StepTraceOutput = {
   updatedAt: number;
   response?: unknown;
   latestTaskState?: unknown;
+  latestAttemptState?: unknown;
+  latestPlanState?: unknown;
   endedAt?: number;
   durationMs?: number;
   stopReason?: string | null;
@@ -144,6 +154,7 @@ type StepAggregate = {
 };
 
 type RunAggregate = {
+  overview: RunOverviewProjection;
   record: RunTraceRecord;
   steps: Map<string, StepAggregate>;
 };
@@ -329,6 +340,7 @@ function createStepAggregate(
     taskStates: [],
     observedStates: [],
     attemptDeltas: [],
+    planChanges: [],
     assumptionInvalidations: [],
     acceptanceDeltas: [],
     researchStates: [],
@@ -433,7 +445,8 @@ export class RunTraceStore {
       latestSeq: 0,
       stepCount: 0,
     };
-    this.aggregates.set(runId, { record, steps: new Map() });
+    const overview = createRunOverviewProjection(runId, now);
+    this.aggregates.set(runId, { overview, record, steps: new Map() });
     this.persistedRunRoots.set(runId, handle.workspaceRoot);
 
     await fs.mkdir(path.join(runDirectory, "steps"), { recursive: true });
@@ -443,6 +456,7 @@ export class RunTraceStore {
     });
     await Promise.all([
       writeJsonAtomically(path.join(runDirectory, "run.json"), record),
+      writeJsonAtomically(path.join(runDirectory, "overview.json"), overview),
       writeJsonAtomically(path.join(runDirectory, "step-index.json"), {
         schemaVersion: TRACE_SCHEMA_VERSION,
         runId,
@@ -467,6 +481,16 @@ export class RunTraceStore {
     }
     return this.runSerialized(runId, () =>
       readJson<RunTraceRecord>(path.join(runDirectory, "run.json")),
+    );
+  }
+
+  async readOverview(runId: string): Promise<RunOverviewProjection | null> {
+    const runDirectory = this.resolveRunDirectory(runId);
+    if (!runDirectory) {
+      return null;
+    }
+    return this.runSerialized(runId, () =>
+      readJson<RunOverviewProjection>(path.join(runDirectory, "overview.json")),
     );
   }
 
@@ -820,6 +844,15 @@ export class RunTraceStore {
         step.output.observedStates.push(event.observedState ?? event);
       } else if (event.type === "attempt.updated") {
         step.output.attemptDeltas.push(event.attemptDelta ?? event);
+        if (event.attemptState !== undefined) {
+          step.output.latestAttemptState = event.attemptState;
+        }
+      } else if (event.type === "plan.updated") {
+        step.output.planChanges ??= [];
+        step.output.planChanges.push(event.planChange ?? event);
+        step.output.latestPlanState = (
+          event.planChange as { snapshot?: unknown } | undefined
+        )?.snapshot;
       } else if (event.type === "assumption.invalidated") {
         step.output.assumptionInvalidations.push(event);
       } else if (event.type === "acceptance.updated") {
@@ -859,6 +892,9 @@ export class RunTraceStore {
     const changes = step
       ? this.applyStepEvent(step, event)
       : { inputChanged: false, outputChanged: false };
+    const nextOverview = reduceRunOverviewProjection(aggregate.overview, event);
+    const overviewChanged = nextOverview !== aggregate.overview;
+    aggregate.overview = nextOverview;
     this.applyRunEvent(aggregate, event);
 
     const writes: Promise<void>[] = [
@@ -867,6 +903,15 @@ export class RunTraceStore {
         aggregate.record,
       ),
     ];
+
+    if (overviewChanged) {
+      writes.push(
+        writeJsonAtomically(
+          path.join(runDirectory, "overview.json"),
+          aggregate.overview,
+        ),
+      );
+    }
 
     if (step) {
       if (event.type === "step.started" || changes.inputChanged) {

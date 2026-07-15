@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { StepTraceIO } from "../lib/runs/run-trace-store";
+import type { RunOverviewProjection } from "../lib/runs/run-overview-projection";
 import type { TraceRun, TraceStep } from "../lib/trace";
 
 import styles from "./agent-console.module.css";
@@ -23,6 +24,7 @@ type TracePanelProps = {
 };
 
 type RunOverviewPanelProps = TracePanelProps & {
+  overview?: RunOverviewProjection;
   run: TraceRun;
 };
 
@@ -46,6 +48,24 @@ const PROGRESS_LABELS = {
   regression: "结果回退",
   unchanged: "无交付推进",
   verification: "验证推进",
+} as const;
+
+const PLAN_LABELS = {
+  active: "进行中",
+  blocked: "受阻",
+  cancelled: "已取消",
+  pending: "待处理",
+  satisfied: "已满足",
+  superseded: "已替代",
+} as const;
+
+const PLAN_STATUS_STYLE = {
+  active: "pending",
+  blocked: "failed",
+  cancelled: "waived",
+  pending: "pending",
+  satisfied: "passed",
+  superseded: "waived",
 } as const;
 
 function renderJson(value: unknown): string {
@@ -81,14 +101,14 @@ function TraceAvailability({
 }) {
   if (loadStatus === "loading") {
     return (
-      <span className={styles.traceAvailability}>正在读取持久化 Step I/O</span>
+      <span className={styles.traceAvailability}>正在读取持久化语义 Trace</span>
     );
   }
 
   if (loadStatus === "error") {
     return (
       <span className={`${styles.traceAvailability} ${styles.traceAvailabilityWarning}`}>
-        {loadMessage || "持久化 Step I/O 暂不可用，已显示实时 Trace"}
+        {loadMessage || "持久化语义 Trace 暂不可用，已显示实时 Trace"}
       </span>
     );
   }
@@ -105,9 +125,14 @@ export function RunOverviewPanel({
   io,
   loadMessage,
   loadStatus,
+  overview: projection,
   run,
 }: RunOverviewPanelProps) {
-  const overview = buildRunOverviewView({ fallbackStep, io });
+  const overview = buildRunOverviewView({
+    fallbackStep,
+    io,
+    overview: projection,
+  });
   const requiredCount = overview.acceptance.criteria.filter(
     (criterion) => criterion.required,
   ).length;
@@ -116,6 +141,9 @@ export function RunOverviewPanel({
       criterion.required &&
       (criterion.status === "passed" || criterion.status === "waived"),
   ).length;
+  const currentPlanItems = overview.plan.items.filter(
+    (item) => item.status !== "cancelled" && item.status !== "superseded",
+  );
 
   return (
     <div className={styles.semanticPanelStack}>
@@ -147,7 +175,9 @@ export function RunOverviewPanel({
         <article>
           <span>最近进展</span>
           <strong>
-            {overview.progress
+            {overview.completion?.ready
+              ? "完成"
+              : overview.progress
               ? PROGRESS_LABELS[overview.progress.primaryCategory]
               : "等待回执"}
           </strong>
@@ -165,6 +195,55 @@ export function RunOverviewPanel({
       </div>
 
       <div className={styles.semanticOverviewGrid}>
+        <article className={styles.semanticCard}>
+          <div className={styles.semanticCardHeader}>
+            <h3>当前计划</h3>
+            <span>
+              R{overview.plan.revision} · P{overview.plan.projectionVersion}
+            </span>
+          </div>
+          {currentPlanItems.length > 0 ? (
+            <div className={styles.acceptanceList}>
+              {currentPlanItems.map((item) => (
+                <div key={item.id} className={styles.acceptanceItem}>
+                  <span
+                    className={`${styles.acceptanceStatus} ${styles[`acceptance_${PLAN_STATUS_STYLE[item.status]}`]}`}
+                  >
+                    {PLAN_LABELS[item.status]}
+                  </span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>
+                      {item.id}
+                      {item.id === overview.plan.focusItemId
+                        ? " · 当前焦点"
+                        : ""}
+                      {item.evidenceRefs.length > 0
+                        ? ` · ${item.evidenceRefs.length} 条依据`
+                        : ""}
+                      {item.acceptanceRefs.length > 0
+                        ? ` · 验收 ${item.acceptanceRefs.join(", ")}`
+                        : ""}
+                    </small>
+                    {item.blockedReason ? (
+                      <small>{item.blockedReason}</small>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className={styles.semanticEmpty}>
+              当前任务尚未建立显式工作计划，Agent 可以直接处理简单任务。
+            </p>
+          )}
+          {overview.plan.revisionReason ? (
+            <p className={styles.semanticNotice}>
+              最近修订：{overview.plan.revisionReason}
+            </p>
+          ) : null}
+        </article>
+
         <article className={styles.semanticCard}>
           <div className={styles.semanticCardHeader}>
             <h3>当前路线</h3>

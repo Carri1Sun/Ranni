@@ -1,6 +1,7 @@
 import type { EventBus } from "../events/event-bus";
 import type { ModelConnectionConfig } from "../llm";
 import type { ToolSettings } from "../tools";
+import type { AgentRunRecoverySnapshot } from "./run-state";
 
 export type PlainMessage = {
   content: string;
@@ -12,6 +13,11 @@ export type RunAgentTurnOptions = {
   eventBus: EventBus;
   messages: PlainMessage[];
   modelConfig?: ModelConnectionConfig;
+  /**
+   * Resume an interrupted run from its serialized harness state. When set,
+   * `messages` contains only new steering received after the checkpoint.
+   */
+  recoveryState?: AgentRunRecoverySnapshot;
   runId: string;
   sessionId: string;
   signal?: AbortSignal;
@@ -24,10 +30,12 @@ export type RunAgentTurnResult = {
   checkpoint?: {
     acceptanceGap: string[];
     contextSnapshotHash: string;
+    runState?: AgentRunRecoverySnapshot;
     workspaceRoot?: string;
   };
   error?: string;
   finalMessage?: string;
+  recoverable?: boolean;
   status: "cancelled" | "completed" | "failed";
   totalSteps: number;
 };

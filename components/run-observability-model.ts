@@ -1,6 +1,11 @@
 import type { AcceptanceStatus } from "../lib/acceptance";
 import type { ContextSectionName } from "../lib/context/types";
 import type { StepProgressReceipt } from "../lib/progress";
+import type { PlanItemStatus } from "../lib/plan";
+import type {
+  RunOverviewProjection,
+  RunOverviewTimelineEntry,
+} from "../lib/runs/run-overview-projection";
 import type { StepTraceIO } from "../lib/runs/run-trace-store";
 import type { TraceContextSnapshot, TraceStep } from "../lib/trace";
 
@@ -10,8 +15,10 @@ export type AcceptanceItemView = {
   description: string;
   evidenceRefs: string[];
   id: string;
+  kind?: string;
   required: boolean;
   status: AcceptanceStatus;
+  target?: string;
 };
 
 export type RunOverviewView = {
@@ -29,7 +36,28 @@ export type RunOverviewView = {
   deliverableGap: string[];
   evidenceRefs: string[];
   legacy: boolean;
+  latestSeq?: number;
   nextAction: string;
+  plan: {
+    focusItemId?: string;
+    id: string;
+    items: Array<{
+      acceptanceRefs: string[];
+      blockedReason?: string;
+      dependsOn: string[];
+      evidenceRefs: string[];
+      expectedOutcome?: string;
+      id: string;
+      modelStatus?: string;
+      status: PlanItemStatus;
+      statusSource?: string;
+      title: string;
+      updatedAtStep?: number;
+    }>;
+    projectionVersion: number;
+    revision: number;
+    revisionReason?: string;
+  };
   progress?: StepProgressReceipt;
   route: {
     approach: string;
@@ -37,6 +65,8 @@ export type RunOverviewView = {
     id: string;
     status: string;
   };
+  timeline: RunOverviewTimelineEntry[];
+  updatedAt?: number;
 };
 
 export type ContextHealthView = {
@@ -69,6 +99,15 @@ const ACCEPTANCE_STATUSES: AcceptanceStatus[] = [
   "waived",
 ];
 
+const PLAN_ITEM_STATUSES: PlanItemStatus[] = [
+  "active",
+  "blocked",
+  "cancelled",
+  "pending",
+  "satisfied",
+  "superseded",
+];
+
 const SECTION_LABELS: Record<ContextSectionName | "composition", string> = {
   archive: "Archive Summary",
   causal_tail: "Recent Causal Tail",
@@ -92,6 +131,10 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function asNumber(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function latestRecord(values: unknown[] | undefined): Record<string, unknown> | undefined {
@@ -193,8 +236,12 @@ function sanitizeAcceptanceCriteria(value: unknown): AcceptanceItemView[] {
         description,
         evidenceRefs: asStringArray(criterion.evidenceRefs),
         id,
+        ...(asString(criterion.kind) ? { kind: asString(criterion.kind) } : {}),
         required: criterion.required !== false,
         status: status as AcceptanceStatus,
+        ...(asString(criterion.target)
+          ? { target: asString(criterion.target) }
+          : {}),
       },
     ];
   });
@@ -208,6 +255,104 @@ function completionView(io: StepTraceIO | undefined) {
     ready: event.ready === true,
     reason: asString(event.reason) ?? "尚无完成判定说明",
   };
+}
+
+function sanitizePlanSnapshot(value: unknown): RunOverviewView["plan"] | undefined {
+  if (!isRecord(value) || !Array.isArray(value.items)) return undefined;
+  const id = asString(value.id);
+  if (!id) return undefined;
+  const items = value.items.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const itemId = asString(item.id);
+    const title = asString(item.title);
+    const status = asString(item.status);
+    if (
+      !itemId ||
+      !title ||
+      !status ||
+      !PLAN_ITEM_STATUSES.includes(status as PlanItemStatus)
+    ) {
+      return [];
+    }
+    return [
+      {
+        acceptanceRefs: asStringArray(item.acceptanceRefs),
+        ...(asString(item.blockedReason)
+          ? { blockedReason: asString(item.blockedReason) }
+          : {}),
+        dependsOn: asStringArray(item.dependsOn),
+        evidenceRefs: asStringArray(item.evidenceRefs),
+        ...(asString(item.expectedOutcome)
+          ? { expectedOutcome: asString(item.expectedOutcome) }
+          : {}),
+        id: itemId,
+        ...(asString(item.modelStatus)
+          ? { modelStatus: asString(item.modelStatus) }
+          : {}),
+        status: status as PlanItemStatus,
+        ...(asString(item.statusSource)
+          ? { statusSource: asString(item.statusSource) }
+          : {}),
+        title,
+        ...(typeof item.updatedAtStep === "number"
+          ? { updatedAtStep: item.updatedAtStep }
+          : {}),
+      },
+    ];
+  });
+  const revisions = Array.isArray(value.revisions)
+    ? value.revisions.filter(isRecord)
+    : [];
+  const lastRevision = isRecord(value.lastRevision)
+    ? value.lastRevision
+    : revisions.at(-1);
+  return {
+    ...(asString(value.focusItemId)
+      ? { focusItemId: asString(value.focusItemId) }
+      : {}),
+    id,
+    items,
+    projectionVersion: asNumber(value.projectionVersion),
+    revision: asNumber(value.revision),
+    ...(asString(lastRevision?.reason)
+      ? { revisionReason: asString(lastRevision?.reason) }
+      : {}),
+  };
+}
+
+function getPlanView(
+  io: StepTraceIO | undefined,
+  workingSet: Record<string, unknown> | undefined,
+  legacyPlan: string[],
+  overview?: RunOverviewProjection,
+): RunOverviewView["plan"] {
+  const event = latestSemanticEvent(io, "plan.updated");
+  const eventChange = isRecord(event?.planChange) ? event.planChange : undefined;
+  if (overview) {
+    return sanitizePlanSnapshot(overview.plan) ?? {
+      id: "pending",
+      items: [],
+      projectionVersion: 0,
+      revision: 0,
+    };
+  }
+  return (
+    sanitizePlanSnapshot(eventChange?.snapshot) ??
+    sanitizePlanSnapshot(io?.output.latestPlanState) ??
+    sanitizePlanSnapshot(workingSet?.plan) ?? {
+      id: "legacy",
+      items: legacyPlan.map((title, index) => ({
+        acceptanceRefs: [],
+        dependsOn: [],
+        evidenceRefs: [],
+        id: `T${String(index + 1).padStart(2, "0")}`,
+        status: index === 0 ? "active" : "pending",
+        title,
+      })),
+      projectionVersion: 0,
+      revision: legacyPlan.length > 0 ? 1 : 0,
+    }
+  );
 }
 
 function unique(values: string[]): string[] {
@@ -244,7 +389,11 @@ function latestAttemptDelta(io: StepTraceIO | undefined) {
 }
 
 function observedEvidence(io: StepTraceIO | undefined): string[] {
-  const observed = latestRecord(io?.output.observedStates);
+  return observedEvidenceValue(latestRecord(io?.output.observedStates));
+}
+
+function observedEvidenceValue(value: unknown): string[] {
+  const observed = isRecord(value) ? value : undefined;
   if (!observed) return [];
   const artifacts = isRecord(observed.artifacts)
     ? Object.values(observed.artifacts).filter(isRecord)
@@ -282,38 +431,86 @@ function observedEvidence(io: StepTraceIO | undefined): string[] {
   ];
 }
 
+function observedErrors(value: unknown): string[] {
+  const observed = isRecord(value) ? value : undefined;
+  return Array.isArray(observed?.unresolvedErrors)
+    ? observed.unresolvedErrors
+        .filter(isRecord)
+        .map((error) => asString(error.message))
+        .filter((message): message is string => Boolean(message))
+    : [];
+}
+
 export function buildRunOverviewView({
   fallbackStep,
   io,
+  overview,
 }: {
   fallbackStep?: TraceStep;
   io?: StepTraceIO;
+  overview?: RunOverviewProjection;
 }): RunOverviewView {
   const workingSet = getWorkingSet(io, fallbackStep);
-  const activeAttempt = isRecord(workingSet?.activeAttempt)
-    ? workingSet.activeAttempt
-    : undefined;
   const attemptEvent = latestSemanticEvent(io, "attempt.updated");
   const attemptDelta = latestAttemptDelta(io);
+  const attemptState = overview
+    ? isRecord(overview.attempt)
+      ? overview.attempt
+      : undefined
+    : isRecord(attemptEvent?.attemptState)
+      ? attemptEvent.attemptState
+      : isRecord(io?.output.latestAttemptState)
+        ? io.output.latestAttemptState
+        : undefined;
+  const attemptRecords = Array.isArray(attemptState?.attempts)
+    ? attemptState.attempts.filter(isRecord)
+    : [];
+  const projectedAttempt =
+    [...attemptRecords].reverse().find((attempt) => attempt.status === "active") ??
+    [...attemptRecords]
+      .reverse()
+      .find((attempt) => asString(attempt.id) === asString(attemptDelta?.activeAttemptId)) ??
+    attemptRecords.at(-1);
+  const activeAttempt =
+    projectedAttempt ??
+    (!overview?.attempt && isRecord(workingSet?.activeAttempt)
+      ? workingSet.activeAttempt
+      : undefined);
   const acceptanceEvent = latestSemanticEvent(io, "acceptance.updated");
-  const acceptanceState = acceptanceEvent?.acceptanceState;
+  const acceptanceState = overview
+    ? overview.acceptance
+    : acceptanceEvent?.acceptanceState;
   const criteria = sanitizeAcceptanceCriteria(acceptanceState);
-  const progress = getProgress(io, fallbackStep);
-  const completion = completionView(io);
+  const progress = overview ? overview.progress : getProgress(io, fallbackStep);
+  const completion = overview
+    ? overview.completion
+      ? {
+          evidenceRefs: overview.completion.evidenceRefs,
+          ready: overview.completion.ready,
+          reason: overview.completion.reason,
+        }
+      : undefined
+    : completionView(io);
   const acceptanceCounts = Object.fromEntries(
     ACCEPTANCE_STATUSES.map((status) => [
       status,
       criteria.filter((criterion) => criterion.status === status).length,
     ]),
   ) as Record<AcceptanceStatus, number>;
-  const acceptanceGap = asStringArray(workingSet?.acceptanceGap);
+  const acceptanceGap = overview
+    ? overview.acceptance?.gap ?? []
+    : asStringArray(workingSet?.acceptanceGap);
   const deliverableGap = unique(
-    progress?.deliverableGapAfter.length
+    progress
       ? progress.deliverableGapAfter
       : acceptanceGap,
   );
-  const unresolvedErrors = asStringArray(workingSet?.unresolvedErrors);
-  const recovery = latestRecord(io?.output.recoveryEvents);
+  const unresolvedErrors = overview
+    ? []
+    : asStringArray(workingSet?.unresolvedErrors);
+  const recovery = overview
+    ? overview.recovery
+    : latestRecord(io?.output.recoveryEvents);
   const recoveryError = asString(recovery?.error);
   const rejectedOrFailed = criteria
     .filter((criterion) => criterion.required && criterion.status === "failed")
@@ -326,19 +523,45 @@ export function buildRunOverviewView({
     : undefined;
   const priorRouteFailed = asString(attemptDelta?.failed);
   const priorRouteSuperseded = asString(attemptDelta?.superseded);
-  const routeChangeReason = priorRouteFailed
-    ? `路线 ${priorRouteFailed} 已失败，已创建替代路线 ${routeChanged ?? ""}`.trim()
-    : priorRouteSuperseded
-      ? `路线 ${priorRouteSuperseded} 已被替代，新路线 ${routeChanged ?? ""}`.trim()
-      : routeChanged && routeChanged !== asString(activeAttempt?.id)
-        ? `已创建路线 ${routeChanged}，下一 Step 将展开最新路线内容`
-        : undefined;
+  const priorProjectedAttempt = activeAttempt
+    ? [...attemptRecords]
+        .reverse()
+        .find(
+          (attempt) =>
+            attempt.id !== activeAttempt.id &&
+            (attempt.supersededBy === activeAttempt.id ||
+              attempt.status === "failed" ||
+              attempt.status === "superseded"),
+        )
+    : undefined;
+  const projectedRouteChangeReason = asString(
+    priorProjectedAttempt?.transitionReason,
+  );
+  const routeChangeReason = overview?.attempt
+    ? projectedRouteChangeReason
+    : priorRouteFailed
+      ? `路线 ${priorRouteFailed} 已失败，已创建替代路线 ${routeChanged ?? ""}`.trim()
+      : priorRouteSuperseded
+        ? `路线 ${priorRouteSuperseded} 已被替代，新路线 ${routeChanged ?? ""}`.trim()
+        : routeChanged && routeChanged !== asString(activeAttempt?.id)
+          ? `已创建路线 ${routeChanged}，下一 Step 将展开最新路线内容`
+          : undefined;
   const agentNote = isRecord(workingSet?.agentNote)
     ? workingSet.agentNote
     : undefined;
-  const latestTaskState = isRecord(io?.output.latestTaskState)
-    ? io.output.latestTaskState
-    : fallbackStep?.taskState;
+  const latestTaskState = overview
+    ? isRecord(overview.taskState)
+      ? overview.taskState
+      : undefined
+    : isRecord(io?.output.latestTaskState)
+      ? io.output.latestTaskState
+      : fallbackStep?.taskState;
+  const plan = getPlanView(
+    io,
+    workingSet,
+    asStringArray(latestTaskState?.plan),
+    overview,
+  );
 
   return {
     acceptance: {
@@ -348,22 +571,28 @@ export function buildRunOverviewView({
     },
     blockers: unique([
       ...unresolvedErrors,
+      ...observedErrors(overview?.observedState),
       ...rejectedOrFailed,
       ...(recoveryError ? [recoveryError] : []),
-      ...(io?.output.error ? [io.output.error] : []),
+      ...(!overview && io?.output.error ? [io.output.error] : []),
     ]),
     completion,
     deliverableGap,
     evidenceRefs: unique([
       ...passedEvidence,
       ...(completion?.evidenceRefs ?? []),
-      ...observedEvidence(io),
+      ...observedEvidenceValue(overview?.observedState),
+      ...(!overview ? observedEvidence(io) : []),
     ]),
-    legacy: !io || (!acceptanceEvent && !progress && !attemptEvent),
-    nextAction:
-      asString(agentNote?.nextAction) ??
-      asString(latestTaskState?.nextAction) ??
-      "等待下一条客观回执",
+    legacy:
+      !overview && (!io || (!acceptanceEvent && !progress && !attemptEvent)),
+    latestSeq: overview?.latestSeq,
+    nextAction: overview
+      ? asString(latestTaskState?.nextAction) ?? "等待下一条客观回执"
+      : asString(agentNote?.nextAction) ??
+        asString(latestTaskState?.nextAction) ??
+        "等待下一条客观回执",
+    plan,
     progress,
     route: {
       approach:
@@ -373,6 +602,8 @@ export function buildRunOverviewView({
       id: asString(activeAttempt?.id) ?? asString(attemptDelta?.activeAttemptId) ?? "unknown",
       status: asString(activeAttempt?.status) ?? "unknown",
     },
+    timeline: overview?.timeline ?? [],
+    updatedAt: overview?.updatedAt,
   };
 }
 

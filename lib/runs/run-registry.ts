@@ -12,6 +12,7 @@
  */
 
 import type { ModelConnectionConfig } from "../llm/types";
+import type { AgentRunRecoverySnapshot } from "../agent/run-state";
 
 export type PlainMessage = {
   role: "user" | "assistant";
@@ -34,6 +35,8 @@ export type RunHandle = {
   startedAt: number;
   /** event-mapper 改写 UI 文案时所需的本 run 模型配置。 */
   modelConfig?: ModelConnectionConfig;
+  /** In-memory resumable harness state retained only for a failed run. */
+  recoveryState?: AgentRunRecoverySnapshot;
 };
 
 export type StartRunOptions = {
@@ -112,6 +115,34 @@ export class RunRegistry {
       return;
     }
     handle.status = status;
+  }
+
+  storeRecoveryState(
+    runId: string,
+    recoveryState: AgentRunRecoverySnapshot,
+  ): boolean {
+    const handle = this.runs.get(runId);
+    if (!handle) return false;
+    handle.recoveryState = structuredClone(recoveryState);
+    return true;
+  }
+
+  takeLatestRecoveryState(
+    sessionId: string,
+    workspaceRoot?: string,
+  ): AgentRunRecoverySnapshot | undefined {
+    const handle = this.listBySession(sessionId)
+      .filter(
+        (candidate) =>
+          candidate.status === "failed" &&
+          candidate.recoveryState &&
+          candidate.workspaceRoot === workspaceRoot,
+      )
+      .sort((left, right) => right.startedAt - left.startedAt)[0];
+    if (!handle?.recoveryState) return undefined;
+    const recoveryState = structuredClone(handle.recoveryState);
+    delete handle.recoveryState;
+    return recoveryState;
   }
 
   listBySession(sessionId: string): RunHandle[] {

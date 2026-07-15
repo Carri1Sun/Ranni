@@ -151,7 +151,9 @@ export function getToolDisplayName(toolName: string) {
     save_task_checkpoint: "保存任务快照",
     search_in_files: "搜索工作区文件",
     search_web: "搜索网页",
+    replace_attempt: "替换当前路线",
     update_task_memory: "更新任务记忆",
+    update_plan: "更新工作计划",
     update_task_state: "更新任务状态",
     write_file: "写入文件",
   };
@@ -184,7 +186,11 @@ export function getToolIcon(toolName: string): ProcessIconId {
   if (toolName.includes("research")) {
     return "research";
   }
-  if (toolName === "update_task_state") {
+  if (
+    toolName === "replace_attempt" ||
+    toolName === "update_plan" ||
+    toolName === "update_task_state"
+  ) {
     return "state";
   }
   return "tool";
@@ -351,6 +357,42 @@ export function createStatusDisplay(message: string): ActivityDisplay {
   }
   if (/重试|暂时不稳定/.test(message)) {
     return { detail: compactMessage, icon: "activity", meta: "retry", source: "fallback", title: "模型请求重试" };
+  }
+  if (/最近三轮没有缩小交付缺口/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "state",
+      meta: "review",
+      source: "fallback",
+      title: "检查交付推进",
+    };
+  }
+  if (/连续六轮没有缩小交付缺口/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "state",
+      meta: "review",
+      source: "fallback",
+      title: "检查交付充分性",
+    };
+  }
+  if (/同一策略连续两轮失败|连续六轮没有产出有效新证据/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "activity",
+      meta: "route",
+      source: "fallback",
+      title: "调整当前路线",
+    };
+  }
+  if (/连续十轮没有产生客观推进/.test(message)) {
+    return {
+      detail: compactMessage,
+      icon: "database",
+      meta: "checkpoint",
+      source: "fallback",
+      title: "保存恢复现场",
+    };
   }
   if (message.length > 180) {
     return { detail: compactMessage, icon: "spark", meta: "thinking", source: "fallback", title: "整理执行思路" };

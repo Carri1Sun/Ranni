@@ -114,6 +114,27 @@ export function registerRunTraceRoutes(
   );
 
   app.get(
+    "/api/runs/:runId/overview",
+    async (request: Request, response: Response) => {
+      const runId = getRouteParam(request.params.runId);
+      try {
+        if (!(await ensureTraceRun(request, traceStore, runId))) {
+          response.status(404).json({ error: "运行不存在。", ok: false });
+          return;
+        }
+        const overview = await traceStore.readOverview(runId);
+        if (!overview) {
+          response.status(404).json({ error: "Run 概览尚未建立。", ok: false });
+          return;
+        }
+        response.json({ ok: true, result: { overview } });
+      } catch (error) {
+        respondWithTraceError(response, error);
+      }
+    },
+  );
+
+  app.get(
     "/api/runs/:runId/steps/:stepId/io",
     async (request: Request, response: Response) => {
       const runId = getRouteParam(request.params.runId);

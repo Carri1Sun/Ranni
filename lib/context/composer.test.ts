@@ -59,6 +59,12 @@ function compose(
       agentNote: { nextAction: "continue" },
       artifactSummary: [],
       observedFacts: [],
+      plan: {
+        id: "plan",
+        items: [],
+        projectionVersion: 0,
+        revision: 0,
+      },
       rejectedAssumptionCount: 0,
       unresolvedErrors: [],
     },

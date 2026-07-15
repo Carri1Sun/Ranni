@@ -17,8 +17,10 @@ import type { RunPolicySet } from "./policy";
 import {
   applyRunTaskPatch,
   buildWorkingSet,
+  createAgentRunRecoverySnapshot,
   reconcileDeliverableContract,
   reconcileTaskStateFromObserved,
+  syncLegacyPlanProjection,
   type AgentRunState,
 } from "./run-state";
 import {
@@ -33,6 +35,8 @@ import { listSkillIndices } from "../skills/registry";
 import type { ToolSettings } from "../tools";
 import { decideFinalization } from "./finalization-controller";
 import { evaluateNoProgressWatchdog } from "../progress";
+import type { AttemptDelta } from "../plan-attempt";
+import type { PlanChange } from "../plan";
 import type { ToolReceipt } from "../receipts/types";
 import type { AgentRuntimeServices } from "./runtime-services";
 import {
@@ -76,38 +80,6 @@ function getThinking(blocks: AgentAssistantBlock[]) {
 
 function getToolCalls(blocks: AgentAssistantBlock[]) {
   return blocks.filter((block) => block.type === "tool_use");
-}
-
-function getModelPlanProposal(receipts: ToolReceipt[]) {
-  const receipt = receipts.findLast(
-    (candidate) =>
-      candidate.toolName === "update_task_state" &&
-      candidate.success &&
-      !candidate.unchanged &&
-      typeof candidate.input === "object" &&
-      candidate.input !== null &&
-      Array.isArray((candidate.input as Record<string, unknown>).plan) &&
-      ((candidate.input as Record<string, unknown>).plan as unknown[]).some(
-        (item) => typeof item === "string" && Boolean(item.trim()),
-      ),
-  );
-  if (!receipt || typeof receipt.input !== "object" || receipt.input === null) {
-    return null;
-  }
-  const input = receipt.input as Record<string, unknown>;
-  const plan = Array.isArray(input.plan)
-    ? input.plan.filter(
-        (item): item is string => typeof item === "string" && Boolean(item.trim()),
-      )
-    : [];
-  if (plan.length === 0) return null;
-  return {
-    approach: plan.map((item, index) => `${index + 1}. ${item.trim()}`).join(" "),
-    exitCriteria: [
-      "产生能够缩小验收缺口的客观回执",
-      "路线被回执证伪或持续没有客观进展时重新选择方法",
-    ],
-  };
 }
 
 function getModelAssumptions(receipts: ToolReceipt[]) {
@@ -240,7 +212,10 @@ export async function runStep({
     policySet.getDeliverableContract(activeSkillNames),
   );
   if (contractChanged) {
-    await taskMemory.syncTaskState(state.taskState);
+    await taskMemory.syncTaskState(
+      state.taskState,
+      state.planLedger.serialize(),
+    );
   }
   const skillIndices = listSkillIndices();
   const activeSkills = skillIndices
@@ -457,6 +432,11 @@ export async function runStep({
     const requestedToolNames = new Set(
       toolDefinitions.map((tool) => tool.name),
     );
+    const modelAttemptUpdates: Array<{
+      delta: AttemptDelta;
+      state: ReturnType<AgentRunState["attempts"]["snapshot"]>;
+    }> = [];
+    const planChanges: PlanChange[] = [];
     const batch = await executeToolBatch({
       advertisedToolNames: requestedToolNames,
       currentToolNames: new Set(
@@ -471,10 +451,89 @@ export async function runStep({
         activeSkillNames,
         activateSkill: (name) => state.loadedSkills.add(name),
         researchNotebook,
+        replaceAttempt: ({
+          approach,
+          assumptions,
+          exitCriteria,
+          reason,
+        }) => {
+          const before = state.attempts.snapshot();
+          const supersededAttemptId = state.attempts.active()?.id;
+          const created = state.attempts.propose(
+            approach,
+            stepIndex,
+            exitCriteria,
+            reason,
+          );
+          state.attempts.recordAssumptions(assumptions);
+          const attemptState = state.attempts.snapshot();
+          if (created.id === supersededAttemptId) {
+            const changed = JSON.stringify(before) !== JSON.stringify(attemptState);
+            if (changed) {
+              modelAttemptUpdates.push({
+                delta: { activeAttemptId: created.id },
+                state: attemptState,
+              });
+            }
+            return {
+              attemptId: created.id,
+              ...(!changed ? { noChange: true } : {}),
+            };
+          }
+          modelAttemptUpdates.push({
+            delta: {
+              activeAttemptId: created.id,
+              created: created.id,
+              ...(supersededAttemptId
+                ? { superseded: supersededAttemptId }
+                : {}),
+            },
+            state: attemptState,
+          });
+          return {
+            attemptId: created.id,
+            ...(supersededAttemptId ? { supersededAttemptId } : {}),
+          };
+        },
         signal,
         taskMemory,
         toolSettings,
-        updateTaskState: (patch) => applyRunTaskPatch(state, patch),
+        updatePlan: ({ focusItemId, items, reason, reasonKind }) => {
+          const change = state.planLedger.replace(items, {
+            attemptId: state.attempts.active()?.id,
+            basedOnObservedStateHash: state.receiptRegistry.snapshot().stateHash,
+            ...(focusItemId ? { focusItemId } : {}),
+            reason,
+            ...(reasonKind ? { reasonKind } : {}),
+            stepIndex,
+          });
+          state.planAuthority = "structured";
+          if (change.changed) planChanges.push(change);
+          syncLegacyPlanProjection(state);
+          return change;
+        },
+        updateTaskState: (patch) => {
+          const next = applyRunTaskPatch(state, patch);
+          if (patch.plan) {
+            if (state.planAuthority === "structured") {
+              return syncLegacyPlanProjection(state);
+            }
+            const change = state.planLedger.updateLegacy(patch.plan, {
+              attemptId: state.attempts.active()?.id,
+              basedOnObservedStateHash:
+                state.receiptRegistry.snapshot().stateHash,
+              reason: "模型通过兼容 Agent Note 修订短计划。",
+              reasonKind:
+                state.planLedger.snapshot().revision === 0
+                  ? "initial"
+                  : "refinement",
+              stepIndex,
+            });
+            if (change.changed) planChanges.push(change);
+            return syncLegacyPlanProjection(state);
+          }
+          return next;
+        },
         workspaceRoot,
       },
       onCompleted: async ({ receipt }) => {
@@ -526,34 +585,31 @@ export async function runStep({
     state.conversation.push({ role: "user", content: batch.toolResults });
 
     const observedState = state.receiptRegistry.snapshot();
-    reconcileTaskStateFromObserved(state, observedState);
-    await taskMemory.syncTaskState(state.taskState);
-    applyRunTaskPatch(state, { memory: taskMemory.getStatus() });
     const acceptanceDelta = state.acceptance.reconcile(observedState);
     const acceptanceState = state.acceptance.snapshot();
+    const planProjection = state.planLedger.reconcile(
+      acceptanceState,
+      batch.receipts,
+      stepIndex,
+    );
+    if (planProjection.changed) planChanges.push(planProjection);
+    syncLegacyPlanProjection(state);
+    reconcileTaskStateFromObserved(state, observedState);
+    await taskMemory.syncTaskState(
+      state.taskState,
+      state.planLedger.serialize(),
+    );
+    applyRunTaskPatch(state, { memory: taskMemory.getStatus() });
     const progressReceipt = state.progress.evaluate({
       acceptanceAfter: acceptanceState,
       acceptanceDelta,
       observedState,
       receipts: batch.receipts,
     });
-    const modelPlanProposal = getModelPlanProposal(batch.receipts);
-    if (
-      modelPlanProposal &&
-      state.attempts.active()?.approach !== modelPlanProposal.approach
-    ) {
-      const superseded = state.attempts.active()?.id;
-      const created = state.attempts.propose(
-        modelPlanProposal.approach,
-        stepIndex,
-        modelPlanProposal.exitCriteria,
-      );
+    for (const modelAttemptUpdate of modelAttemptUpdates) {
       sink.publishTrace({
-        attemptDelta: {
-          activeAttemptId: created.id,
-          created: created.id,
-          ...(superseded ? { superseded } : {}),
-        },
+        attemptDelta: modelAttemptUpdate.delta,
+        attemptState: modelAttemptUpdate.state,
         runId,
         sessionId,
         stepId,
@@ -582,6 +638,16 @@ export async function runStep({
       stepIndex,
       type: "acceptance.updated",
     });
+    for (const planChange of planChanges) {
+      sink.publishTrace({
+        planChange,
+        runId,
+        sessionId,
+        stepId,
+        stepIndex,
+        type: "plan.updated",
+      });
+    }
     sink.publishTrace({
       progressReceipt,
       runId,
@@ -592,6 +658,7 @@ export async function runStep({
     });
     sink.publishTrace({
       attemptDelta,
+      attemptState: state.attempts.snapshot(),
       runId,
       sessionId,
       stepId,
@@ -648,8 +715,11 @@ export async function runStep({
         type: "status",
       });
       if (watchdog.action === "checkpoint") {
+        const recoveryState = createAgentRunRecoverySnapshot(state);
+        recoveryState.completedSteps = stepIndex;
         await taskMemory.saveCheckpoint({
           nextAction: "恢复后读取现场，并采用能够产生客观回执的新路线。",
+          recoveryState,
           summary: watchdog.message,
           title: "No-progress checkpoint",
         });
@@ -669,10 +739,12 @@ export async function runStep({
     state.completedSteps = stepIndex;
 
     if (watchdog?.action === "checkpoint") {
+      const recoveryState = createAgentRunRecoverySnapshot(state);
       return {
         checkpoint: {
           acceptanceGap: acceptanceState.gap,
           contextSnapshotHash: state.contextSnapshotHash,
+          runState: recoveryState,
           workspaceRoot,
         },
         error: "连续十轮没有客观推进或新的有效信息，已保存可恢复检查点。",
@@ -713,7 +785,10 @@ export async function runStep({
       currentMode: "synthesis",
       nextAction: `继续生成分段最终回答第 ${chunkedFinal.nextPart} 段。`,
     });
-    await taskMemory.syncTaskState(state.taskState);
+    await taskMemory.syncTaskState(
+      state.taskState,
+      state.planLedger.serialize(),
+    );
     sink.emit({
       message:
         chunkedFinal.kind === "continue"
@@ -796,7 +871,10 @@ export async function runStep({
             ? "使用分段协议从第一段重新生成完整最终说明。"
             : "基于已验收现场修复最终说明。",
     });
-    await taskMemory.syncTaskState(state.taskState);
+    await taskMemory.syncTaskState(
+      state.taskState,
+      state.planLedger.serialize(),
+    );
     sink.emit({
       message:
         decision.nextAction === "continue_tools"
@@ -832,6 +910,37 @@ export async function runStep({
     };
   }
 
+  const completedAttempt = state.attempts.succeed(
+    stepIndex,
+    decision.completion.evidenceRefs,
+  );
+  if (completedAttempt) {
+    sink.publishTrace({
+      attemptDelta: completedAttempt,
+      attemptState: state.attempts.snapshot(),
+      runId,
+      sessionId,
+      stepId,
+      stepIndex,
+      type: "attempt.updated",
+    });
+  }
+  const finalizedPlan = state.planLedger.finalize(acceptanceState, {
+    evidenceRefs: decision.completion.evidenceRefs,
+    stepIndex,
+  });
+  if (finalizedPlan.changed) {
+    syncLegacyPlanProjection(state);
+    sink.publishTrace({
+      planChange: finalizedPlan,
+      runId,
+      sessionId,
+      stepId,
+      stepIndex,
+      type: "plan.updated",
+    });
+  }
+
   await emitFinalMessage({
     message: decision.message,
     runId,
@@ -844,7 +953,10 @@ export async function runStep({
     currentMode: "synthesis",
     nextAction: "交付已验收结果。",
   });
-  await taskMemory.syncTaskState(state.taskState);
+  await taskMemory.syncTaskState(
+    state.taskState,
+    state.planLedger.serialize(),
+  );
   sink.emit({
     durationMs: Date.now() - stepStartedAt,
     endedAt: Date.now(),

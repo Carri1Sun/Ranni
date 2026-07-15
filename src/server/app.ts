@@ -1025,8 +1025,17 @@ export function createServerApp() {
       return;
     }
 
+    const recoveryState = registry.takeLatestRecoveryState(
+      payload.sessionId,
+      workspacePath,
+    );
+    const recoveryMessages = recoveryState
+      ? payload.messages.filter((message) => message.role === "user").slice(-1)
+      : payload.messages;
+
     response.status(200).json({
       ok: true,
+      resumed: Boolean(recoveryState),
       runId,
       sessionId: payload.sessionId,
       streamKey,
@@ -1040,15 +1049,22 @@ export function createServerApp() {
           streamKey,
           eventBus,
           drainSteer: (id) => registry.drainSteer(id),
-          messages: payload.messages,
+          messages: recoveryMessages,
           modelConfig: payload.modelSettings,
+          ...(recoveryState ? { recoveryState } : {}),
           signal: handle?.abortController.signal,
           toolSettings: payload.toolSettings,
           workspaceRoot: workspacePath,
         });
         await traceStore.flush(runId);
+        if (result.recoverable && result.checkpoint?.runState) {
+          registry.storeRecoveryState(runId, result.checkpoint.runState);
+        }
         registry.finish(runId, result.status);
       } catch (error) {
+        if (recoveryState) {
+          registry.storeRecoveryState(runId, recoveryState);
+        }
         registry.finish(
           runId,
           handle?.abortController.signal.aborted ? "cancelled" : "failed",

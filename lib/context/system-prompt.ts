@@ -10,6 +10,24 @@ function formatList(values: string[], fallback = "none") {
     : `- ${fallback}`;
 }
 
+function formatPlan(workingSet: WorkingSetView) {
+  const plan = workingSet.plan;
+  if (plan.items.length === 0) return ["- none"];
+  return plan.items.map((item) => {
+    const details = [
+      item.id === plan.focusItemId ? "focus" : "",
+      item.acceptanceRefs.length > 0
+        ? `acceptance=${item.acceptanceRefs.join(",")}`
+        : "",
+      item.evidenceRefs.length > 0
+        ? `evidence=${item.evidenceRefs.slice(-3).join(",")}`
+        : "",
+      item.blockedReason ? `blocker=${item.blockedReason}` : "",
+    ].filter(Boolean);
+    return `- [${item.status}] ${item.id}: ${item.title}${details.length > 0 ? ` | ${details.join(" | ")}` : ""}`;
+  });
+}
+
 export function createHarnessSystemPrompt({
   activeSkillNames,
   researchMode,
@@ -49,11 +67,13 @@ export function createHarnessSystemPrompt({
     "- The user goal and authorization boundary remain stable for the run.",
     "- Tool receipts and workspace observations are the authority for files, commands, evidence, artifacts, failures, and verification.",
     "- Your task-state note expresses current intent and strategy. It cannot prove external progress or acceptance.",
+    "- The Working Plan is a revisable coordination structure. Plan item completion requires receipt or acceptance support; plan updates alone are not progress.",
     "- The preceding causal tail preserves recent reasoning, every tool call, and every paired result. Use those results directly.",
     "- Capacity compaction can summarize older history. Recent causal evidence and current acceptance gaps remain available.",
     "- Choose research, reading, planning, editing, validation, or an alternative route from the evidence. No fixed phase order is required.",
     "- Repeated state updates, unchanged reads, identical searches, and repeated failures do not advance the deliverable.",
     "- When a route fails twice, inspect the failure evidence and change the assumption, target, input, tool family, or implementation method.",
+    "- Use update_plan for every change to work coverage, ordering, status reports, and focus. update_task_state only maintains the working note and never edits the Working Plan. Use replace_attempt only when the concrete method, key assumption, or exit conditions materially change.",
     "- A final answer is accepted only after every required acceptance item has objective evidence. Continue using tools while gaps remain.",
     "- Provider recovery preserves the current workspace and causal tail. Never summarize an unfinished artifact as completed.",
     "- When a long final answer may exceed one response, use `RANNI_FINAL_PART 1/N` on the first line and end each part with `RANNI_FINAL_CONTINUE` or `RANNI_FINAL_DONE`. The harness aggregates at most 8 parts before completion checks.",
@@ -119,6 +139,13 @@ export function createHarnessSystemPrompt({
     `Current intent: ${taskState.currentMode}`,
     `Next action note: ${taskState.nextAction || "none"}`,
     `Active attempt: ${activeAttempt}`,
+    `Working plan revision: ${workingSet.plan.revision} (projection ${workingSet.plan.projectionVersion})`,
+    ...formatPlan(workingSet),
+    ...(workingSet.plan.lastRevision
+      ? [
+          `Last plan revision: ${workingSet.plan.lastRevision.reasonKind} | ${workingSet.plan.lastRevision.reason}`,
+        ]
+      : []),
     "Active assumptions:",
     formatList(workingSet.activeAssumptions ?? []),
     "Observed facts:",

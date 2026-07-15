@@ -35,6 +35,7 @@ import type {
   StepTraceIO,
   StepTraceSummary,
 } from "../lib/runs/run-trace-store";
+import type { RunOverviewProjection } from "../lib/runs/run-overview-projection";
 import {
   ACTION_MODES,
   VERIFICATION_STATUSES,
@@ -42,6 +43,7 @@ import {
 } from "../lib/task-state";
 
 import { MarkdownContent } from "./markdown-content";
+import { RunPlanProgress } from "./run-plan-progress";
 import { RunOverviewPanel, StepIOViewer } from "./run-observability";
 import {
   buildRunOverviewView,
@@ -62,7 +64,7 @@ type ActivityType =
   | "research"
   | "thinking";
 type ViewMode = "chat" | "report" | "trace";
-type TraceDetailMode = "overview" | "step-io";
+type TraceDetailMode = "overview" | "plan" | "step-io";
 type ThemeMode = "dark" | "light" | "system";
 type ProviderId =
   | "chatgpt-subscription"
@@ -264,6 +266,13 @@ type PersistedStepTraceState = {
   selectedStepId: string;
   status: TraceLoadStatus;
   steps: StepTraceSummary[];
+};
+
+type PersistedRunOverviewState = {
+  error?: string;
+  overview?: RunOverviewProjection;
+  runId: string;
+  status: TraceLoadStatus;
 };
 
 type ActivityDebugTarget = {
@@ -947,7 +956,9 @@ function getToolDisplayName(toolName: string) {
     save_task_checkpoint: "保存任务快照",
     search_in_files: "搜索工作区文件",
     search_web: "搜索网页",
+    replace_attempt: "替换当前路线",
     update_task_memory: "更新任务记忆",
+    update_plan: "更新工作计划",
     update_task_state: "更新任务状态",
     write_file: "写入文件",
   };
@@ -990,7 +1001,11 @@ function getToolIcon(toolName: string): ProcessIconId {
     return "spark";
   }
 
-  if (toolName === "update_task_state") {
+  if (
+    toolName === "replace_attempt" ||
+    toolName === "update_plan" ||
+    toolName === "update_task_state"
+  ) {
     return "state";
   }
 
@@ -3472,6 +3487,11 @@ export function AgentConsole({
       status: "idle",
       steps: [],
     });
+  const [persistedRunOverview, setPersistedRunOverview] =
+    useState<PersistedRunOverviewState>({
+      runId: "",
+      status: "idle",
+    });
   const [input, setInput] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
   const [isSessionHistoryIndexLoaded, setIsSessionHistoryIndexLoaded] =
@@ -3558,6 +3578,7 @@ export function AgentConsole({
   const [isSidebarOverlayMode, setIsSidebarOverlayMode] = useState(false);
   const [isFeedAtBottom, setIsFeedAtBottom] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTraceActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -4566,6 +4587,104 @@ export function AgentConsole({
       setSelectedStepId(nextStep.id);
     }
   }, [activeSession, selectedRunId, selectedStepId]);
+
+  useEffect(() => {
+    const runId = traceRunForLoading?.id;
+    if (!runId || isDraftSessionActive) {
+      setPersistedRunOverview({ runId: "", status: "idle" });
+      return;
+    }
+
+    let disposed = false;
+    let requestInFlight = false;
+    const controller = new AbortController();
+    const workspaceQuery = activeSession?.workspaceRoot
+      ? `?workspaceRoot=${encodeURIComponent(activeSession.workspaceRoot)}`
+      : "";
+
+    const refreshOverview = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+
+      setPersistedRunOverview((current) =>
+        current.runId === runId && current.overview
+          ? current
+          : { runId, status: "loading" },
+      );
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/runs/${encodeURIComponent(runId)}/overview${workspaceQuery}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) {
+          throw new Error(
+            response.status === 404
+              ? "运行级计划投影尚未建立"
+              : `读取运行级计划投影失败（${response.status}）`,
+          );
+        }
+        const payload = (await response.json()) as {
+          error?: string;
+          ok: boolean;
+          result?: { overview?: RunOverviewProjection };
+        };
+        const overview = payload.result?.overview;
+        if (!payload.ok || !overview) {
+          throw new Error(payload.error || "运行级计划投影尚未写入");
+        }
+
+        if (!disposed) {
+          setPersistedRunOverview((current) => {
+            if (
+              current.runId === runId &&
+              current.overview &&
+              current.overview.latestSeq > overview.latestSeq
+            ) {
+              return current;
+            }
+            return { overview, runId, status: "success" };
+          });
+        }
+      } catch (error) {
+        if (disposed || controller.signal.aborted) return;
+        setPersistedRunOverview((current) => {
+          if (current.runId === runId && current.overview) {
+            return current;
+          }
+          return {
+            error:
+              error instanceof Error
+                ? error.message
+                : "运行级计划投影暂不可用",
+            runId,
+            status:
+              traceRunForLoading.status === "running" ? "loading" : "error",
+          };
+        });
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void refreshOverview();
+    const timer =
+      traceRunForLoading.status === "running"
+        ? window.setInterval(() => void refreshOverview(), 1500)
+        : undefined;
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [
+    activeSession?.workspaceRoot,
+    apiBaseUrl,
+    isDraftSessionActive,
+    traceRunForLoading?.id,
+    traceRunForLoading?.status,
+  ]);
 
   useEffect(() => {
     const runId = traceRunForLoading?.id;
@@ -6078,6 +6197,30 @@ export function AgentConsole({
       return;
     }
 
+    if (e.type === "run.overview.updated") {
+      const overview = e.overview as RunOverviewProjection | undefined;
+      const runId = String(e.runId ?? overview?.runId ?? "");
+      if (
+        !overview ||
+        !runId ||
+        overview.runId !== runId ||
+        traceRunForLoading?.id !== runId
+      ) {
+        return;
+      }
+      setPersistedRunOverview((current) => {
+        if (
+          current.runId === runId &&
+          current.overview &&
+          current.overview.latestSeq >= overview.latestSeq
+        ) {
+          return current;
+        }
+        return { overview, runId, status: "success" };
+      });
+      return;
+    }
+
     if (e.type === "lifecycle") {
       if (e.phase === "run_completed") {
         finalizeRunThinkingStreams(sessionId, String(e.runId ?? ""));
@@ -6894,11 +7037,41 @@ export function AgentConsole({
     selectedPersistedIO,
     selectedStep,
   );
+  const selectedRunOverviewProjection =
+    persistedRunOverview.runId === selectedRun?.id
+      ? persistedRunOverview.overview
+      : undefined;
   const selectedRunOverview = buildRunOverviewView({
     fallbackStep: selectedStep,
     io: selectedPersistedIO,
+    overview: selectedRunOverviewProjection,
   });
-  const currentTaskState = selectedStep?.taskState ?? selectedRun?.taskState;
+  const requestPlanAdjustment = (itemId?: string) => {
+    setActiveView("chat");
+    setInput((current) =>
+      current.trim()
+        ? current
+        : itemId
+          ? `请调整当前工作计划，优先处理 ${itemId}：`
+          : "请调整当前工作计划：",
+    );
+    window.requestAnimationFrame(() => {
+      composerInputRef.current?.focus();
+      composerInputRef.current?.setSelectionRange(
+        composerInputRef.current.value.length,
+        composerInputRef.current.value.length,
+      );
+    });
+  };
+  const currentTaskState =
+    selectedRunOverviewProjection?.taskState ??
+    selectedStep?.taskState ??
+    selectedRun?.taskState;
+  const currentVerificationStatus = selectedRunOverview.completion?.ready
+    ? "passed"
+    : selectedRunOverview.acceptance.counts.failed > 0
+      ? "failed"
+      : currentTaskState?.verification.status ?? "pending";
   const reportCandidate = isDraftSessionActive
     ? undefined
     : getReportCandidate(activeSession.messages);
@@ -7915,6 +8088,18 @@ export function AgentConsole({
                           运行概览
                         </button>
                         <button
+                          aria-pressed={traceDetailMode === "plan"}
+                          className={
+                            traceDetailMode === "plan"
+                              ? styles.traceViewToggleActive
+                              : ""
+                          }
+                          type="button"
+                          onClick={() => setTraceDetailMode("plan")}
+                        >
+                          计划与进度
+                        </button>
+                        <button
                           aria-pressed={traceDetailMode === "step-io"}
                           className={
                             traceDetailMode === "step-io"
@@ -7952,9 +8137,31 @@ export function AgentConsole({
                       <RunOverviewPanel
                         fallbackStep={selectedStep}
                         io={selectedPersistedIO}
-                        loadMessage={persistedStepTrace.error}
-                        loadStatus={persistedStepTrace.status}
+                        loadMessage={
+                          persistedRunOverview.error ?? persistedStepTrace.error
+                        }
+                        loadStatus={
+                          selectedRunOverviewProjection
+                            ? persistedRunOverview.status
+                            : persistedStepTrace.status
+                        }
+                        overview={selectedRunOverviewProjection}
                         run={selectedRun}
+                      />
+                    ) : traceDetailMode === "plan" ? (
+                      <RunPlanProgress
+                        overview={selectedRunOverview}
+                        projection={selectedRunOverviewProjection}
+                        run={selectedRun}
+                        onAdjustPlan={() => requestPlanAdjustment()}
+                        onOpenStep={(stepIndex) => {
+                          const step = selectedRun.steps.find(
+                            (candidate) => candidate.stepIndex === stepIndex,
+                          );
+                          if (!step) return;
+                          setSelectedStepId(step.id);
+                          setTraceDetailMode("step-io");
+                        }}
                       />
                     ) : (
                       <StepIOViewer
@@ -8236,6 +8443,7 @@ export function AgentConsole({
               <div className={styles.composerInputWrap}>
                 <textarea
                   className={styles.textarea}
+                  ref={composerInputRef}
                   name="prompt"
                   placeholder="Ask Ranni to inspect files, browse, research, or draft a report..."
                   rows={3}
@@ -8251,7 +8459,6 @@ export function AgentConsole({
                       event.preventDefault();
 
                       if (
-                        !currentSessionIsRunning &&
                         activeSession.historyHydrated &&
                         input.trim() &&
                         !composerSkillSendBlocked
@@ -8311,14 +8518,23 @@ export function AgentConsole({
                   </button>
                 </div>
                 {currentSessionIsRunning ? (
-                  <button
-                    className={`${styles.submitButton} ${styles.stopButton}`}
-                    disabled={Boolean(stoppingAgentRuns[activeSession.id])}
-                    type="button"
-                    onClick={() => stopAgentRun(activeSession.id)}
-                  >
-                    {stoppingAgentRuns[activeSession.id] ? "停止中" : "停止"}
-                  </button>
+                  <div className={styles.runningComposerActions}>
+                    <button
+                      className={styles.submitButton}
+                      disabled={!input.trim() || composerSkillSendBlocked}
+                      type="submit"
+                    >
+                      发送补充
+                    </button>
+                    <button
+                      className={`${styles.submitButton} ${styles.stopButton}`}
+                      disabled={Boolean(stoppingAgentRuns[activeSession.id])}
+                      type="button"
+                      onClick={() => stopAgentRun(activeSession.id)}
+                    >
+                      {stoppingAgentRuns[activeSession.id] ? "停止中" : "停止"}
+                    </button>
+                  </div>
                 ) : (
                   <button
                     className={styles.submitButton}
@@ -8441,43 +8657,59 @@ export function AgentConsole({
             </div>
 
             {selectedRun ? (
-              <div className={styles.inspectorMetrics}>
-                <div>
-                  <span>Started</span>
-                  <strong>{formatSessionTime(selectedRun.startedAt)}</strong>
+              <>
+                <div className={styles.inspectorMetrics}>
+                  <div>
+                    <span>Started</span>
+                    <strong>{formatSessionTime(selectedRun.startedAt)}</strong>
+                  </div>
+                  <div>
+                    <span>Duration</span>
+                    <strong>{formatDuration(selectedRun.durationMs)}</strong>
+                  </div>
+                  <div>
+                    <span>Steps</span>
+                    <strong>
+                      {completedStepCount}/
+                      {selectedRun.totalSteps || selectedRun.steps.length}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Mode</span>
+                    <strong>{currentTaskState?.currentMode ?? "未知"}</strong>
+                  </div>
+                  <div>
+                    <span>Verify</span>
+                    <strong>{currentVerificationStatus}</strong>
+                  </div>
+                  <div>
+                    <span>Progress</span>
+                    <strong>
+                      {selectedRunOverview.completion?.ready
+                        ? "final"
+                        : selectedRunOverview.progress?.primaryCategory ??
+                          selectedProgressReceipt?.primaryCategory ??
+                          "waiting"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Acceptance Gap</span>
+                    <strong>{selectedRunOverview.deliverableGap.length}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Duration</span>
-                  <strong>{formatDuration(selectedRun.durationMs)}</strong>
-                </div>
-                <div>
-                  <span>Steps</span>
-                  <strong>
-                    {completedStepCount}/
-                    {selectedRun.totalSteps || selectedRun.steps.length}
-                  </strong>
-                </div>
-                <div>
-                  <span>Mode</span>
-                  <strong>{currentTaskState?.currentMode ?? "未知"}</strong>
-                </div>
-                <div>
-                  <span>Verify</span>
-                  <strong>
-                    {currentTaskState?.verification.status ?? "pending"}
-                  </strong>
-                </div>
-                <div>
-                  <span>Progress</span>
-                  <strong>
-                    {selectedProgressReceipt?.primaryCategory ?? "waiting"}
-                  </strong>
-                </div>
-                <div>
-                  <span>Acceptance Gap</span>
-                  <strong>{selectedRunOverview.deliverableGap.length}</strong>
-                </div>
-              </div>
+                <RunPlanProgress
+                  overview={selectedRunOverview}
+                  projection={selectedRunOverviewProjection}
+                  run={selectedRun}
+                  variant="compact"
+                  onAdjustPlan={() => requestPlanAdjustment()}
+                  onOpenDetails={() => {
+                    setActiveView("trace");
+                    setSelectedRunId(selectedRun.id);
+                    setTraceDetailMode("plan");
+                  }}
+                />
+              </>
             ) : (
               <p className={styles.inspectorEmpty}>
                 发送任务后，这里会显示本轮执行状态。
@@ -8501,7 +8733,7 @@ export function AgentConsole({
 
           <section className={styles.inspectorSection}>
             <div className={styles.inspectorHeader}>
-              <h3>Task State</h3>
+              <h3>任务状态兼容投影</h3>
               <span>{currentTaskState?.currentMode ?? "Idle"}</span>
             </div>
             {currentTaskState ? (
@@ -8517,7 +8749,7 @@ export function AgentConsole({
                   </strong>
                 </div>
                 <div>
-                  <span>Verification</span>
+                  <span>兼容 Verification</span>
                   <strong>{currentTaskState.verification.status}</strong>
                 </div>
                 <div>

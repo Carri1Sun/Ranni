@@ -42,6 +42,8 @@ test("keeps safe observations and all dedicated slide mutations available", () =
   );
   const alwaysAvailable = [
     "load_skill",
+    "update_plan",
+    "replace_attempt",
     "init_task_memory",
     "list_files",
     "read_file",
@@ -77,6 +79,42 @@ test("keeps safe observations and all dedicated slide mutations available", () =
   ]) {
     assert.equal(styleTools.has(bypassTool), false);
     assert.equal(slideTools.has(bypassTool), false);
+  }
+});
+
+test("exposes distinct plan and route-transition contracts in every skill phase", () => {
+  for (const phase of ["off", "styles", "slides"] as const) {
+    const definitions = new Map(
+      getStepToolDefinitions(["html-to-pptx"], phase).map((definition) => [
+        definition.name,
+        definition,
+      ]),
+    );
+    const updatePlan = definitions.get("update_plan");
+    const replaceAttempt = definitions.get("replace_attempt");
+
+    assert.ok(updatePlan, `update_plan missing in ${phase}`);
+    assert.ok(replaceAttempt, `replace_attempt missing in ${phase}`);
+    assert.deepEqual(
+      (updatePlan.input_schema as { required?: string[] }).required,
+      ["items", "reason"],
+    );
+    assert.deepEqual(
+      (replaceAttempt.input_schema as { required?: string[] }).required,
+      ["approach", "reason"],
+    );
+    assert.match(
+      updatePlan.description ?? "",
+      /coverage, order, scope, or focus/i,
+    );
+    assert.match(
+      replaceAttempt.description ?? "",
+      /method, key assumption, or exit conditions/i,
+    );
+    assert.match(
+      replaceAttempt.description ?? "",
+      /Do not use this for plan wording/i,
+    );
   }
 });
 

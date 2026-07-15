@@ -8,6 +8,7 @@ import test from "node:test";
 import express from "express";
 
 import { EventBus } from "../../lib/events/event-bus";
+import type { RunOverviewProjection } from "../../lib/runs/run-overview-projection";
 import { RunRegistry } from "../../lib/runs/run-registry";
 import {
   type RunTraceRecord,
@@ -52,6 +53,28 @@ test("queries persisted runs and step IO through registry-owned workspaces", asy
     stepId,
     stepIndex: 1,
     startedAt: 2_010,
+  });
+  eventBus.publish(sessionId, {
+    type: "task.state",
+    runId,
+    sessionId,
+    stepId,
+    stepIndex: 1,
+    taskState: {
+      assumptions: [],
+      commandsRun: [],
+      constraints: [],
+      currentMode: "plan",
+      deliverable: "route test artifact",
+      facts: [],
+      filesTouched: [],
+      goal: "Route test",
+      nextAction: "Inspect the overview route",
+      openQuestions: [],
+      plan: ["Inspect overview"],
+      successCriteria: [],
+      verification: { evidence: [], status: "pending" },
+    },
   });
   eventBus.publish(sessionId, {
     type: "context.snapshot",
@@ -106,6 +129,20 @@ test("queries persisted runs and step IO through registry-owned workspaces", asy
   };
   assert.equal(stepsBody.result.steps[0]?.stepId, stepId);
 
+  const overviewResponse = await fetch(
+    `${baseUrl}/api/runs/${runId}/overview`,
+  );
+  assert.equal(overviewResponse.status, 200);
+  const overviewBody = (await overviewResponse.json()) as {
+    ok: boolean;
+    result: { overview: RunOverviewProjection };
+  };
+  assert.equal(overviewBody.ok, true);
+  assert.equal(
+    overviewBody.result.overview.taskState?.nextAction,
+    "Inspect the overview route",
+  );
+
   const ioResponse = await fetch(
     `${baseUrl}/api/runs/${runId}/steps/${stepId}/io`,
   );
@@ -147,6 +184,17 @@ test("queries persisted runs and step IO through registry-owned workspaces", asy
     `http://127.0.0.1:${restartedPort}/api/runs/${runId}/steps`,
   );
   assert.equal(restartedSteps.status, 200);
+  const restartedOverview = await fetch(
+    `http://127.0.0.1:${restartedPort}/api/runs/${runId}/overview?${workspaceQuery}`,
+  );
+  assert.equal(restartedOverview.status, 200);
+  const restartedOverviewBody = (await restartedOverview.json()) as {
+    result: { overview: RunOverviewProjection };
+  };
+  assert.equal(
+    restartedOverviewBody.result.overview.taskState?.nextAction,
+    "Inspect the overview route",
+  );
 
   const unknownResponse = await fetch(
     `${baseUrl}/api/runs/unregistered-run/steps`,

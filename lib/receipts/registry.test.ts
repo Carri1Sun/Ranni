@@ -61,6 +61,58 @@ test("completed toolUseId and input hash is reused without duplicate state", () 
   assert.equal(registry.snapshot().receipts.length, 1);
 });
 
+test("restored registry reuses completed execution without duplicate projection", () => {
+  const original = new ReceiptRegistry();
+  const toolCall = call("command", "run_terminal", { command: "npm test" });
+  record(
+    original,
+    toolCall,
+    "exit_code: 0\ntimed_out: false\nstdout:\npassed",
+  );
+  const persisted = original.snapshot();
+  const expectedStateHash = persisted.stateHash;
+  persisted.stateHash = "stale-state-hash";
+  const restored = new ReceiptRegistry();
+
+  restored.restore(persisted);
+  persisted.commands[0]!.command = "external mutation";
+  persisted.receipts[0]!.result = "external mutation";
+  const replayed = record(
+    restored,
+    toolCall,
+    "exit_code: 0\ntimed_out: false\nstdout:\npassed",
+  );
+  const observed = restored.snapshot();
+
+  assert.equal(replayed.reused, true);
+  assert.equal(observed.receipts.length, 1);
+  assert.equal(observed.commands.length, 1);
+  assert.equal(observed.commands[0]?.command, "npm test");
+  assert.doesNotMatch(observed.receipts[0]?.result ?? "", /external mutation/);
+  assert.equal(observed.stateHash, expectedStateHash);
+});
+
+test("restored registry rebuilds semantic receipt fingerprints", () => {
+  const original = new ReceiptRegistry();
+  record(
+    original,
+    call("command-1", "run_terminal", { command: "npm test" }),
+    "exit_code: 0\ntimed_out: false\nstdout:\npassed",
+  );
+  const restored = new ReceiptRegistry();
+  restored.restore(original.snapshot());
+
+  const repeated = record(
+    restored,
+    call("command-2", "run_terminal", { command: "npm test" }),
+    "exit_code: 0\ntimed_out: false\nstdout:\npassed",
+  );
+
+  assert.equal(repeated.reused, false);
+  assert.equal(repeated.unchanged, true);
+  assert.equal(repeated.domainStatus, "unchanged");
+});
+
 test("research receipts preserve real source URLs for handoff", () => {
   const registry = new ReceiptRegistry();
   record(
@@ -213,6 +265,94 @@ test("state-only and repeated observations do not count as objective progress", 
   assert.equal(progress.noObjectiveProgressStreak, 1);
 });
 
+test("planning and state tools stay outside objective and information progress", () => {
+  const registry = new ReceiptRegistry();
+  const acceptance = new AcceptanceLedger(createTextDeliverableContract());
+  const tracker = new ProgressTracker();
+
+  acceptance.reconcile(registry.snapshot());
+  const receipts = [
+    record(
+      registry,
+      call("task-state", "update_task_state", { next_action: "research" }),
+      '{"changedFields":["nextAction"],"noChange":false}',
+    ),
+    record(
+      registry,
+      call("plan", "update_plan", { steps: ["research", "write"] }),
+      "Plan updated.",
+    ),
+    record(
+      registry,
+      call("research-plan", "plan_research", {
+        goal: "compare routes",
+        questions: ["what changed"],
+        topic: "model architecture",
+      }),
+      "Research plan saved.",
+    ),
+  ];
+  const delta = acceptance.reconcile(registry.snapshot());
+  const progress = tracker.evaluate({
+    acceptanceAfter: acceptance.snapshot(),
+    acceptanceDelta: delta,
+    observedState: registry.snapshot(),
+    receipts,
+  });
+
+  assert.deepEqual(
+    receipts.map((receipt) => receipt.category),
+    ["state", "state", "state"],
+  );
+  assert.equal(progress.objectiveProgress, false);
+  assert.equal(progress.informationGain, false);
+  assert.equal(progress.sameStrategyFailureStreak, 0);
+});
+
+test("planning state between failed actions does not change the failed strategy", () => {
+  const registry = new ReceiptRegistry();
+  const acceptance = new AcceptanceLedger(createTextDeliverableContract());
+  const tracker = new ProgressTracker();
+
+  const evaluate = (receipt: ReturnType<typeof record>) => {
+    const delta = acceptance.reconcile(registry.snapshot());
+    return tracker.evaluate({
+      acceptanceAfter: acceptance.snapshot(),
+      acceptanceDelta: delta,
+      observedState: registry.snapshot(),
+      receipts: [receipt],
+    });
+  };
+
+  acceptance.reconcile(registry.snapshot());
+  const firstFailure = evaluate(
+    record(
+      registry,
+      call("failure-1", "run_terminal", { command: "missing-command" }),
+      "exit_code: 127\ntimed_out: false\nstderr:\ncommand not found",
+    ),
+  );
+  const planningState = evaluate(
+    record(
+      registry,
+      call("state-between", "update_plan", { steps: ["retry"] }),
+      "Plan updated.",
+    ),
+  );
+  const secondFailure = evaluate(
+    record(
+      registry,
+      call("failure-2", "run_terminal", { command: "missing-command" }),
+      "exit_code: 127\ntimed_out: false\nstderr:\ncommand not found",
+    ),
+  );
+
+  assert.equal(firstFailure.sameStrategyFailureStreak, 1);
+  assert.equal(planningState.strategySignature, firstFailure.strategySignature);
+  assert.equal(planningState.sameStrategyFailureStreak, 1);
+  assert.equal(secondFailure.sameStrategyFailureStreak, 2);
+});
+
 test("each accepted slide advances a pending multi-slide criterion", () => {
   const registry = new ReceiptRegistry();
   const acceptance = new AcceptanceLedger(
@@ -247,7 +387,7 @@ test("each accepted slide advances a pending multi-slide criterion", () => {
   );
 });
 
-test("a successful command advances once without letting repeated output reset the watchdog", () => {
+test("a successful verification command advances once without letting repeated output reset the watchdog", () => {
   const registry = new ReceiptRegistry();
   const acceptance = new AcceptanceLedger(createTextDeliverableContract());
   const tracker = new ProgressTracker();
@@ -282,6 +422,43 @@ test("a successful command advances once without letting repeated output reset t
   assert.equal(firstProgress.objectiveProgress, true);
   assert.equal(repeatedProgress.objectiveProgress, false);
   assert.equal(repeatedProgress.noObjectiveProgressStreak, 1);
+});
+
+test("successful observation commands stay non-objective while artifact commands advance", () => {
+  const registry = new ReceiptRegistry();
+  const acceptance = new AcceptanceLedger(createTextDeliverableContract());
+  const tracker = new ProgressTracker();
+  acceptance.reconcile(registry.snapshot());
+
+  const observation = record(
+    registry,
+    call("pwd", "run_terminal", { command: "pwd" }),
+    "exit_code: 0\ntimed_out: false\nstdout:\n/workspace",
+  );
+  const observationDelta = acceptance.reconcile(registry.snapshot());
+  const observationProgress = tracker.evaluate({
+    acceptanceAfter: acceptance.snapshot(),
+    acceptanceDelta: observationDelta,
+    observedState: registry.snapshot(),
+    receipts: [observation],
+  });
+
+  const artifactChange = record(
+    registry,
+    call("mkdir", "run_terminal", { command: "mkdir -p dist/report" }),
+    "exit_code: 0\ntimed_out: false",
+  );
+  const artifactDelta = acceptance.reconcile(registry.snapshot());
+  const artifactProgress = tracker.evaluate({
+    acceptanceAfter: acceptance.snapshot(),
+    acceptanceDelta: artifactDelta,
+    observedState: registry.snapshot(),
+    receipts: [artifactChange],
+  });
+
+  assert.equal(observationProgress.objectiveProgress, false);
+  assert.equal(artifactProgress.objectiveProgress, true);
+  assert.match(artifactProgress.objectiveDeltas[0] ?? "", /mkdir/);
 });
 
 test("successful artifact validation resolves earlier artifact route errors", () => {

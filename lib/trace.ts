@@ -183,6 +183,11 @@ export type TraceRun = {
 export type StreamEvent =
   | {
       prompt: string;
+      resumedFromCheckpoint?: {
+        completedSteps: number;
+        contextSnapshotHash: string;
+        planRevision: number;
+      };
       runId: string;
       runtime: TraceRuntimeInfo;
       startedAt: number;

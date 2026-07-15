@@ -1,9 +1,16 @@
+import path from "node:path";
+
 import { toTraceToolDefinitions } from "../context/trace-snapshot";
 import { getModelRuntimeInfo, type AgentMessage } from "../llm";
 import { createRunPolicySet } from "../policies/registry";
 import { normalizeSkillNames } from "../skills/registry";
 import { AgentEventSink } from "./event-sink";
-import { createAgentRunState, applyRunTaskPatch } from "./run-state";
+import {
+  createAgentRunRecoverySnapshot,
+  createAgentRunState,
+  applyRunTaskPatch,
+  restoreAgentRunState,
+} from "./run-state";
 import { createAgentRuntimeServices } from "./runtime-services";
 import { createRunTerminator } from "./run-termination";
 import { runStep } from "./step-runner";
@@ -15,6 +22,25 @@ import type {
 } from "./types";
 
 const MAX_TOOL_STEPS = 500;
+
+function assertRecoveryBinding(
+  snapshot: NonNullable<RunAgentTurnOptions["recoveryState"]>,
+  sessionId: string,
+  workspaceRoot?: string,
+) {
+  const binding = snapshot.recoveryBinding;
+  if (!binding) return;
+  if (binding.sessionId !== sessionId) {
+    throw new Error("Recovery checkpoint belongs to a different session.");
+  }
+  if (
+    binding.workspaceRoot &&
+    (!workspaceRoot ||
+      path.resolve(binding.workspaceRoot) !== path.resolve(workspaceRoot))
+  ) {
+    throw new Error("Recovery checkpoint belongs to a different workspace.");
+  }
+}
 
 function toConversation(
   messages: RunAgentTurnOptions["messages"],
@@ -67,6 +93,7 @@ export async function runAgentTurnController(
     eventBus,
     messages,
     modelConfig,
+    recoveryState,
     runId,
     sessionId,
     signal,
@@ -75,15 +102,34 @@ export async function runAgentTurnController(
     workspaceRoot,
   } = options;
   const startedAt = Date.now();
-  const prompt = latestUserPrompt(messages);
-  const activeSkillNames = normalizeSkillNames(toolSettings?.activeSkills);
-  const policySet = createRunPolicySet({ activeSkillNames, prompt });
-  const state = createAgentRunState({
-    activeSkillNames,
-    conversation: toConversation(messages),
-    deliverableContract: policySet.getDeliverableContract(activeSkillNames),
-    latestUserPrompt: prompt,
+  const configuredSkillNames = normalizeSkillNames(toolSettings?.activeSkills);
+  const initialPrompt = latestUserPrompt(messages);
+  const initialPolicySet = createRunPolicySet({
+    activeSkillNames: configuredSkillNames,
+    prompt: initialPrompt,
   });
+  if (recoveryState) {
+    assertRecoveryBinding(recoveryState, sessionId, workspaceRoot);
+  }
+  const state = recoveryState
+    ? restoreAgentRunState(recoveryState)
+    : createAgentRunState({
+        activeSkillNames: configuredSkillNames,
+        conversation: toConversation(messages),
+        deliverableContract:
+          initialPolicySet.getDeliverableContract(configuredSkillNames),
+        latestUserPrompt: initialPrompt,
+        recoveryBinding: { sessionId, ...(workspaceRoot ? { workspaceRoot } : {}) },
+      });
+  if (recoveryState && messages.length > 0) {
+    appendSteering(state, messages);
+  }
+  for (const skillName of configuredSkillNames) {
+    state.loadedSkills.add(skillName);
+  }
+  const activeSkillNames = [...state.loadedSkills];
+  const prompt = state.taskContract.goal;
+  const policySet = createRunPolicySet({ activeSkillNames, prompt });
   const { researchNotebook, taskMemory } = createAgentRuntimeServices({
     latestUserPrompt: prompt,
     runId,
@@ -104,12 +150,24 @@ export async function runAgentTurnController(
   });
 
   try {
-    await taskMemory.syncTaskState(state.taskState);
+    await taskMemory.syncTaskState(
+      state.taskState,
+      state.planLedger.serialize(),
+    );
     applyRunTaskPatch(state, { memory: taskMemory.getStatus() });
     state.acceptance.reconcile(state.receiptRegistry.snapshot());
 
     sink.emit({
       prompt,
+      ...(recoveryState
+        ? {
+            resumedFromCheckpoint: {
+              completedSteps: recoveryState.completedSteps,
+              contextSnapshotHash: recoveryState.contextSnapshotHash,
+              planRevision: recoveryState.plan.snapshot.revision,
+            },
+          }
+        : {}),
       runId,
       runtime,
       startedAt,
@@ -123,7 +181,11 @@ export async function runAgentTurnController(
       type: "status",
     });
 
-    for (let stepIndex = 1; stepIndex <= MAX_TOOL_STEPS; stepIndex += 1) {
+    for (
+      let stepIndex = state.completedSteps + 1;
+      stepIndex <= MAX_TOOL_STEPS;
+      stepIndex += 1
+    ) {
       if (signal?.aborted) {
         const error = new Error(CANCELLED_MESSAGE);
         error.name = "AbortError";
@@ -169,6 +231,7 @@ export async function runAgentTurnController(
           ? { checkpoint: outcome.checkpoint }
           : {}),
         error: outcome.error,
+        recoverable: outcome.kind === "recover",
       });
     }
 
@@ -177,6 +240,7 @@ export async function runAgentTurnController(
       checkpoint: {
         acceptanceGap: state.acceptance.snapshot().gap,
         contextSnapshotHash: state.contextSnapshotHash,
+        runState: createAgentRunRecoverySnapshot(state),
         ...(workspaceRoot ? { workspaceRoot } : {}),
       },
       error,

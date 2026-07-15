@@ -2,6 +2,54 @@ import type { AcceptanceDelta, AcceptanceSnapshot } from "./acceptance";
 import type { ObservedState, ToolReceipt } from "./receipts/types";
 import { stableReceiptHash } from "./receipts/registry";
 
+const VERIFICATION_COMMAND_PATTERN =
+  /(?:\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check|verify|validate)(?=[:\s]|$)|\b(?:pytest|vitest|jest|mocha|playwright\s+test|tsc|eslint|ruff|mypy)\b|\b(?:cargo|go|dotnet|mvn|gradle)\s+(?:test|check|verify)\b|\b(?:test|check|verify|validate)[-_./][\w./-]+)/i;
+
+const ARTIFACT_SCRIPT_PATTERN =
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|compile|generate|render|export|bundle|package|assemble)(?=[:\s]|$)|\b(?:node|tsx?|bun|python\d?|bash|sh)\s+\S*(?:build|compile|generate|render|export|bundle|package|assemble|create|write|patch)\S*/i;
+
+function commandChangesArtifact(command: string) {
+  if (/(?:^|[;&|]\s*|\s)>{1,2}(?![>&])\s*\S/.test(command)) {
+    return true;
+  }
+
+  if (/\btee\s+(?!\/dev\/null\b)\S+/.test(command)) {
+    return true;
+  }
+
+  if (ARTIFACT_SCRIPT_PATTERN.test(command)) {
+    return true;
+  }
+
+  return command
+    .split(/(?:&&|\|\||;|\n)/)
+    .some((segment) =>
+      /^(?:\s*(?:sudo\s+)?)(?:mkdir|touch|cp|mv|rm|install\s+-d|patch|zip|pandoc|ffmpeg)\b|^(?:\s*(?:sudo\s+)?)git\s+(?:add|apply|commit|mv|rm)\b|\b(?:sed|perl)\s+-[^\s]*i\b/i.test(
+        segment,
+      ),
+    );
+}
+
+function commandHasObjectiveEffect({
+  acceptanceAfter,
+  command,
+  receiptId,
+}: {
+  acceptanceAfter: AcceptanceSnapshot;
+  command: string;
+  receiptId: string;
+}) {
+  const supportsAcceptance = acceptanceAfter.criteria.some((criterion) =>
+    criterion.evidenceRefs.includes(receiptId),
+  );
+
+  return (
+    supportsAcceptance ||
+    VERIFICATION_COMMAND_PATTERN.test(command) ||
+    commandChangesArtifact(command)
+  );
+}
+
 export type StepProgressReceipt = {
   artifactHash?: string;
   deliverableGapAfter: string[];
@@ -29,6 +77,15 @@ export type StepProgressReceipt = {
   strategySignature: string;
 };
 
+export type ProgressTrackerSnapshot = {
+  noMeaningfulProgressStreak: number;
+  noObjectiveProgressStreak: number;
+  previousStrategySignature: string;
+  sameStrategyFailureStreak: number;
+  seenInformation: string[];
+  seenObjectiveActions: string[];
+};
+
 export class ProgressTracker {
   private noMeaningfulProgressStreak = 0;
   private noObjectiveProgressStreak = 0;
@@ -36,6 +93,26 @@ export class ProgressTracker {
   private previousStrategySignature = "";
   private seenInformation = new Set<string>();
   private seenObjectiveActions = new Set<string>();
+
+  snapshot(): ProgressTrackerSnapshot {
+    return {
+      noMeaningfulProgressStreak: this.noMeaningfulProgressStreak,
+      noObjectiveProgressStreak: this.noObjectiveProgressStreak,
+      previousStrategySignature: this.previousStrategySignature,
+      sameStrategyFailureStreak: this.sameStrategyFailureStreak,
+      seenInformation: [...this.seenInformation].sort(),
+      seenObjectiveActions: [...this.seenObjectiveActions].sort(),
+    };
+  }
+
+  restore(snapshot: ProgressTrackerSnapshot) {
+    this.noMeaningfulProgressStreak = snapshot.noMeaningfulProgressStreak;
+    this.noObjectiveProgressStreak = snapshot.noObjectiveProgressStreak;
+    this.previousStrategySignature = snapshot.previousStrategySignature;
+    this.sameStrategyFailureStreak = snapshot.sameStrategyFailureStreak;
+    this.seenInformation = new Set(snapshot.seenInformation);
+    this.seenObjectiveActions = new Set(snapshot.seenObjectiveActions);
+  }
 
   evaluate({
     acceptanceAfter,
@@ -107,6 +184,11 @@ export class ProgressTracker {
         const commandAction = `command:${receipt.strategySignature}`;
         if (
           successfulCommand &&
+          commandHasObjectiveEffect({
+            acceptanceAfter,
+            command: successfulCommand.command,
+            receiptId: receipt.id,
+          }) &&
           !this.seenObjectiveActions.has(commandAction)
         ) {
           this.seenObjectiveActions.add(commandAction);
@@ -159,22 +241,34 @@ export class ProgressTracker {
         ? 0
         : this.noMeaningfulProgressStreak + 1;
 
-    const strategySignature = stableReceiptHash(
-      receipts.map((receipt) => receipt.strategySignature).sort(),
+    const strategyReceipts = receipts.filter(
+      (receipt) => receipt.category !== "state",
     );
+    const strategySignature =
+      strategyReceipts.length > 0
+        ? stableReceiptHash(
+            strategyReceipts
+              .map((receipt) => receipt.strategySignature)
+              .sort(),
+          )
+        : this.previousStrategySignature || stableReceiptHash([]);
     const strategyFailed =
-      receipts.length > 0 &&
+      strategyReceipts.length > 0 &&
       !objectiveProgress &&
-      receipts.every(
-        (receipt) =>
-          !receipt.success || receipt.unchanged || receipt.category === "state",
+      strategyReceipts.every(
+        (receipt) => !receipt.success || receipt.unchanged,
       );
-    if (strategyFailed && strategySignature === this.previousStrategySignature) {
-      this.sameStrategyFailureStreak += 1;
-    } else {
-      this.sameStrategyFailureStreak = strategyFailed ? 1 : 0;
+    if (strategyReceipts.length > 0) {
+      if (
+        strategyFailed &&
+        strategySignature === this.previousStrategySignature
+      ) {
+        this.sameStrategyFailureStreak += 1;
+      } else {
+        this.sameStrategyFailureStreak = strategyFailed ? 1 : 0;
+      }
+      this.previousStrategySignature = strategySignature;
     }
-    this.previousStrategySignature = strategySignature;
 
     const primaryCategory = regression
       ? "regression"

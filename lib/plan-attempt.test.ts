@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { PlanAttemptLedger } from "./plan-attempt";
 import type { StepProgressReceipt } from "./progress";
+import { executeTool, getToolDefinitions } from "./tools";
 
 function failedProgress(): StepProgressReceipt {
   return {
@@ -39,6 +40,112 @@ test("failed attempt invalidates its active assumptions with evidence", () => {
   assert.equal(assumption?.status, "rejected");
   assert.deepEqual(assumption?.evidenceRefs, ["observed-state-6"]);
   assert.equal(ledger.active()?.approach, "重新读取现场并采用替代路线");
+  const failedAttempt = snapshot.attempts.find(
+    (attempt) => attempt.id === delta.failed,
+  );
+  assert.equal(failedAttempt?.status, "failed");
+  assert.equal(failedAttempt?.supersededBy, delta.activeAttemptId);
+  assert.equal(delta.superseded, undefined);
+});
+
+test("successful finalization closes the active attempt and validates assumptions", () => {
+  const ledger = new PlanAttemptLedger("produce and verify the artifact");
+  const [assumptionId] = ledger.recordAssumptions([
+    "the selected exporter can produce the requested artifact",
+  ]);
+
+  const delta = ledger.succeed(8, ["artifact-receipt", "validation-receipt"]);
+  const snapshot = ledger.snapshot();
+  const attempt = snapshot.attempts.find(
+    (candidate) => candidate.id === delta?.succeeded,
+  );
+  const assumption = snapshot.assumptions.find(
+    (candidate) => candidate.id === assumptionId,
+  );
+
+  assert.equal(ledger.active(), undefined);
+  assert.equal(attempt?.status, "succeeded");
+  assert.equal(attempt?.endedAtStep, 8);
+  assert.deepEqual(attempt?.evidenceRefs, [
+    "artifact-receipt",
+    "validation-receipt",
+  ]);
+  assert.equal(assumption?.status, "validated");
+});
+
+test("attempt snapshot can be restored without changing route identity", () => {
+  const original = new PlanAttemptLedger("inspect the workspace");
+  original.recordAssumptions(["the workspace is readable"]);
+  const snapshot = original.snapshot();
+  const restored = new PlanAttemptLedger("placeholder");
+
+  restored.restore(snapshot);
+
+  assert.deepEqual(restored.snapshot(), snapshot);
+  assert.equal(restored.active()?.id, original.active()?.id);
+});
+
+test("repeating the same route and exit criteria keeps one active attempt", () => {
+  const ledger = new PlanAttemptLedger("inspect the workspace");
+  const initial = ledger.active();
+
+  const repeated = ledger.propose(
+    " inspect   the workspace ",
+    3,
+    initial?.exitCriteria ?? [],
+    "repeat",
+  );
+
+  assert.equal(repeated.id, initial?.id);
+  assert.equal(ledger.snapshot().attempts.length, 1);
+});
+
+test("replace_attempt exposes a dedicated route transition tool", async () => {
+  const definition = getToolDefinitions().find(
+    (candidate) => candidate.name === "replace_attempt",
+  );
+  let received:
+    | {
+        approach: string;
+        assumptions: string[];
+        exitCriteria: string[];
+        reason: string;
+      }
+    | undefined;
+
+  const result = JSON.parse(
+    await executeTool(
+      "replace_attempt",
+      JSON.stringify({
+        approach: "use the validated exporter",
+        assumptions: ["the exporter is available"],
+        exit_criteria: ["the artifact validates"],
+        reason: "the previous command receipt rejected the old exporter",
+      }),
+      {
+        replaceAttempt(input) {
+          received = input;
+          return {
+            attemptId: "attempt-next",
+            supersededAttemptId: "attempt-old",
+          };
+        },
+      },
+    ),
+  ) as { attemptId: string; supersededAttemptId: string };
+
+  assert.ok(definition);
+  assert.match(definition?.description ?? "", /does not prove external progress/i);
+  assert.deepEqual(received, {
+    approach: "use the validated exporter",
+    assumptions: ["the exporter is available"],
+    exitCriteria: ["the artifact validates"],
+    reason: "the previous command receipt rejected the old exporter",
+  });
+  assert.deepEqual(result, {
+    attemptId: "attempt-next",
+    supersededAttemptId: "attempt-old",
+  });
 });
 
 test("repeated rejected assumption is not restored without new evidence", () => {

@@ -29,10 +29,26 @@ import {
   createToolResultDisplay,
   getToolDisplayName,
 } from "./display-fallback";
+import {
+  createRunOverviewProjection,
+  reduceRunOverviewProjection,
+  type RunOverviewProjection,
+} from "./run-overview-projection";
 
 const RUN_COMPLETION_DISPLAY_TIMEOUT_MS = 8000;
 const ACTIVITY_REWRITE_ENABLED =
   process.env.RANNI_ACTIVITY_REWRITE_ENABLED?.trim().toLowerCase() === "true";
+const RUN_OVERVIEW_SOURCE_TYPES = new Set([
+  "acceptance.updated",
+  "attempt.updated",
+  "completion.checked",
+  "context.snapshot",
+  "plan.updated",
+  "progress.receipt",
+  "recovery.started",
+  "state.observed.updated",
+  "task.state",
+]);
 
 type ToolStartedEvent = Extract<TraceEvent, { type: "tool.started" }>;
 
@@ -47,6 +63,9 @@ export class EventMapper {
 
   /** runId -> 最近一次 task.state 签名（去重用，避免每 step 重复刷出 state activity）。 */
   private readonly lastTaskSignature = new Map<string, string>();
+
+  /** runId -> 最新运行概览投影；用于把语义事实实时推送给前端。 */
+  private readonly runOverviews = new Map<string, RunOverviewProjection>();
 
   constructor(
     private readonly eventBus: EventBus,
@@ -71,6 +90,10 @@ export class EventMapper {
   }
 
   private async handle(event: PublishedEvent): Promise<void> {
+    if (RUN_OVERVIEW_SOURCE_TYPES.has(event.type)) {
+      this.handleRunOverviewSource(event);
+    }
+
     switch (event.type) {
       case "run.started":
         this.handleRunStarted(event as Extract<TraceEvent, { type: "run.started" }>);
@@ -112,6 +135,10 @@ export class EventMapper {
 
   private handleRunStarted(event: Extract<TraceEvent, { type: "run.started" }>) {
     const { runId, sessionId } = event;
+    this.runOverviews.set(
+      runId,
+      createRunOverviewProjection(runId, event.startedAt),
+    );
     const display = createRunStartedDisplay();
     this.notify(sessionId, {
       runId,
@@ -148,6 +175,7 @@ export class EventMapper {
     }
     this.pending.delete(runId);
     this.lastTaskSignature.delete(runId);
+    this.runOverviews.delete(runId);
 
     const display = createRunCompletedDisplay({
       status: event.status,
@@ -178,6 +206,30 @@ export class EventMapper {
     if (event.status === "failed" && event.error) {
       this.notify(sessionId, { runId, sessionId, type: "error", message: event.error });
     }
+  }
+
+  private handleRunOverviewSource(event: PublishedEvent) {
+    if (
+      typeof event.runId !== "string" ||
+      typeof event.sessionId !== "string" ||
+      typeof event.seq !== "number"
+    ) {
+      return;
+    }
+    const current =
+      this.runOverviews.get(event.runId) ??
+      createRunOverviewProjection(event.runId);
+    const overview = reduceRunOverviewProjection(current, event);
+    if (overview === current) {
+      return;
+    }
+    this.runOverviews.set(event.runId, overview);
+    this.notify(event.sessionId, {
+      runId: event.runId,
+      sessionId: event.sessionId,
+      type: "run.overview.updated",
+      overview,
+    });
   }
 
   private handleRunStatus(event: Extract<TraceEvent, { type: "run.status" }>) {

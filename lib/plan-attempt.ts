@@ -10,6 +10,7 @@ export type PlanAttemptRecord = {
   startedAtStep: number;
   status: "abandoned" | "active" | "failed" | "succeeded" | "superseded";
   supersededBy?: string;
+  transitionReason?: string;
 };
 
 export type AssumptionRecord = {
@@ -22,10 +23,17 @@ export type AssumptionRecord = {
 
 export type AttemptDelta = {
   activeAttemptId: string;
+  abandoned?: string;
   created?: string;
   failed?: string;
   invalidatedAssumptionIds?: string[];
+  succeeded?: string;
   superseded?: string;
+};
+
+export type PlanAttemptLedgerSnapshot = {
+  assumptions: AssumptionRecord[];
+  attempts: PlanAttemptRecord[];
 };
 
 export class PlanAttemptLedger {
@@ -46,6 +54,30 @@ export class PlanAttemptLedger {
 
   active() {
     return this.attempts.findLast((attempt) => attempt.status === "active");
+  }
+
+  private createActive(
+    approach: string,
+    stepIndex: number,
+    exitCriteria: string[] = [],
+  ) {
+    const next: PlanAttemptRecord = {
+      approach: approach.replace(/\s+/g, " ").trim(),
+      assumptionIds: [],
+      evidenceRefs: [],
+      exitCriteria: [
+        ...new Set(
+          exitCriteria
+            .map((criterion) => criterion.replace(/\s+/g, " ").trim())
+            .filter(Boolean),
+        ),
+      ],
+      id: crypto.randomUUID(),
+      startedAtStep: stepIndex,
+      status: "active",
+    };
+    this.attempts.push(next);
+    return next;
   }
 
   recordAssumptions(statements: string[]) {
@@ -86,24 +118,75 @@ export class PlanAttemptLedger {
     return ids;
   }
 
-  propose(approach: string, stepIndex: number, exitCriteria: string[] = []) {
+  propose(
+    approach: string,
+    stepIndex: number,
+    exitCriteria: string[] = [],
+    transitionReason = "模型采用了实质不同的工作方法。",
+  ) {
     const current = this.active();
-    const next: PlanAttemptRecord = {
-      approach: approach.trim(),
-      assumptionIds: [],
-      evidenceRefs: [],
-      exitCriteria,
-      id: crypto.randomUUID(),
-      startedAtStep: stepIndex,
-      status: "active",
-    };
+    const normalizedApproach = approach.replace(/\s+/g, " ").trim();
+    const normalizedExitCriteria = [
+      ...new Set(
+        exitCriteria
+          .map((criterion) => criterion.replace(/\s+/g, " ").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (
+      current &&
+      current.approach.replace(/\s+/g, " ").trim() === normalizedApproach &&
+      JSON.stringify(current.exitCriteria) ===
+        JSON.stringify(normalizedExitCriteria)
+    ) {
+      return current;
+    }
+    const next = this.createActive(approach, stepIndex, exitCriteria);
     if (current) {
       current.status = "superseded";
       current.endedAtStep = stepIndex;
       current.supersededBy = next.id;
+      current.transitionReason = transitionReason;
     }
-    this.attempts.push(next);
     return next;
+  }
+
+  succeed(
+    stepIndex: number,
+    evidenceRefs: string[] = [],
+    transitionReason = "验收条件已经由客观回执满足。",
+  ): AttemptDelta | null {
+    const current = this.active();
+    if (!current) return null;
+
+    current.status = "succeeded";
+    current.endedAtStep = stepIndex;
+    current.transitionReason = transitionReason;
+    current.evidenceRefs = [
+      ...new Set([...current.evidenceRefs, ...evidenceRefs.filter(Boolean)]),
+    ];
+    for (const assumptionId of current.assumptionIds) {
+      const assumption = this.assumptions.find((item) => item.id === assumptionId);
+      if (!assumption || assumption.status !== "active") continue;
+      assumption.status = "validated";
+      assumption.evidenceRefs = [
+        ...new Set([...assumption.evidenceRefs, ...evidenceRefs.filter(Boolean)]),
+      ];
+    }
+
+    return { activeAttemptId: current.id, succeeded: current.id };
+  }
+
+  abandon(
+    stepIndex: number,
+    transitionReason: string,
+  ): AttemptDelta | null {
+    const current = this.active();
+    if (!current) return null;
+    current.status = "abandoned";
+    current.endedAtStep = stepIndex;
+    current.transitionReason = transitionReason.trim();
+    return { abandoned: current.id, activeAttemptId: current.id };
   }
 
   observe(progress: StepProgressReceipt, stepIndex: number): AttemptDelta {
@@ -114,7 +197,9 @@ export class PlanAttemptLedger {
     }
 
     if (progress.objectiveProgress) {
-      current.evidenceRefs.push(progress.stateHash);
+      current.evidenceRefs = [
+        ...new Set([...current.evidenceRefs, progress.stateHash]),
+      ];
       return { activeAttemptId: current.id };
     }
 
@@ -124,6 +209,8 @@ export class PlanAttemptLedger {
     ) {
       current.status = "failed";
       current.endedAtStep = stepIndex;
+      current.transitionReason =
+        "重复真实失败或持续缺少有意义进展的回执证伪了当前方法。";
       current.evidenceRefs.push(progress.stateHash);
       const invalidatedAssumptionIds = current.assumptionIds.filter((id) => {
         const assumption = this.assumptions.find((item) => item.id === id);
@@ -132,10 +219,11 @@ export class PlanAttemptLedger {
         assumption.evidenceRefs.push(progress.stateHash);
         return true;
       });
-      const next = this.propose("重新读取现场并采用替代路线", stepIndex, [
+      const next = this.createActive("重新读取现场并采用替代路线", stepIndex, [
         "产生新的客观回执",
         "避免复用已失败的策略签名",
       ]);
+      current.supersededBy = next.id;
       return {
         activeAttemptId: next.id,
         created: next.id,
@@ -143,17 +231,21 @@ export class PlanAttemptLedger {
         ...(invalidatedAssumptionIds.length > 0
           ? { invalidatedAssumptionIds }
           : {}),
-        superseded: current.id,
       };
     }
 
     return { activeAttemptId: current.id };
   }
 
-  snapshot() {
+  snapshot(): PlanAttemptLedgerSnapshot {
     return {
       assumptions: structuredClone(this.assumptions),
       attempts: structuredClone(this.attempts),
     };
+  }
+
+  restore(snapshot: PlanAttemptLedgerSnapshot) {
+    this.assumptions = structuredClone(snapshot.assumptions);
+    this.attempts = structuredClone(snapshot.attempts);
   }
 }
