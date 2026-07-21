@@ -87,7 +87,7 @@ Ranni 的当前产品模型可以概括为五件事：
 - API 设置：
   - Tavily 搜索 API Key，支持配置、清除、测试。
   - Computer use OpenAI API Key，支持配置、清除、测试，用于 OpenAI Responses API `computer` tool loop。
-  - 模型 provider 列表，支持本机 ChatGPT 订阅、DeepSeek、OpenAI、Qwen、MiniMax 国际、MiniMax 中国、自定义 OpenAI-compatible URL。本机订阅选项实时读取模型与 effort，两个 MiniMax 选项复用 Token Plan Key，并分别连接国际端点和中国区端点。
+  - 模型 provider 列表，支持本机 ChatGPT 订阅、DeepSeek、OpenAI、Qwen、Qwen Token Plan、MiniMax 国际、MiniMax 中国、自定义 OpenAI-compatible URL。本机订阅选项实时读取模型与 effort，两个 MiniMax 选项复用 Token Plan Key，并分别连接国际端点和中国区端点。
 - Debug：支持「会话过程展示具体内容」开关。关闭时只显示优化后的过程文案；开启后每条过程项出现 info 按钮，可查看该项绑定的 run、step、tool call、tool result 和当前 agent loop trace。
 - 关于：展示当前 workspace、provider、model 和本地运行说明。
 
@@ -107,6 +107,7 @@ Ranni 的当前产品模型可以概括为五件事：
 - 本机 ChatGPT 订阅，通过 `CODEX_API_PORT` 连接 CLIProxyAPI BFF；设置界面可选择当前 OAuth 账号可用模型及 reasoning effort，不需要填写 API Key。
 - OpenAI 官方 API，默认模型 `gpt-5.5`。
 - Qwen / DashScope OpenAI-compatible API。
+- Qwen Token Plan（阿里云百炼 Token Plan 团队版，中国大陆），连接 `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，使用 `QWEN_TOKEN_PLAN_KEY`，默认模型 `qwen3.7-max`，设置界面可在 `qwen3.7-max` 与 `qwen3.8-max-preview` 之间切换。
 - MiniMax 国际，连接 `https://api.minimax.io/anthropic`，默认模型 `MiniMax-M3`。
 - MiniMax 中国，连接 `https://api.minimaxi.com/anthropic`，默认模型 `MiniMax-M3`。
 - 两个 MiniMax Provider 均使用 Token Plan Key 和 Anthropic-compatible Messages API。

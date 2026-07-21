@@ -88,6 +88,7 @@ export type ModelConnectionConfig = {
   model?: string;
   provider?: string;
   qwenApiKey?: string;
+  qwenTokenPlanKey?: string;
   reasoningEffort?: ReasoningEffort;
 };
 

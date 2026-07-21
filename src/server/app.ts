@@ -37,6 +37,7 @@ import { registerRunTraceRoutes } from "./run-trace-routes";
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_PICKER_TIMEOUT_MS = 120_000;
+const OPEN_FOLDER_TIMEOUT_MS = 15_000;
 const SESSION_TITLE_MAX_LENGTH = 15;
 const SESSION_TITLE_PROMPT_MAX_LENGTH = 4000;
 const AGENT_CONCURRENCY_LIMIT_CODE = "AGENT_CONCURRENCY_LIMIT";
@@ -61,6 +62,7 @@ const modelSettingsSchema = z
     model: optionalSecretSchema,
     provider: optionalSecretSchema,
     qwenApiKey: optionalSecretSchema,
+    qwenTokenPlanKey: optionalSecretSchema,
     reasoningEffort: z
       .enum(["none", "low", "medium", "high", "xhigh", "max"])
       .optional(),
@@ -70,6 +72,7 @@ const modelSettingsSchema = z
       settings.apiKey ??
       settings.deepseekApiKey ??
       settings.qwenApiKey ??
+      settings.qwenTokenPlanKey ??
       settings.minimaxTokenPlanKey,
     baseUrl: settings.baseUrl,
     deepseekApiKey: settings.deepseekApiKey,
@@ -77,6 +80,7 @@ const modelSettingsSchema = z
     model: settings.model,
     provider: settings.provider,
     qwenApiKey: settings.qwenApiKey,
+    qwenTokenPlanKey: settings.qwenTokenPlanKey,
     reasoningEffort: settings.reasoningEffort,
   }));
 
@@ -562,6 +566,29 @@ async function pickSystemDirectory() {
   }
 }
 
+async function openDirectoryInFileManager(directoryPath: string) {
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "explorer"
+        : "xdg-open";
+
+  try {
+    await execFileAsync(command, [directoryPath], {
+      timeout: OPEN_FOLDER_TIMEOUT_MS,
+      windowsHide: false,
+    });
+  } catch (error) {
+    // Windows 的 explorer 成功打开目录后也可能返回退出码 1。
+    if (process.platform === "win32" && getExecErrorCode(error) === 1) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
 function resolveFrontendDistDir() {
   const configuredDir = process.env.FRONTEND_DIST_DIR?.trim();
   const candidates = [
@@ -888,6 +915,39 @@ export function createServerApp() {
           error instanceof Error
             ? error.message
             : "无法打开系统目录选择器。",
+        ok: false,
+      });
+    }
+  });
+
+  app.post("/api/workspaces/open", async (request, response) => {
+    let payload: z.infer<typeof workspaceDirectorySchema>;
+
+    try {
+      payload = workspaceDirectorySchema.parse(request.body);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "请求体格式不正确";
+
+      response.status(400).json({ error: message, ok: false });
+      return;
+    }
+
+    try {
+      const directoryPath = await assertDirectory(payload.path);
+
+      await openDirectoryInFileManager(directoryPath);
+
+      response.json({
+        ok: true,
+        result: {
+          path: directoryPath,
+        },
+      });
+    } catch (error) {
+      response.status(500).json({
+        error:
+          error instanceof Error ? error.message : "无法打开目标目录。",
         ok: false,
       });
     }

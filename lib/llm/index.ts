@@ -10,6 +10,7 @@ import { deepseekOpenAIProvider } from "./providers/deepseek-openai";
 import { minimaxTokenPlanProvider } from "./providers/minimax-token-plan";
 import { openAIProvider } from "./providers/openai";
 import { qwenOpenAIProvider } from "./providers/qwen-openai";
+import { qwenTokenPlanProvider } from "./providers/qwen-token-plan";
 import { chatGPTSubscriptionProvider } from "./providers/chatgpt-subscription";
 
 const DEFAULT_PROVIDER = "deepseek";
@@ -32,6 +33,8 @@ const providers = {
   qwen: qwenOpenAIProvider,
   "qwen-openai": qwenOpenAIProvider,
   "qwen-openai-compatible": qwenOpenAIProvider,
+  "qwen-token-plan": qwenTokenPlanProvider,
+  "qwen-tokenplan": qwenTokenPlanProvider,
 } as const;
 
 function resolveProvider(modelConfig?: ModelConnectionConfig): AgentProvider {

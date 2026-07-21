@@ -8,6 +8,7 @@ import {
   CircleDot,
   Database,
   FileText,
+  FolderOpen,
   Globe2,
   Info,
   Loader2,
@@ -74,7 +75,8 @@ type ProviderId =
   | "minimax-token-plan"
   | "minimax-token-plan-cn"
   | "openai"
-  | "qwen";
+  | "qwen"
+  | "qwen-token-plan";
 type SettingsTab =
   | "about"
   | "account"
@@ -181,6 +183,8 @@ type AppSettings = {
   openaiModel: string;
   provider: ProviderId;
   qwenApiKey: string;
+  qwenTokenPlanKey: string;
+  qwenTokenPlanModel: string;
   selectedHtmlDesignStyleId: string;
   selectedHtmlPageTemplateId: string;
   showThinkingInFeed: boolean;
@@ -419,6 +423,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiModel: "",
   provider: "deepseek",
   qwenApiKey: "",
+  qwenTokenPlanKey: "",
+  qwenTokenPlanModel: "qwen3.7-max",
   selectedHtmlDesignStyleId: "",
   selectedHtmlPageTemplateId: "",
   showThinkingInFeed: true,
@@ -496,6 +502,16 @@ const PROVIDER_OPTIONS = [
     provider: "qwen-openai-compatible",
   },
   {
+    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    description:
+      "阿里云百炼 Token Plan（中国大陆），可选 qwen3.7-max、qwen3.8-max-preview。",
+    envKey: "QWEN_TOKEN_PLAN_KEY",
+    id: "qwen-token-plan",
+    label: "Qwen Token Plan",
+    model: "qwen3.7-max",
+    provider: "qwen-token-plan",
+  },
+  {
     baseUrl: "",
     description: "连接任意 OpenAI-compatible 服务，需要提供 URL、模型和 API Key。",
     envKey: "LLM_API_KEY",
@@ -513,6 +529,10 @@ const PROVIDER_OPTIONS = [
   model: string;
   provider: string;
 }>;
+const QWEN_TOKEN_PLAN_MODEL_OPTIONS = [
+  "qwen3.7-max",
+  "qwen3.8-max-preview",
+] as const;
 const STORAGE_PROFILES = [
   {
     activityDetailLimit: 3000,
@@ -654,7 +674,8 @@ function isProviderId(value: unknown): value is ProviderId {
     value === "deepseek" ||
     isMiniMaxProviderId(value) ||
     value === "openai" ||
-    value === "qwen"
+    value === "qwen" ||
+    value === "qwen-token-plan"
   );
 }
 
@@ -769,6 +790,19 @@ function sanitizeSettings(raw: unknown): AppSettings {
         : provider === "qwen"
           ? legacyApiKey
           : "",
+    qwenTokenPlanKey:
+      typeof raw.qwenTokenPlanKey === "string"
+        ? raw.qwenTokenPlanKey.trim()
+        : provider === "qwen-token-plan"
+          ? legacyApiKey
+          : "",
+    qwenTokenPlanModel:
+      typeof raw.qwenTokenPlanModel === "string" &&
+      (QWEN_TOKEN_PLAN_MODEL_OPTIONS as readonly string[]).includes(
+        raw.qwenTokenPlanModel.trim(),
+      )
+        ? raw.qwenTokenPlanModel.trim()
+        : DEFAULT_SETTINGS.qwenTokenPlanModel,
     selectedHtmlDesignStyleId:
       typeof raw.selectedHtmlDesignStyleId === "string"
         ? raw.selectedHtmlDesignStyleId.trim()
@@ -2384,6 +2418,10 @@ function getProviderApiKey(
     return settings.qwenApiKey.trim();
   }
 
+  if (providerId === "qwen-token-plan") {
+    return settings.qwenTokenPlanKey.trim();
+  }
+
   if (isMiniMaxProviderId(providerId)) {
     return settings.minimaxTokenPlanKey.trim();
   }
@@ -2426,6 +2464,10 @@ function getProviderModel(
     return settings.openaiModel.trim() || provider.model;
   }
 
+  if (providerId === "qwen-token-plan") {
+    return settings.qwenTokenPlanModel.trim() || provider.model;
+  }
+
   return provider.model;
 }
 
@@ -2449,6 +2491,13 @@ function setProviderApiKey(
     return {
       ...settings,
       qwenApiKey: apiKey,
+    };
+  }
+
+  if (providerId === "qwen-token-plan") {
+    return {
+      ...settings,
+      qwenTokenPlanKey: apiKey,
     };
   }
 
@@ -3565,6 +3614,10 @@ export function AgentConsole({
     action: "copied" | "exported";
     id: string;
   } | null>(null);
+  const [finderOpenState, setFinderOpenState] = useState<{
+    message: string;
+    status: "error" | "opened" | "opening";
+  } | null>(null);
   const [sessionTraceActionState, setSessionTraceActionState] = useState<{
     sessionId: string;
   } | null>(null);
@@ -3581,6 +3634,7 @@ export function AgentConsole({
   const feedRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const messageActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finderOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTraceActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -4519,6 +4573,10 @@ export function AgentConsole({
 
       if (settingsToastTimerRef.current) {
         clearTimeout(settingsToastTimerRef.current);
+      }
+
+      if (finderOpenTimerRef.current) {
+        clearTimeout(finderOpenTimerRef.current);
       }
 
       if (feedFollowScrollFrameRef.current !== null) {
@@ -7095,6 +7153,48 @@ export function AgentConsole({
   const selectedProviderBaseUrl = getProviderBaseUrl(settings);
   const selectedProviderModel = getProviderModel(settings);
   const hasConfiguredModel = Boolean(selectedProviderApiKey);
+  const openSessionFolderInFinder = async () => {
+    if (isDraftSessionActive || finderOpenState?.status === "opening") {
+      return;
+    }
+
+    if (finderOpenTimerRef.current) {
+      clearTimeout(finderOpenTimerRef.current);
+      finderOpenTimerRef.current = null;
+    }
+    setFinderOpenState({ message: "", status: "opening" });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workspaces/open`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: activeWorkspaceRoot }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        ok?: boolean;
+      };
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || "无法打开 session 目录。");
+      }
+
+      setFinderOpenState({ message: "", status: "opened" });
+    } catch (error) {
+      setFinderOpenState({
+        message:
+          error instanceof Error ? error.message : "无法打开 session 目录。",
+        status: "error",
+      });
+    } finally {
+      finderOpenTimerRef.current = setTimeout(() => {
+        setFinderOpenState(null);
+        finderOpenTimerRef.current = null;
+      }, 2400);
+    }
+  };
   const canUseEnvironmentApiKeyForProvider = (providerId: ProviderId) => {
     const provider = getProviderOption(providerId);
 
@@ -8670,15 +8770,46 @@ export function AgentConsole({
                 <span>Run Monitor</span>
                 <strong>运行状态栏</strong>
               </div>
-              <button
-                className={styles.iconButton}
-                type="button"
-                aria-label="隐藏运行状态栏"
-                onClick={collapseInspector}
-              >
-                &gt;
-              </button>
+              <div className={styles.inspectorTopBarActions}>
+                <button
+                  className={styles.iconButton}
+                  type="button"
+                  aria-label="在 Finder 中打开 session 目录"
+                  disabled={
+                    isDraftSessionActive ||
+                    finderOpenState?.status === "opening"
+                  }
+                  title={
+                    isDraftSessionActive
+                      ? "发送后自动创建 session 专属目录"
+                      : `在 Finder 中打开：${activeWorkspaceRoot}`
+                  }
+                  onClick={openSessionFolderInFinder}
+                >
+                  {finderOpenState?.status === "opened" ? (
+                    <CheckCircle2 size={14} aria-hidden="true" />
+                  ) : (
+                    <FolderOpen size={14} aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  className={styles.iconButton}
+                  type="button"
+                  aria-label="隐藏运行状态栏"
+                  onClick={collapseInspector}
+                >
+                  &gt;
+                </button>
+              </div>
             </div>
+
+            {finderOpenState?.status === "error" ? (
+              <p
+                className={`${styles.connectionNotice} ${styles.connectionNoticeError}`}
+              >
+                {finderOpenState.message}
+              </p>
+            ) : null}
 
             <section className={styles.inspectorSection}>
               <div className={styles.inspectorHeader}>
@@ -9698,6 +9829,40 @@ export function AgentConsole({
                                             });
                                           }}
                                         />
+                                      </label>
+                                    </>
+                                  ) : provider.id === "qwen-token-plan" ? (
+                                    <>
+                                      <div className={styles.settingsInfoGrid}>
+                                        <div>
+                                          <span>Provider URL</span>
+                                          <strong>{providerBaseUrl}</strong>
+                                        </div>
+                                      </div>
+
+                                      <label className={styles.settingsField}>
+                                        <span>Model</span>
+                                        <select
+                                          value={settings.qwenTokenPlanModel}
+                                          onChange={(event) => {
+                                            setSettings((current) => ({
+                                              ...current,
+                                              qwenTokenPlanModel:
+                                                event.target.value,
+                                            }));
+                                            setTestConnectionState({
+                                              status: "idle",
+                                            });
+                                          }}
+                                        >
+                                          {QWEN_TOKEN_PLAN_MODEL_OPTIONS.map(
+                                            (model) => (
+                                              <option key={model} value={model}>
+                                                {model}
+                                              </option>
+                                            ),
+                                          )}
+                                        </select>
                                       </label>
                                     </>
                                   ) : (

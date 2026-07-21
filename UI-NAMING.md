@@ -293,6 +293,7 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 
 | 规范中文名 | 英文名 / 当前标签 | 说明 |
 | --- | --- | --- |
+| 在 Finder 中打开按钮 | Open in Finder Button | 运行状态栏头部入口，在系统文件管理器中打开当前 Session 工作目录。 |
 | 会话信息区 | Session Info | 更新时间、并行 Run 数量、工作目录和导出操作。 |
 | 当前 Run 区 | Current Run | 当前选中或最近 Run 的摘要。 |
 | 整体计划面板 | Overall Plan Panel / “整体计划” | 当前 Run 区内的紧凑计划与进度摘要，实时同步 Run 级完整快照，并提供调整计划和查看计划变化入口。 |
@@ -319,6 +320,8 @@ Agent Runtime 概念的语义由 `CONCEPT-NAMING.md` 定义。本文件只说明
 | 推理强度选择器 | Reasoning Effort Select | 选择模型支持的 reasoning effort。 |
 | MiniMax 国际 Provider | MiniMax International Provider | MiniMax 国际端点选项。 |
 | MiniMax 中国 Provider | MiniMax China Provider | MiniMax 中国区端点选项。 |
+| Qwen Token Plan Provider | Qwen Token Plan Provider | 阿里云百炼 Token Plan（中国大陆）端点选项。 |
+| Qwen Token Plan 模型选择器 | Qwen Token Plan Model Select | 在 qwen3.7-max 与 qwen3.8-max-preview 之间切换。 |
 | 能力设置 | Skills Settings | 配置新 Run 预先激活的本地 Skill。 |
 | 能力加载开关 | Skill Toggle | 单个 Skill 的预激活开关。 |
 | 能力运行状态 | Skill Runtime Status | 显示当前 Session 或 Run 已选择、已激活的 Skill。 |

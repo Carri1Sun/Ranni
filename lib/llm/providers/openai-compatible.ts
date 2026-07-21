@@ -232,6 +232,7 @@ function resolveModelApiKey(
     modelConfig?.apiKey?.trim() ||
     modelConfig?.deepseekApiKey?.trim() ||
     modelConfig?.qwenApiKey?.trim() ||
+    modelConfig?.qwenTokenPlanKey?.trim() ||
     readEnvValue(apiKeyEnvNames)
   );
 }
