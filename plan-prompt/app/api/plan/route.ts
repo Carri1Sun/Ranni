@@ -30,6 +30,52 @@ type QwenChunk = {
   usage?: Record<string, number>;
 };
 
+type DecisionType = "direct" | "plan" | "clarify";
+type Decision = { type: DecisionType; message: string };
+
+function isDecisionType(value: unknown): value is DecisionType {
+  return value === "direct" || value === "plan" || value === "clarify";
+}
+
+function decodeJsonString(value: string): string {
+  try {
+    return JSON.parse(`"${value}"`) as string;
+  } catch {
+    return value
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function parseDecision(content: string): Decision | null {
+  const trimmed = content.trim();
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  const candidates = [trimmed];
+  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try {
+      const value = JSON.parse(candidate) as { type?: unknown; message?: unknown };
+      if (isDecisionType(value.type) && typeof value.message === "string" && value.message.trim()) {
+        return { type: value.type, message: value.message };
+      }
+    } catch {
+      // 尝试下一个候选。
+    }
+  }
+  // 容错提取：模型偶尔在 message 内输出未转义引号导致 JSON.parse 失败。
+  // 输出结构固定为 {"type":"...","message":"..."}，按字段边界提取。
+  const body = start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
+  const typeMatch = /"type"\s*:\s*"(direct|plan|clarify)"/.exec(body);
+  const messageMatch = /"message"\s*:\s*"([\s\S]*)"\s*\}\s*$/.exec(body);
+  if (typeMatch && messageMatch && messageMatch[1].trim()) {
+    return { type: typeMatch[1] as DecisionType, message: decodeJsonString(messageMatch[1]) };
+  }
+  return null;
+}
+
 function cleanBaseUrl(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -198,8 +244,6 @@ async function streamPlannerDecision(options: {
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
-  let reasoningLength = 0;
-  let lastThinkingUpdate = 0;
   let usage: Record<string, number> | null = null;
   let responseModel = MODEL;
 
@@ -216,12 +260,8 @@ async function streamPlannerDecision(options: {
       if (!data || data === "[DONE]") continue;
       const chunk = JSON.parse(data) as QwenChunk;
       const delta = chunk.choices?.[0]?.delta;
-      if (typeof delta?.reasoning_content === "string") {
-        reasoningLength += delta.reasoning_content.length;
-        if (reasoningLength - lastThinkingUpdate >= 900 || lastThinkingUpdate === 0) {
-          lastThinkingUpdate = reasoningLength;
-          emit("thinking", { message: "正在权衡任务范围、假设与执行路径…" });
-        }
+      if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+        emit("thinking_delta", { content: delta.reasoning_content });
       }
       if (typeof delta?.content === "string" && delta.content.length > 0) {
         content += delta.content;
@@ -317,6 +357,7 @@ export async function POST(request: Request) {
             usage: final.usage,
             researched: groups.length > 0,
           },
+          decision: parseDecision(final.content),
         });
       } catch (error) {
         emit("error", {
